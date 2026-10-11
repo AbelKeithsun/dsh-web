@@ -31,6 +31,7 @@ on:
       - 'satellites/**'
       - 'market-inputs.lock.json'
       - 'scripts/market-build'
+      - 'scripts/lib/market-zip.cjs'
       - 'scripts/market-fetch-inputs.mjs'
       - 'scripts/market-verify-assets.mjs'
       - 'scripts/deploy-market'

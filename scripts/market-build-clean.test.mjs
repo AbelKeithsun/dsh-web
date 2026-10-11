@@ -37,6 +37,7 @@ const COMMUNITY_DIR = resolveFamilyPackage('@linxin666/dsh-client-ui-community-p
 function copyCommittedTree(dir) {
   const pairs = [
     [join(ROOT, 'scripts', 'market-build'), join(dir, 'scripts', 'market-build')],
+    [join(ROOT, 'scripts', 'lib', 'market-zip.cjs'), join(dir, 'scripts', 'lib', 'market-zip.cjs')],
     // The pin guard imports this to compare the cache against the gitlinks.
     [join(ROOT, 'scripts', 'market-fetch-inputs.mjs'), join(dir, 'scripts', 'market-fetch-inputs.mjs')],
     [join(ROOT, 'market', 'src'), join(dir, 'market', 'src')],
@@ -313,17 +314,24 @@ test('clean checkout (no shell dist) passes market-build --check', (t) => {
  * the tree survives — an earlier wording ("not emitted") read as if the build
  * had deleted it (2026-10-02).
  */
-test('full build without the shell dist leaves the committed tryon tree intact', (t) => {
+test('full build without the shell dist preserves the committed tryon tree and ZIP downloads', (t) => {
   if (!hasInputs) return t.skip(SKIP_REASON)
   borrowWritableDist(t, (dist) => {
     const dir = sharedDir
     const before = treeDigest(join(dist, 'tryon'))
     assert.ok(Object.keys(before).length > 0, 'fixture must carry a committed tryon tree')
+    const skinsDir = join(dist, 'assets', 'skins')
+    const downloads = () => Object.fromEntries(readdirSync(skinsDir)
+      .filter(name => name.endsWith('.zip'))
+      .map(name => [name, createHash('sha256').update(readFileSync(join(skinsDir, name))).digest('hex')]))
+    const beforeDownloads = downloads()
+    assert.ok(Object.keys(beforeDownloads).length > 0, 'fixture must carry committed ZIP downloads')
     const result = spawnSync(process.execPath, ['scripts/market-build'], { cwd: dir, encoding: 'utf8' })
     assert.equal(result.status, 0, result.stderr)
     // The notice is a console.warn, so it lands on stderr.
     assert.match(result.stderr, /tryon\/ left as-is/)
     assert.deepEqual(treeDigest(join(dist, 'tryon')), before)
+    assert.deepEqual(downloads(), beforeDownloads)
     // No preserve directory may be left behind by the rewrite.
     assert.deepEqual(
       readdirSync(dir).filter((name) => name.startsWith('.tryon-preserve-')),

@@ -29,6 +29,8 @@ function fixture(maxFiles, extraSkinFiles) {
   mkdirSync(scriptDir, { recursive: true })
   const script = join(scriptDir, 'market-build')
   writeFileSync(script, readFileSync(join(ROOT, 'scripts', 'market-build')))
+  mkdirSync(join(scriptDir, 'lib'))
+  writeFileSync(join(scriptDir, 'lib', 'market-zip.cjs'), readFileSync(join(ROOT, 'scripts', 'lib', 'market-zip.cjs')))
   const installerDir = join(dir, 'packages', 'dsh-market', 'src', 'core')
   mkdirSync(installerDir, { recursive: true })
   writeFileSync(join(installerDir, 'installer.ts'), 'export const MAX_FILES_PER_ASSET = ' + maxFiles + '\n')
