@@ -15,9 +15,11 @@ dsh Web GUI 的 Host 权威多列任务看板。任务通过真实 DSH 会话执
 - 重启恢复时，有 session id 的 running execution 继续观察；无 session id 的启动中断标为 cancelled，禁止自动重发。启动恢复与每次会话轮询都会先折叠已可裁决的运行：团队执行按 Lead 判定收口，成员全部结算的父子链一并终结（幂等，已折叠的运行不再写入）。会话历史读不到的 execution 不再等同「仍在进行」：名册已判定该会话空闲后仍连续读不到历史达到上限（24 次轮询，约 2 分钟）即带原因判失败，避免无限 pending 把卡片永久留在运行列。
 - 子任务层级由 Host 唯一裁定：`TaskRecord.parentId` 的深度上限是配置项 `maxSubtaskDepth`（1..3，默认 1），创建、`set-parent` 关联与导入修复共用 `src/core/subtask.ts` 的存在性/环/深度判定，浏览器只据此启停控件。执行一个任务会在同一 run group 内并发开启整棵子树的 execution；父任务在自己的回合与全部直接子任务都结算后才结算，任一成员失败则父任务失败，已在运行的任务不进入新的 run group（cron 同样），且运行中的参与者不能被 `set-parent` 改挂或解除关联——它的链接可能仍是该 run group 的父指针。子任务未单独设置的权限/模型在启动时按祖先链解析继承，继承来的权限连同提供它的祖先的人工确认戳一起生效；权限绝不在创建时复制到子任务卡片上（否则解除关联后会残留一张已确认的高权限根任务），workspace/模式/模型按用户看到的预填值存卡。
 
-## Agent Team 执行（opt-in）
+- 思考档位的模型绑定、清空与继承以[思考强度决策](../../.agents/notes/implemented/feature/2026-10-11-task-board-reasoning-effort.md)为准。
 
-- 任务级 `teamRun` 开关（默认关，详情页勾选；服务缺失时禁用）把一次执行从「每个成员各开一个会话」切换为「只开一个 Lead 会话 + 每个子任务一个 teammate」：Host 用 `ctx.agents.get(leadSessionId)` 取到 live Lead，调 `ctx.agentTeams.spawnTeammate(lead, { name, description, prompt, context: 'fresh', provider: teamProvider, signal })`，再把 teammate 会话 id 挂到该子任务的 execution 上。结算不再只等会话监视器：teammate 是 Team 的常驻成员，回合结束后会话仍存活，因此看板读取它已完成的第一个回合（名册仍报该会话 running 也照读）；团队执行由 Lead 的判定统辖，Lead 自身结果落定后仍未报结果的成员一并按该判定结算，避免某个 teammate 不报结果而把整条链永久留在运行列。`agentTeams` 按可选服务解析（不注入）：缺失时手动执行直接拒绝（而不是静默退回级联），cron 路径把成员标为失败并写明原因。
+## Agent Team 执行
+
+- `teamRun` 是任务级开关（新建根卡默认关，详情页可手动调整；服务缺失时禁用），GUI 子任务默认策略见[子任务决策](../../.agents/notes/implemented/feature/2026-09-24-task-board-subtasks.md)。它把一次执行从「每个成员各开一个会话」切换为「只开一个 Lead 会话 + 每个子任务一个 teammate」：Host 用 `ctx.agents.get(leadSessionId)` 取到 live Lead，调 `ctx.agentTeams.spawnTeammate(lead, { name, description, prompt, context: 'fresh', provider: teamProvider, signal })`，再把 teammate 会话 id 挂到该子任务的 execution 上。结算不再只等会话监视器：teammate 是 Team 的常驻成员，回合结束后会话仍存活，因此看板读取它已完成的第一个回合（名册仍报该会话 running 也照读）；团队执行由 Lead 的判定统辖，Lead 自身结果落定后仍未报结果的成员一并按该判定结算，避免某个 teammate 不报结果而把整条链永久留在运行列。`agentTeams` 按可选服务解析（不注入）：缺失时手动执行直接拒绝（而不是静默退回级联），cron 路径把成员标为失败并写明原因。
 - 子树在这个模式下被压平成一个 Team（只有 Lead 能派生），teammate 名字取「标题 slug + 成员任务 id 的 4 位稳定标签 + run group 前 8 位」，以保证同一 Team 内唯一且跨次执行不冲突（slug 本身不唯一：纯中文标题会全部退化成同一个通用前缀，共享首个英文词的两个标题也会相撞；Agent Teams 对重名直接拒绝，只靠 slug 加 run group 会让同一次执行里第一个之后的 teammate 全部派生失败）；团队执行永远新建 Lead 会话，不复用旧会话。子任务自己钉住的权限按 Lead 会话的实际权限判定：teammate 继承 Lead 会话的权限且无法被收窄，因此不高于该权限的钉住照常执行（该成员按 Lead 的权限运行，详情页已说明团队执行中子任务的权限钉住不适用），高于该权限的钉住会在启动前拒绝整次运行，而不是被静默丢弃；未自行钉住的成员继承 Lead 的绑定（连同其确认戳），仍按 Lead 的确认门判定。
 - 两种模式的 Prompt 都会说明本次运行的形态（哪些成员、各自名字/任务 id、可用工具），普通级联说「并发开启 N 个独立会话」，团队模式说「本会话是 Lead，以下成员是 teammate」。
 
