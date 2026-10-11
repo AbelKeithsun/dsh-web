@@ -23,8 +23,9 @@ Status: implemented
 - Host 监视器会跳过已记录自身结果的 execution，因为已无内容可查。子任务结算时沿父子链向上，逐个结算已就绪的父任务，重启恢复对没有记录 session 的参与者先取消、再走同一条向上路径。run group id、自身结果与最终结算都会持久化，因此重启后仍能结算延迟中的父任务。启动恢复与每次名册轮询还会折叠每一个已可裁决的运行——Lead 已记录结果的团队执行，以及成员全部结算的父子链——而某条 execution 在会话已空闲后历史仍读不到时，会在有限次轮询后带原因判为失败，而不是永久 pending。
 - cron 走同一条路径：到期任务会开启整棵树，若树中存在未确认的高权限绑定，则整棵树作为一个整体被拒绝，计划滚动到下一触发点，原因记入 scheduler error。
 
-### Agent Team 执行（opt-in）
+### Agent Team 执行（任务级）
 
+- 详情页创建/关联流程只在 Host 确认子任务变更成功且 Agent Teams 可用后开启父任务的 `teamRun`。取消与失败不启用，不改写已有任务树，仍可手动关闭；之后再次成功创建/关联会重新开启。
 - 任务级 `teamRun` 开关把一次级联从「每个参与者一个会话」切换为「一个 Lead 会话 + 每个参与者一个 teammate」。Host 只启动根任务，随后借助可选的 Agent Teams 服务——用 `ctx.agents.get(sessionId)` 取到 live Lead，调 `ctx.agentTeams.spawnTeammate(leadAgent, { name, description, prompt, context, provider, signal })`——为其余每个成员派生 teammate，并把 teammate 的会话 id 挂到该成员的 execution 上。结算不再只等普通的会话监视器：teammate 是 Team 的常驻成员，回合结束后会话仍存活，因此监视器读取该 teammate 已完成的第一个回合（名册仍报 running 也照读）。团队执行由 Lead 判定统辖——Lead 自身结果一旦记录，仍未报结果的成员全部按该判定结算，父任务再折叠整组——因此不报结果的 teammate 无法把整条链永久留在运行列。
 - 子树在这个模式下被压平成同一个 Team，因为只有 Lead 能派生；teammate 名字由「成员标题 slug + 成员任务 id 的稳定 4 位十六进制标签 + run group token」三段组成。run group token 区分多次执行，成员标签区分同一次执行内的成员——只靠 slug 并不唯一：纯中文标题会全部退化成同一个通用前缀，共享首个英文词的两个标题也会相撞。Agent Teams 对重名直接拒绝（`teammate name "..." was already used in this Team`），于是在一次真实的五子任务执行里，第一个之后的成员全部没能启动。标签只由成员 id 推导，因此 Lead 提示词与 spawn 请求中的名字始终一致。团队执行总是新建 Lead 会话（同一 Team 内名字不可变，复用旧会话会冲突），provider 来自配置项 `teamProvider`（默认 `spawn`）。
 - 该模式 fail closed 而不降级：未提供 `agentTeams` 服务的部署会对手动团队执行明确拒绝（计划执行则记录原因）；成员**自己**的绑定若要求高于 Lead 会话实际承载的权限，会被拒绝，因为 teammate 继承 Lead 会话的权限、无法被收窄到该钉住值以下。钉住值不高于 Lead 会话既有权限的成员按 Lead 的权限执行——详情页已说明团队执行中子任务的权限钉住不适用——而继承来的绑定属于 Lead，按 Lead 自己的确认门判定。
