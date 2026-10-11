@@ -20,4 +20,4 @@ Status: implemented
 
 ## Consequences
 
-[已提交 bundle 契约](../../../../scripts/client-bundle-contract.test.mjs) 验证实际重建的客户端产物，拒绝 shim/legacy 标记并要求直接平台调用；仅源码指纹不覆盖此预设。受支持宿主的 GUI 验证仍然必要，有意不保留低于下限的可导入性。这部分取代[原混合 owner](../bug-fix/2026-08-28-client-store-dual-cohort-engine-shim.md) 的 engine 绕行；其独立 agent-preset 声明/injection 理由仍有效并双向链接。
+[已提交 bundle 契约](../../../../scripts/client-bundle-contract.test.mjs) 验证实际重建的客户端产物，拒绝 shim/legacy 标记并要求直接平台调用；仅源码指纹不覆盖此预设。重建 bundle 另在受支持宿主上实测：一次性 `DSH_HOME` 启动的隔离探针宿主加载了本检出客户端 bundle，依赖 store 的会话归档面板和使用统计卡片渲染正常且无模块解析错误；有意不保留低于下限的可导入性。这部分取代[原混合 owner](../bug-fix/2026-08-28-client-store-dual-cohort-engine-shim.md) 的 engine 绕行；其独立 agent-preset 声明/injection 理由仍有效并双向链接。
