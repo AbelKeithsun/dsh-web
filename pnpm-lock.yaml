@@ -77,6 +77,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.8
         version: 4.1.11(vitest@4.1.11)
+      es-module-lexer:
+        specifier: 2.3.2
+        version: 2.3.2
       lightningcss:
         specifier: ^1.32.0
         version: 1.33.0
