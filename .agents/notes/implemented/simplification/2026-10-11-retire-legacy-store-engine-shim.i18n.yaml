@@ -1,0 +1,4 @@
+# Bilingual-pair consistency record (docs/i18n.md).
+# Both languages have equal authority; re-record with git hash-object after paired edits.
+2026-10-11-retire-legacy-store-engine-shim.md: a505e22d3c0ee8f27bb6e68d754d2ba669ab4468
+2026-10-11-retire-legacy-store-engine-shim.zh.md: 13b05b56915ad49220b53a31a5e2328aeda7cb37

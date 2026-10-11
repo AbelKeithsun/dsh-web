@@ -4,6 +4,8 @@ Status: implemented
 
 ## Problem
 
+The store-engine portion is superseded by [direct supported-platform resolution](../simplification/2026-10-11-retire-legacy-store-engine-shim.md). All engine-specific statements below, including the decision, consequences and verification, are historical; this note continues to own the independent agent-preset provider/declaration/injection decision.
+
 After the 0.1.2-alpha.1 preview cohort migration landed on `dev`, the live GUI refused to load the family plugins on the running 0.1.1-rc.2 host (the newest npm-published release; the preview cohort returns 404 and cannot be installed). Two hard couplings to the new cohort surfaced, one after the other:
 
 1. **The store engine require missed the module table.** The migration made `dsh-client-store` a frozen platform module and the shared client preset externalized it, so every rebuilt client bundle hard-required it at bundle evaluation:

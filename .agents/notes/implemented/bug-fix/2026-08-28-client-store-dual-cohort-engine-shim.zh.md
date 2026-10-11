@@ -4,6 +4,8 @@ Status: implemented
 
 ## 问题
 
+store-engine 部分由[受支持平台直接解析](../simplification/2026-10-11-retire-legacy-store-engine-shim.md) 取代。下文所有 engine 专属表述，包括决策、后果与验证，都属于历史；本记录继续拥有独立的 agent-preset provider/声明/injection 决策。
+
 0.1.2-alpha.1 预览 cohort 迁移合入 `dev` 后，家族插件在正在运行的 0.1.1-rc.2 宿主上拒绝加载（npm 最新可安装版本；预览 cohort 未发布、返回 404）。先后暴露出两处对新 cohort 的硬耦合：
 
 1. **存储引擎 require 未命中模块表。** 迁移把 `dsh-client-store` 定为冻结平台模块，共享客户端构建预设将其 externalize，于是每个重建的客户端 bundle 都在求值期硬 require 它：

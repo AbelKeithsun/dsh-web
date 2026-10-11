@@ -1,17 +1,17 @@
 # Simplification survey — 2026-10-11
 
-Status: complete survey; proposals remain unimplemented. Baseline: `dev` at `e26220c6`. This is not an exhaustive audit.
+Status: survey complete; three decisions implemented and one still proposed. Survey baseline `dev` at `e26220c6`; implementation continued from `9a2e91a1`. This is not an exhaustive audit.
 
 ## Scope and outcome
 
 Read-only investigation covered in-repository plugins, shared runtime/build machinery, SSH and remote lifecycle ownership, repository scripts, aggregate assembly, and market build/client/try-on assembly. Three independently delegated read-only surveys returned reports. The Worker domain, telemetry viewer, satellite implementations beyond consumer checks, and every individual UI/CSS rule were outside this survey.
 
-Four decisions have bilingual proposal triplets:
+Four decisions carried bilingual triplets; three are now implemented and the fourth remains a proposal:
 
-- [Retire the below-floor store-engine fallback](../../.agents/notes/proposed/simplification/2026-10-11-retire-legacy-store-engine-shim.md): confirm support promises before implementation.
-- [Test the production ZIP writer](../../.agents/notes/proposed/simplification/2026-10-11-market-zip-production-test-owner.md): remove a copied producer, keep independent parsers.
-- [Replace the runtime-import scanner](../../.agents/notes/proposed/simplification/2026-10-11-runtime-import-lexer.md): an explicit development dependency replaces language machinery; stricter malformed-input handling is disclosed.
-- [Make mount-smoke artifact intent explicit](../../.agents/notes/proposed/simplification/2026-10-11-explicit-mount-smoke-artifact-intent.md): a behavior-narrowing choice, not dead-code removal; publication-window convenience is given up.
+- [Resolve client stores through the supported host platform](../../.agents/notes/implemented/simplification/2026-10-11-retire-legacy-store-engine-shim.md): implemented, partially superseding the mixed dual-cohort owner while its separate agent-preset rationale stays live.
+- [Test the production ZIP writer](../../.agents/notes/implemented/simplification/2026-10-11-market-zip-production-test-owner.md): implemented; the copied producer is gone and the independent parsers remain.
+- [Replace the runtime-import scanner](../../.agents/notes/implemented/simplification/2026-10-11-runtime-import-lexer.md): implemented with `es-module-lexer/js` as an explicit development dependency; lexer-detectable malformed input now reports its artifact path, and full syntax validation is explicitly out of scope.
+- [Make mount-smoke artifact intent explicit](../../.agents/notes/proposed/simplification/2026-10-11-explicit-mount-smoke-artifact-intent.md): still proposed. It is a behavior-narrowing choice, not dead-code removal, and gives up publication-window convenience, so the default probe/auto mode was deliberately left unchanged.
 
 The first three triplets are committed in `06326703`; the ZIP triplet and this snapshot are the completion deliverables. No existing note was consolidated, deleted or treated as superseded before implementation. Proposed future partial supersession preserves each mixed owner's unrelated rationale. Small local symbol cleanups were not inflated into design records or implemented in this survey.
 
@@ -34,7 +34,7 @@ A read-only synchronous lexer probe compared all nine tracked JavaScript artifac
 | `pnpm test` | The normal-environment parallel run failed on the Liangshen benchmark's 5-second timeout. |
 | `pnpm -C packages/dsh-liangshen exec vitest run tests/benchmark-live-run.test.ts` | Passed, 32 tests; no repair or timeout change. |
 | `pnpm -r --workspace-concurrency=1 test` | Passed for the workspace. This does not erase the parallel timeout. |
-| `pnpm test:scripts` | Passed, 384 tests. |
+| `pnpm test:scripts` | Passed, 384 tests at survey time; 398 tests after the three implementations were added. |
 | `pnpm test:standards` | Passed. |
 | `pnpm docs:check` | Passed; rerun after proposal writing. |
 | `pnpm i18n:check` | Passed with existing host-copy/unknown-namespace warnings. |
@@ -46,6 +46,10 @@ Commands used the bundled Node executable to invoke the bundled pnpm script. An 
 
 ## Boundary self-check and limitations
 
-Authorization, note lifecycle, bilingual pairing and targeted Git staging were checked. Only proposals and this snapshot were written; no code behavior, dependency, manifest, generated runtime artifact, satellite pin or DSH checkout changed. Commits are local; no push, publication, release, deployment or current-service restart occurred. Builds and GUI/mount validation were not run because nothing was implemented; each proposal names its future evidence gate.
+Authorization, note lifecycle, bilingual pairing and targeted Git staging were checked. The survey phase wrote only proposals and this snapshot. The implementation phase then changed three mechanisms, their tests, one CI trigger path, one documentation fact, and the two committed client bundles that the retired shim rebuilt; no satellite pin, vendored shell, mount-smoke mode or DSH source checkout changed. Commits are local; no push, publication, release, deployment or current-service restart occurred.
+
+Implementation evidence, all from normal script environments: `pnpm build` rebuilt the two committed client bundles and the bundle contract showed exactly one `require("@deepseek-ai/dsh-client-store")` with no shim or `dsh-client-runtime` marker; temporarily shifting the production ZIP CRC field by two bytes failed the ZIP suite, which passed again after restore; a full fixture `market-build` run reproduced every committed download checksum; the runtime dependency gate reported two packages and zero violations over the tracked artifact set; and `pnpm typecheck`, `pnpm -r --workspace-concurrency=1 test`, `test:scripts` (398 tests), `test:standards`, `docs:check`, `i18n:check`, `emoji:check`, `runtime-deps:check`, `sync-shared:check`, `aggregate:check`, `market:check` and `libs:check` all exited 0.
+
+GUI verification of the rebuilt bundles was not obtained. The DSH host serving this session started before the rebuild, and no current login URL for its port was available to a read-only probe; the change applies on the next user-initiated DSH restart, which this session must not perform. The live 0.2.0-rc.2 host does supply `@deepseek-ai/dsh-client-store`, and the committed bundles are checked in bytes, but that is not a substitute for a rendered-settings smoke test. This is disclosed as the one unmet acceptance criterion.
 
 Navigation deviation: the delegated surveys reported some shell `grep`/`sed`/`find` use despite the session's tool-navigation rules. The lead re-read and searched the selected candidates with the prescribed tools; delegated-only findings remain attributed or deferred. A link validator initially re-read identical targets and triggered the repetition warning; subsequent checks cache target metadata. These deviations do not turn unverified findings into acceptance evidence.

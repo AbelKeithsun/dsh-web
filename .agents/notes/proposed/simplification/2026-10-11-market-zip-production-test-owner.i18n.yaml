@@ -1,4 +1,0 @@
-# Bilingual-pair consistency record (docs/i18n.md).
-# Both languages have equal authority; re-record with git hash-object after paired edits.
-2026-10-11-market-zip-production-test-owner.md: a253c9e3b9b5f6ace07c37feda975bb8db2fa26a
-2026-10-11-market-zip-production-test-owner.zh.md: adc3c05db74e328cf7aefcf4a045e10709288561
