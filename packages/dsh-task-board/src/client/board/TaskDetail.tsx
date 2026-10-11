@@ -24,6 +24,8 @@ import { LinkSubtaskModal } from './LinkSubtaskModal.tsx'
 import { NewTaskModal } from './NewTaskModal.tsx'
 import { useDialog, usePresence, type OverlayPhase } from './overlay.tsx'
 import { inheritPresetLabel, presetLabel } from './preset-label.ts'
+import { ReasoningEffortField } from './ReasoningEffortField.tsx'
+import { reconcileReasoningEffort } from './model-options.ts'
 import { formatHostTimestamp, formatTime } from './TaskCard.tsx'
 import { STATUS_KEY } from './status-key.ts'
 import { VerificationReport } from './VerificationReport.tsx'
@@ -98,16 +100,18 @@ function ExecutionSettingsSection({ controller, task, pending, executionOptions,
   goalRunEnabled: boolean
 }) {
   const options = executionOptions
+  const models = options.models ?? []
   const workspaceId = task.workspaceId ?? ''
   const mode = task.mode ?? ''
   const permission = task.permission ?? ''
   const model = task.model ?? ''
+  const reasoningEffort = task.reasoningEffort ?? ''
   // A pinned target may disappear from the runtime (workspace deleted,
   // preset removed); keep it selectable as a stale row instead of silently
   // dropping it, so the user sees exactly what the task will ask for.
   const workspaceKnown = workspaceId === '' || options.workspaces.some(item => item.workspaceId === workspaceId)
   const modeKnown = mode === '' || options.presets.some(item => item.id === mode)
-  const modelKnown = model === '' || (options.models ?? []).some(item => item.id === model)
+  const modelKnown = model === '' || models.some(item => item.id === model)
   return (
     <section className={css.detailSection}>
       <h4>{t('detail.executionSettings')}</h4>
@@ -166,15 +170,35 @@ function ExecutionSettingsSection({ controller, task, pending, executionOptions,
           className={css.select}
           value={model}
           disabled={pending}
-          onChange={event => { controller.updateTask(task.id, { model: event.target.value === '' ? undefined : event.target.value }) }}
+          onChange={event => {
+            // The effort is part of this pin: switching to a model that cannot
+            // honor the stored level clears it in the same action instead of
+            // leaving a value the next run would have to reject. The empty
+            // string carries a clear across the JSON transport, where an
+            // `undefined` value would lose the key entirely; the ledger
+            // normalizes blank targets back to "pinned nothing".
+            const next = event.target.value
+            const effort = reconcileReasoningEffort(models, next, reasoningEffort)
+            controller.updateTask(task.id, {
+              model: next,
+              ...(effort === reasoningEffort ? {} : { reasoningEffort: effort }),
+            })
+          }}
         >
           <option value="">{t('exec.model.default')}</option>
           {!modelKnown && <option value={model}>{model}{t('exec.model.unknown')}</option>}
-          {options.models?.map(item => (
+          {models.map(item => (
             <option key={item.id} value={item.id}>{item.name ?? item.id}</option>
           ))}
         </select>
       </label>
+      <ReasoningEffortField
+        models={models}
+        modelId={model}
+        value={reasoningEffort}
+        pending={pending}
+        onChange={effort => { controller.updateTask(task.id, { reasoningEffort: effort }) }}
+      />
       <label className={css.scheduleToggle}>
         <input
           type="checkbox"

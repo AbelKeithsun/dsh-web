@@ -166,6 +166,7 @@ function taskSummary(
     ...(task.mode === undefined ? {} : { mode: task.mode }),
     ...(task.permission === undefined ? {} : { permission: task.permission }),
     ...(task.model === undefined ? {} : { model: task.model }),
+    ...(task.reasoningEffort === undefined ? {} : { reasoningEffort: task.reasoningEffort }),
     ...(task.reuseSession === true ? { reuseSession: true } : {}),
     ...(task.teamRun === true ? { teamRun: true } : {}),
     // Default-OFF opt-in: only a card that asked for the goal run reports it.
@@ -586,7 +587,7 @@ function buildCreateTool(host: TaskBoardToolHost): ToolDefinition {
     name: 'task_board_create',
     description: [
       'Create a task on the DSH task board, or a subtask by passing parentId.',
-      'A subtask inherits every execution target it does not override (workspace, agent preset, permission, model) from its parent, and inherits the parent human permission confirmation together with an inherited binding.',
+      'A subtask inherits every execution target it does not override (workspace, agent preset, permission, model, reasoning effort) from its parent, and inherits the parent human permission confirmation together with an inherited binding.',
       'The deployment caps subtask depth (default one level, maximum three): a subtask of a subtask is refused unless the board is configured deeper.',
       'The task lands in the todo column and does NOT run; call task_board_run to execute it.',
     ].join(' '),
@@ -599,6 +600,7 @@ function buildCreateTool(host: TaskBoardToolHost): ToolDefinition {
       mode: { type: 'string', description: 'Agent preset id the execution session is composed from; omit for the deployment default or the parent value.' },
       permission: { type: 'string', enum: [...TASK_PERMISSIONS], description: 'Permission preset for the execution session. Omit to inherit the parent binding; a value above the session default needs a human confirmation in the board UI before the card can run.' },
       model: { type: 'string', description: 'Pinned model as provider/model (or a model id); omit for the host default or the parent value.' },
+      reasoningEffort: { type: 'string', description: 'Reasoning effort id for that model (an adapter-owned level such as "high"); omit to run at the model own default. Only an effort the target model declares is sent; an empty string clears it back to the default.' },
       reuseSession: { type: 'boolean', description: 'Continue later runs in the previous execution session instead of a fresh conversation.' },
       teamRun: { type: 'boolean', description: 'Run this task as an Agent Team: running it starts one Team Lead session and the Host spawns a teammate per subtask inside it. Omit or false for one independent session per member. Refused when the deployment serves no Agent Teams service.' },
       goalRun: { type: 'boolean', description: 'Start each run with dsh built-in /goal so the session keeps working continuation rounds until the goal completes. Off by default: omit (or pass false) for a single plain turn, and pass true to opt this card in. It only takes effect while the deployment global native /goal switch is on.' },
@@ -645,6 +647,7 @@ function buildCreateTool(host: TaskBoardToolHost): ToolDefinition {
         ...(args.mode === undefined || args.mode === '' ? {} : { mode: args.mode }),
         ...(args.permission === undefined ? {} : { permission: args.permission }),
         ...(args.model === undefined || args.model === '' ? {} : { model: args.model }),
+        ...(args.reasoningEffort === undefined || args.reasoningEffort === '' ? {} : { reasoningEffort: args.reasoningEffort }),
         ...(args.reuseSession === true ? { reuseSession: true } : {}),
         ...(args.teamRun === true ? { teamRun: true } : {}),
         ...(args.goalRun === true ? { goalRun: true } : {}),
@@ -676,7 +679,7 @@ function buildUpdateTool(host: TaskBoardToolHost): ToolDefinition {
   return defineTool({
     name: 'task_board_update',
     description: [
-      'Edit a task board card: title, description, prompt, labels, and the execution targets (workspace, agent preset, permission, model, session reuse).',
+      'Edit a task board card: title, description, prompt, labels, and the execution targets (workspace, agent preset, permission, model, reasoning effort, session reuse).',
       'Only the fields you pass change; pass an empty string to clear a target, or an empty labels array to clear the labels.',
       'Title, description and prompt freeze once the task has started executing; the execution targets stay editable because they only affect future runs.',
       'Changing the pinned permission re-arms the permission confirmation gate.',
@@ -704,6 +707,7 @@ function buildUpdateTool(host: TaskBoardToolHost): ToolDefinition {
         description: 'New permission preset; an empty string clears it back to the session default.',
       },
       model: { type: 'string', description: 'New pinned model; an empty string clears it.' },
+      reasoningEffort: { type: 'string', description: 'New reasoning effort id for the pinned model; an empty string clears it back to the model own default. Only an effort the target model declares is sent at run time.' },
       reuseSession: { type: 'boolean', description: 'Continue later runs in the previous execution session.' },
       teamRun: { type: 'boolean', description: 'Switches this task between a plain cascade (one session per member) and an Agent Team run (Lead session plus a teammate per subtask).' },
       goalRun: { type: 'boolean', description: 'Whether each run starts with dsh built-in /goal (default false, one plain turn). Pass true to opt this card in, or false to return it to the default.' },
@@ -730,6 +734,10 @@ function buildUpdateTool(host: TaskBoardToolHost): ToolDefinition {
       if (has(args, 'workspaceId') && typeof args.workspaceId === 'string') patch.workspaceId = args.workspaceId
       if (has(args, 'mode') && typeof args.mode === 'string') patch.mode = args.mode
       if (has(args, 'model') && typeof args.model === 'string') patch.model = args.model
+      // An empty effort is the wire's clearing value (back to the model's own default).
+      if (has(args, 'reasoningEffort') && typeof args.reasoningEffort === 'string') {
+        patch.reasoningEffort = args.reasoningEffort
+      }
       // An empty permission is the wire's clearing value (back to the session default).
       if (has(args, 'permission') && typeof args.permission === 'string') {
         patch.permission = args.permission === '' ? undefined : args.permission

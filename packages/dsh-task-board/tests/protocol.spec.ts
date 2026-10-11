@@ -207,6 +207,19 @@ describe('task-board action protocol', () => {
     } })?.action.kind).toBe('import')
   })
 
+  it('operator importing a card keeps its model pin together with its level and refuses a malformed one', () => {
+    // Given an exported card pinning a model with a level, and a hand-edited export with a numeric model
+    const pinned = { ...createTask({ title: 'A', description: '', prompt: '' }, 1, 'task-a'), model: 'acme/a', reasoningEffort: 'high' }
+
+    // When the import gate parses both
+    const kept = parseActionEnvelope({ requestId: 'import-pair', action: { kind: 'import', sourceId: 'browser', tasks: [pinned] } })
+    const malformed = parseActionEnvelope({ requestId: 'import-bad-model', action: { kind: 'import', sourceId: 'browser', tasks: [{ ...pinned, model: 42 }] } })
+
+    // Then the pair travels together and a malformed pin is refused
+    expect(kept?.action.kind === 'import' ? kept.action.tasks[0] : undefined).toMatchObject({ model: 'acme/a', reasoningEffort: 'high' })
+    expect(malformed).toBeUndefined()
+  })
+
   it('rejects oversized request ids', () => {
     expect(parseActionEnvelope({
       requestId: 'x'.repeat(257),

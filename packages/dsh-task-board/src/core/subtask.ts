@@ -263,11 +263,12 @@ export function effectiveTaskPermission(task: TaskRecord): TaskRecord['permissio
 /**
  * Resolve the execution targets a (sub)task actually runs with: its own value
  * wins, and an unset target inherits the nearest ancestor up to the root.
- * Workspace, agent preset and model inherit the ancestor's PIN only — a
- * handover bundle is a per-card continuation artefact and is never inherited.
- * The permission inherits the ancestor's EFFECTIVE binding, and its human
- * confirmation travels with it, so a subtask of an already-confirmed elevated
- * card is runnable while a subtask's own unconfirmed binding stays gated.
+ * Workspace, agent preset, model and reasoning effort inherit the ancestor's
+ * PIN only — a handover bundle is a per-card continuation artefact and is never
+ * inherited. The permission inherits the ancestor's EFFECTIVE binding, and its
+ * human confirmation travels with it, so a subtask of an already-confirmed
+ * elevated card is runnable while a subtask's own unconfirmed binding stays
+ * gated.
  */
 /**
  * The immutable teammate name for one team-mode member. Teammate names are
@@ -317,13 +318,22 @@ export function resolveExecutionTargets(
 ): TaskRecord {
   if (task.parentId === undefined) return task
   const chain = [task, ...ancestorChain(tasks, task).slice(0, maxSubtaskDepth)]
-  const first = (key: 'workspaceId' | 'mode' | 'model'): string | undefined => {
-    for (const candidate of chain) {
+  const first = (key: 'workspaceId' | 'mode' | 'model' | 'reasoningEffort', candidates: readonly TaskRecord[]): string | undefined => {
+    for (const candidate of candidates) {
       const value = candidate[key]
       if (value !== undefined) return value
     }
     return undefined
   }
+  // The model pin is the boundary of the effort: an effort is only ever taken
+  // from the card the model came from, or from the card that pinned it below
+  // that one. A card with a model of its own thus sends NO effort when it stores
+  // none — the model's own default — instead of quietly running at an ancestor
+  // level chosen for a different model, even when both models declare that
+  // level. A card with no model of its own still inherits the nearest model
+  // together with the nearest level pinned at or below it.
+  const boundary = chain.findIndex(candidate => candidate.model !== undefined)
+  const effortChain = boundary === -1 ? chain : chain.slice(0, boundary + 1)
   const own = effectiveTaskPermission(task)
   // An own binding (pin or handover) keeps its own confirmation stamp; only an
   // absent one borrows the ancestor's binding AND that ancestor's stamp.
@@ -332,9 +342,10 @@ export function resolveExecutionTargets(
     : undefined
   return {
     ...task,
-    workspaceId: first('workspaceId'),
-    mode: first('mode'),
-    model: first('model'),
+    workspaceId: first('workspaceId', chain),
+    mode: first('mode', chain),
+    model: first('model', chain),
+    reasoningEffort: first('reasoningEffort', effortChain),
     permission: own ?? (owner === undefined ? undefined : effectiveTaskPermission(owner)),
     permissionConfirmedAt: own === undefined ? owner?.permissionConfirmedAt : task.permissionConfirmedAt,
   }

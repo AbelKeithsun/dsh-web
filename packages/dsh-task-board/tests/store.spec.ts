@@ -173,7 +173,7 @@ describe('parseLedger', () => {
   })
   it('round-trips execution targets and repairs broken ones', () => {
     const pinned = createTask(
-      { title: 'pinned', description: '', prompt: '', workspaceId: 'ws-1', mode: 'anchored', permission: 'read-only' },
+      { title: 'pinned', description: '', prompt: '', workspaceId: 'ws-1', mode: 'anchored', permission: 'read-only', model: 'p/m', reasoningEffort: 'high' },
       1,
       't-1',
     )
@@ -181,6 +181,7 @@ describe('parseLedger', () => {
     expect(parsed[0].workspaceId).toBe('ws-1')
     expect(parsed[0].mode).toBe('anchored')
     expect(parsed[0].permission).toBe('read-only')
+    expect(parsed[0].reasoningEffort).toBe('high')
 
     // Blank strings clear the pin; unknown permission strings (a future
     // version's value) fall back to the session default, not a dropped row.
@@ -189,11 +190,16 @@ describe('parseLedger', () => {
       workspaceId: '   ',
       mode: '',
       permission: 'sudo-everything',
+      reasoningEffort: '   ',
     }]))
     expect(repaired).toHaveLength(1)
     expect(repaired[0].workspaceId).toBeUndefined()
     expect(repaired[0].mode).toBeUndefined()
     expect(repaired[0].permission).toBeUndefined()
+    expect(repaired[0].reasoningEffort).toBeUndefined()
+
+    // A non-string effort is an invalid row, like any other execution-target field.
+    expect(parseLedger(JSON.stringify([{ ...pinned, reasoningEffort: 3 }]))).toEqual([])
   })
 
   it('keeps the session-reuse opt-in and normalizes a bare false (#1419)', () => {

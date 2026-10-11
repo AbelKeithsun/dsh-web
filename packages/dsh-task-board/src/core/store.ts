@@ -68,6 +68,7 @@ function isTaskRecordShape(value: unknown): value is Omit<TaskRecord, 'status'> 
   if (record.parentId !== undefined && typeof record.parentId !== 'string') return false
   if (record.workspaceId !== undefined && typeof record.workspaceId !== 'string') return false
   if (record.mode !== undefined && typeof record.mode !== 'string') return false
+  if (record.reasoningEffort !== undefined && typeof record.reasoningEffort !== 'string') return false
   if (record.permission !== undefined && typeof record.permission !== 'string') return false
   if (record.integrations !== undefined && (typeof record.integrations !== 'object' || record.integrations === null || Array.isArray(record.integrations))) return false
   if (record.hidden !== undefined && typeof record.hidden !== 'boolean') return false
@@ -265,6 +266,10 @@ export function parseLedger(raw: string | null): TaskRecord[] {
     // fall back to the session default instead of dropping the row.
     task.workspaceId = normalizeTargetId(row.workspaceId)
     task.mode = normalizeTargetId(row.mode)
+    // The effort is repaired like the other execution-target strings: blank text
+    // from a hand-edited document clears the pin instead of dropping the row,
+    // and the card then runs at its model's own default level.
+    task.reasoningEffort = normalizeTargetId(row.reasoningEffort)
     task.archivedAt = typeof row.archivedAt === 'number' && Number.isFinite(row.archivedAt) ? row.archivedAt : undefined
     task.permission = isTaskPermission(row.permission) ? row.permission as TaskPermission : undefined
     task.reuseSession = row.reuseSession === true ? true : undefined

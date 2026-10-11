@@ -16,7 +16,7 @@ import type { TaskHandoverInput } from '../handover.ts'
  * Editable fields on a task (the update patch surface). `freeze` replaces the
  * continuation-card snapshot (restamping frozenAt); an explicit null clears it.
  */
-export type TaskUpdatePatch = Partial<Pick<TaskRecord, 'title' | 'description' | 'prompt' | 'workspaceId' | 'mode' | 'permission' | 'model' | 'reuseSession' | 'teamRun' | 'goalRun' | 'skipVerification'>> & {
+export type TaskUpdatePatch = Partial<Pick<TaskRecord, 'title' | 'description' | 'prompt' | 'workspaceId' | 'mode' | 'permission' | 'model' | 'reasoningEffort' | 'reuseSession' | 'teamRun' | 'goalRun' | 'skipVerification'>> & {
   freeze?: FreezeSnapshot & { redacted?: boolean } | null
   /** Replaces the handover bundle (restamping bundledAt); an explicit null clears it. */
   handover?: TaskHandoverInput | null
@@ -82,6 +82,7 @@ export function applyUpdateTask(
     const mode = 'mode' in patch ? normalizeTargetId(patch.mode) : undefined
     const permission = 'permission' in patch ? normalizePermission(task.permission, patch.permission) : undefined
     const model = 'model' in patch ? normalizeTargetId(patch.model) : undefined
+    const reasoningEffort = 'reasoningEffort' in patch ? normalizeTargetId(patch.reasoningEffort) : undefined
     const next: TaskRecord = { ...task, ...rest, updatedAt: now }
     // Content fields normalize like creation does (trimmed); an explicit
     // undefined keeps the current value — content cannot be cleared.
@@ -121,6 +122,10 @@ export function applyUpdateTask(
     if (mode !== undefined || 'mode' in patch) next.mode = mode
     if (permission !== undefined || 'permission' in patch) next.permission = permission
     if (model !== undefined || 'model' in patch) next.model = model
+    // The effort is bound to the model route above it: blank text (or an
+    // explicit undefined) returns the card to the model's own default level,
+    // and only the launch decides whether the value can be sent at all.
+    if (reasoningEffort !== undefined || 'reasoningEffort' in patch) next.reasoningEffort = reasoningEffort
     return next
   })
 }

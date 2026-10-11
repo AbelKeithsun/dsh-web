@@ -253,21 +253,41 @@ describe('task_board_list and task_board_get', () => {
 
 describe('task_board_create', () => {
   it('user creating a subtask gets the parent execution targets inherited', async () => {
-    // Given a parent pinned to a permission and a model
+    // Given a parent pinned to a permission, a model and a reasoning effort
     const live = harness()
-    await call(live, 'task_board_create', { title: 'parent', permission: 'workspace-write', model: 'p/m' })
+    await call(live, 'task_board_create', { title: 'parent', permission: 'workspace-write', model: 'p/m', reasoningEffort: 'high' })
     const parentId = await onlyTaskId(live)
 
     // When the user creates a subtask without its own targets
     const created = await call(live, 'task_board_create', { title: 'child', parentId })
 
-    // Then the subtask stores the parent model and the link, while the
-    // permission is left unset so it can only be inherited while attached
-    const task = created.task as { parentId: string; permission?: string; model: string }
+    // Then the subtask stores the parent model and effort plus the link, while
+    // the permission is left unset so it can only be inherited while attached
+    const task = created.task as { parentId: string; permission?: string; model: string; reasoningEffort?: string }
     expect(created.ok).toBe(true)
     expect(task.parentId).toBe(parentId)
     expect(task.model).toBe('p/m')
+    expect(task.reasoningEffort).toBe('high')
     expect(task.permission).toBeUndefined()
+  })
+
+  it('operator setting and clearing a card reasoning effort through the tool surface', async () => {
+    // Given a card that pins a model
+    const live = harness()
+    const created = await call(live, 'task_board_create', { title: 'card', model: 'p/m' })
+    const taskId = (created.task as { id: string }).id
+
+    // When the operator sets an effort, reads the card, then clears it
+    const pinned = await call(live, 'task_board_update', { taskId, reasoningEffort: 'high' })
+    const read = await call(live, 'task_board_get', { taskId })
+    const cleared = await call(live, 'task_board_update', { taskId, reasoningEffort: '' })
+
+    // Then every edit is reported back and the cleared card pins nothing
+    expect(pinned.ok).toBe(true)
+    expect((pinned.task as { reasoningEffort?: string }).reasoningEffort).toBe('high')
+    expect((read.task as { reasoningEffort?: string }).reasoningEffort).toBe('high')
+    expect(cleared.ok).toBe(true)
+    expect((cleared.task as { reasoningEffort?: string }).reasoningEffort).toBeUndefined()
   })
 
   it('user creating a subtask of a subtask is refused at the default depth', async () => {

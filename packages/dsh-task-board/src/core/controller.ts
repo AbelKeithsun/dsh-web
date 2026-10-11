@@ -127,6 +127,17 @@ export interface ExecutionModelOption {
   name?: string
   label?: string
   provider?: string
+  /**
+   * Reasoning metadata the adapter declares for this exact route. An effort
+   * picker is offered only while `supported`, and its choices are `efforts` —
+   * the ids the target model really accepts, so the UI never offers (or keeps)
+   * a level the model would reject. Absent means the deployment published no
+   * capability for this model; the card value is then left untouched.
+   */
+  reasoning?: {
+    supported: boolean
+    efforts?: readonly string[]
+  }
 }
 
 /** The execution-target option sets the UI feeds into the controller. */

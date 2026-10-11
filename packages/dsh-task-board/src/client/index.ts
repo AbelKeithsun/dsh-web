@@ -24,7 +24,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: pulls the workspace plugin's Context merge (ctx.uiWorkspace), the
 // multi-instance navigation face that replaced ISessions.open().
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-import { BoardController, TASK_BOARD_PANEL_ID } from '../core/controller.ts'
+import { BoardController, TASK_BOARD_PANEL_ID, type ExecutionModelOption } from '../core/controller.ts'
+import { modelOptionsFromCatalog, modelOptionsFromDiscoveredModels } from './board/model-options.ts'
 import { mainViewSessionId } from './main-session.ts'
 import { LocalStorageTaskStore } from '../core/store.ts'
 import { claimTaskboardApply, releaseTaskboardApply } from './apply-guard.ts'
@@ -339,7 +340,7 @@ export function apply(ctx: ClientContext): void {
     disposers.push(() => { void presetRosterFeed.dispose() })
     const pushModelOptions = async (): Promise<void> => {
       try {
-        let models: Array<{ id: string; name?: string; provider?: string }> = []
+        let models: ExecutionModelOption[] = []
         let sessionRemote: ClientRemote['session'] | undefined
         try {
           sessionRemote = (remote as Partial<ClientRemote>).session
@@ -348,15 +349,7 @@ export function apply(ctx: ClientContext): void {
         }
         if (typeof sessionRemote?.modelCatalog === 'function') {
           const res = await sessionRemote.modelCatalog()
-          if (res.ok && Array.isArray(res.value?.groups)) {
-            for (const g of res.value.groups) {
-              const provider = (g as { id?: string; provider?: string }).id ?? (g as { id?: string; provider?: string }).provider
-              for (const m of g.models ?? []) {
-                const qualifiedId = provider ? `${provider}/${m.id}` : m.id
-                models.push({ id: qualifiedId, name: m.name ?? m.id, provider })
-              }
-            }
-          }
+          if (res.ok) models = modelOptionsFromCatalog(res.value)
         }
         if (models.length === 0) {
           const conn = ctx.get('connection') as {
@@ -368,11 +361,8 @@ export function apply(ctx: ClientContext): void {
           } | undefined
           if (conn?.api) {
             if (typeof conn.api.llm?.discoverModels === 'function') {
-              const res = await conn.api.llm.discoverModels() as { result?: { value?: { models?: Array<{ id: string; name?: string }> } } }
-              const list = res?.result?.value?.models
-              if (Array.isArray(list)) {
-                models = list.map(m => ({ id: m.id, name: m.name }))
-              }
+              const res = await conn.api.llm.discoverModels() as { result?: { value?: { models?: unknown } } }
+              models = modelOptionsFromDiscoveredModels(res?.result?.value?.models)
             }
             const catalogFn = typeof conn.api.session?.modelCatalog === 'function'
               ? conn.api.session.modelCatalog
@@ -380,17 +370,8 @@ export function apply(ctx: ClientContext): void {
                 ? conn.api.sessions.modelCatalog
                 : undefined
             if (models.length === 0 && catalogFn !== undefined) {
-              const res = await catalogFn() as { result?: { value?: { groups?: Array<{ id?: string; provider?: string; models?: Array<{ id: string; name?: string }> }> } } }
-              const groups = res?.result?.value?.groups
-              if (Array.isArray(groups)) {
-                for (const g of groups) {
-                  const provider = g.id ?? g.provider
-                  for (const m of g.models ?? []) {
-                    const qualifiedId = provider ? `${provider}/${m.id}` : m.id
-                    models.push({ id: qualifiedId, name: m.name ?? m.id, provider })
-                  }
-                }
-              }
+              const res = await catalogFn() as { result?: { value?: unknown } }
+              models = modelOptionsFromCatalog(res?.result?.value)
             }
           }
         }

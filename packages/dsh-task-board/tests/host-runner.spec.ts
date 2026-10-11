@@ -187,6 +187,10 @@ describe('HostExecutionRunner', () => {
 
   it('selects the pinned model on the session before dispatching prompt', async () => {
     const order: string[] = []
+    // The payload is recorded and asserted AFTER the launch: an expectation
+    // thrown inside the gateway fake is swallowed by the runner's best-effort
+    // model-selection catch, which would make this case vacuous.
+    const selections: Array<Record<string, unknown>> = []
     const gateway = {
       stream: fakeStream(async () => ({ async *[Symbol.asyncIterator]() { yield snapshot([], 0, false) } })),
       invoke: fakeInvoke(async (request: GatewayRequest) => {
@@ -202,12 +206,8 @@ describe('HostExecutionRunner', () => {
         }
         if (request.method === 'selectModel') {
           order.push('selectModel')
-          expect(payload).toEqual({
-            sessionId: 'session-model',
-            provider: 'deepseek',
-            modelId: 'deepseek-chat',
-          })
-          return { currentModel: { provider: 'deepseek', modelId: 'deepseek-chat' } }
+          selections.push(payload)
+          return { selected: { provider: payload.provider, model: payload.model } }
         }
         if (request.method === 'prompt') {
           order.push('prompt')
@@ -221,6 +221,9 @@ describe('HostExecutionRunner', () => {
       model: 'deepseek/deepseek-chat',
     }
     await expect(new HostExecutionRunner(gateway).launch(taskWithModel)).resolves.toBe('session-model')
+    // A card that pins no reasoning effort gets exactly the selection it always
+    // got: the model route, with no effort key at all.
+    expect(selections).toEqual([{ sessionId: 'session-model', provider: 'deepseek', model: 'deepseek-chat' }])
     expect(order).toEqual(['create', 'rename', 'selectModel', 'prompt'])
   })
 

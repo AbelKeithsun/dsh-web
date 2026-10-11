@@ -60,11 +60,21 @@ export function applyCreateTask(
   // unbounded confirmed elevated roots. The permission is resolved live from the
   // attached ancestors at launch instead (see core/subtask.ts), so detaching
   // removes the inheritance by construction.
+  //
+  // The reasoning effort is bound to the model it was chosen for, so it travels
+  // ONLY with the parent model it belongs to: a subtask that picked a model of
+  // its own (the create form's model switch clears the effort) runs at that
+  // model's own default, and re-filling the parent's level here would send an
+  // effort the user never chose for that model. A subtask that picked nothing
+  // still inherits the whole pair — model and level — and resolves it again at
+  // launch, so clearing the card's own value returns it to that inheritance.
+  const picksOwnModel = input.model !== undefined && input.model.trim() !== ''
   const effective: NewTaskInput = parent === undefined ? input : {
     ...input,
     workspaceId: input.workspaceId ?? parent.workspaceId,
     mode: input.mode ?? parent.mode,
     model: input.model ?? parent.model,
+    reasoningEffort: input.reasoningEffort ?? (picksOwnModel ? undefined : parent.reasoningEffort),
   }
   let task = createTask(effective, now, id)
   // Arm the requested schedule (new-task dialog). The Host wire gate already

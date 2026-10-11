@@ -16,6 +16,9 @@ import type { OverlayPhase } from './overlay.tsx'
 import { formatHostTimestamp } from './TaskCard.tsx'
 import { readParseModelPreference, writeParseModelPreference } from './parse-model-pref.ts'
 import { inheritPresetLabel, isBuiltinPreset, presetLabel } from './preset-label.ts'
+import { ReasoningEffortField } from './ReasoningEffortField.tsx'
+import { reconcileReasoningEffort } from './model-options.ts'
+import { parentAwaitsTeamRunPromotion, promoteParentForTeamRun } from './team-run-promotion.ts'
 import css from '../board.module.css'
 
 export interface NewTaskModalProps {
@@ -55,6 +58,9 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
   const [mode, setMode] = useState(initialTask?.mode ?? parentTask?.mode ?? '')
   const [permission, setPermission] = useState(initialTask?.permission ?? '')
   const [model, setModel] = useState(initialTask?.model ?? parentTask?.model ?? '')
+  // The effort belongs to the model pin, so a duplicate or subtask starts from
+  // the same pair the source card carries; '' follows the model/Host default.
+  const [reasoningEffort, setReasoningEffort] = useState(initialTask?.reasoningEffort ?? parentTask?.reasoningEffort ?? '')
   const inheritedPermission = parentTask === undefined ? undefined : effectiveTaskPermission(parentTask)
   const [reuseSession, setReuseSession] = useState(initialTask?.reuseSession ?? false)
   // Unchecked by default: a new task runs one plain turn unless the user opts
@@ -100,14 +106,14 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
   const [parsePending, setParsePending] = useState(false)
   const [parseError, setParseError] = useState<string | undefined>(undefined)
   const parseAbort = useRef<AbortController | undefined>(undefined)
-  const parseModels = options.models ?? []
+  const models = options.models ?? []
   // A pinned target may have disappeared from the runtime (workspace deleted,
   // preset removed) — especially when the form starts from a subtask's parent.
   // Keep it selectable as a stale row, so the field shows what the create
   // action will actually send instead of silently displaying the default.
   const workspaceKnown = workspaceId === '' || options.workspaces.some(item => item.workspaceId === workspaceId)
   const modeKnown = mode === '' || options.presets.some(item => item.id === mode)
-  const modelKnown = model === '' || parseModels.some(item => item.id === model)
+  const modelKnown = model === '' || models.some(item => item.id === model)
 
   // The workspace list and preset roster arrive from the runtime after mount;
   // follow them so the pickers never freeze on an empty snapshot.
@@ -124,8 +130,8 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
   // no longer offers falls back to the Host default; an empty value is the
   // Host-default choice and is never overwritten by the roster (issue #1621).
   useEffect(() => {
-    if (parseModel === '' || parseModels.length === 0) return
-    if (parseModels.some(option => option.id === parseModel)) return
+    if (parseModel === '' || models.length === 0) return
+    if (models.some(option => option.id === parseModel)) return
     setParseModel('')
     writeParseModelPreference('')
   }, [parseModel, options.models])
@@ -219,6 +225,7 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
       mode: mode === '' ? undefined : mode,
       permission: permission === '' ? undefined : permission as TaskPermission,
       model: model === '' ? undefined : model,
+      ...(reasoningEffort === '' ? {} : { reasoningEffort }),
       ...(reuseSession ? { reuseSession: true } : {}),
       ...(goalRun ? { goalRun: true } : {}),
       ...(skipVerification ? { skipVerification: true } : {}),
@@ -247,6 +254,11 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
       setError(controller.getSnapshot().transportError ?? t('new.required'))
       return
     }
+    // The join is confirmed, so a parent that just gained a subtask is opted in
+    // where Agent Teams are served. The write is a convenience, not part of the
+    // creation: a refused one (the card was archived meanwhile) already
+    // surfaced through the snapshot and never fails the created task.
+    await promoteParentForTeamRun(controller, parentTask)
     if (isDuplicate && archiveOriginal && initialTask !== undefined) {
       if (onDuplicateSuccess !== undefined) {
         await onDuplicateSuccess(initialTask.id)
@@ -301,6 +313,9 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
   const modelLabel = model === ''
     ? t('exec.model.default')
     : (options.models ?? []).find(item => item.id === model)?.name ?? model
+  // The effort is part of the model pin, so a pinned one rides the model's own
+  // summary entry instead of standing as a region-level value of its own.
+  const modelSummary = reasoningEffort === '' ? modelLabel : `${modelLabel} · ${reasoningEffort}`
   // Collapsed-region summaries: what each closed region currently holds, so a
   // collapse never hides the configuration without a trace.
   // A host-default model adds only the long parenthetical name to the
@@ -309,7 +324,7 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
     workspaceLabel,
     modeLabel,
     permissionLabel,
-    ...(model === '' ? [] : [modelLabel]),
+    ...(model === '' ? [] : [modelSummary]),
   ].join(' · ')
   const tagCount = cleanTags(tags).length
   const labelsSummary = tagCount === 0 ? t('new.summary.none') : t('new.summary.labelCount', { count: String(tagCount) })
@@ -378,7 +393,7 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
                 }}
               >
                 <option value="">{t('exec.model.default')}</option>
-                {parseModels.map(option => (
+                {models.map(option => (
                   <option key={option.id} value={option.id}>{option.name ?? option.id}</option>
                 ))}
               </select>
@@ -405,9 +420,14 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
       )}
 
       {parentTask !== undefined && (
-        <p className={css.detailText} data-dsh-part="subtask-inherit">
-          {t('detail.parent')}: {parentTask.title} · {t('new.subtaskInherit')}
-        </p>
+        <>
+          <p className={css.detailText} data-dsh-part="subtask-inherit">
+            {t('detail.parent')}: {parentTask.title} · {t('new.subtaskInherit')}
+          </p>
+          {parentAwaitsTeamRunPromotion(controller, parentTask) && (
+            <p className={css.detailText}>{t('exec.teamRunAutoHint')}</p>
+          )}
+        </>
       )}
 
       <CollapsibleSection title={t('new.section.content')} defaultOpen>
@@ -506,15 +526,29 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
           <select
             className={css.select}
             value={model}
-            onChange={event => { setModel(event.target.value) }}
+            onChange={event => {
+              // The effort belongs to the model: switching to a model that
+              // cannot honor the picked level drops it instead of carrying it.
+              const next = event.target.value
+              setModel(next)
+              setReasoningEffort(current => reconcileReasoningEffort(models, next, current))
+            }}
           >
             <option value="">{t('exec.model.default')}</option>
             {!modelKnown && <option value={model}>{model}{t('exec.model.unknown')}</option>}
-            {options.models?.map(item => (
+            {models.map(item => (
               <option key={item.id} value={item.id}>{item.name ?? item.id}</option>
             ))}
           </select>
         </label>
+
+        <ReasoningEffortField
+          models={models}
+          modelId={model}
+          value={reasoningEffort}
+          pending={pending}
+          onChange={setReasoningEffort}
+        />
       </CollapsibleSection>
 
       <CollapsibleSection title={t('new.section.run')} summary={runSummary}>

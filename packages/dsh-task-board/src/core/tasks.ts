@@ -407,6 +407,15 @@ export interface TaskRecord {
    */
   model?: string
   /**
+   * Reasoning effort pinned for that execution route (an adapter-owned id such
+   * as "high"). Absent (or blank) means INHERIT: the session runs at the
+   * model's own default level, exactly as a card written before the field
+   * existed does. The launch sends the value only when the target model's
+   * adapter declares that exact id, so switching a card to a model without
+   * that level never pushes an invalid selection (see core/reasoning-effort.ts).
+   */
+  reasoningEffort?: string
+  /**
    * Whether later executions continue in the previous execution's session
    * (issue #1419) instead of minting a fresh conversation per run. Absent or
    * false keeps the historical one-session-per-execution behavior; the reuse
@@ -535,6 +544,8 @@ export interface NewTaskInput {
   permission?: TaskPermission
   /** Optional pinned model for the execution session; absent = host default. */
   model?: string
+  /** Optional reasoning effort for that model route; empty/absent = the model's own default. */
+  reasoningEffort?: string
   /** Reuse the previous execution's session for later runs (issue #1419). */
   reuseSession?: boolean
   /** Run the subtree as an Agent Team (Team Lead session plus one teammate per direct subtask). */
@@ -699,6 +710,7 @@ export function createTask(input: NewTaskInput, now: number, id: string): TaskRe
     mode: normalizeTargetId(input.mode),
     permission: isTaskPermission(input.permission) ? input.permission : undefined,
     model: normalizeTargetId(input.model),
+    reasoningEffort: normalizeTargetId(input.reasoningEffort),
     reuseSession: input.reuseSession === true ? true : undefined,
     teamRun: input.teamRun === true ? true : undefined,
     // Default OFF: only an explicit true is stored, so a card that never

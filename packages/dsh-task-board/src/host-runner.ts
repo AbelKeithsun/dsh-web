@@ -4,6 +4,8 @@ import type { CommandResult } from '@deepseek-ai/dsh-commands/types'
 import type { Workspace } from '@deepseek-ai/dsh-workspace/types'
 import { teammateName } from './core/subtask.ts'
 import { mostRecentWorkspaceId } from './core/workspace-target.ts'
+import { declaredRoute, normalizeReasoningEffort, resolveReasoningEffort, type ReasoningRoute } from './core/reasoning-effort.ts'
+import type { ModelCatalogView } from './core/verification.ts'
 import type { TaskPermission, TaskRecord } from './core/tasks.ts'
 
 /**
@@ -377,6 +379,14 @@ export class HostExecutionRunner {
      * `goalRun` still applies on top of it (both must ASK for a goal).
      */
     goalEnabled?: boolean
+    /**
+     * The host model catalog, read ONCE per execution by the caller. The card's
+     * pinned reasoning effort is sent only when this catalog declares it for the
+     * route the execution runs at, so one snapshot decides both the acceptance
+     * contract and the effort this run freezes. Absent means "no capability
+     * evidence": an effort is then not sent at all.
+     */
+    catalog?: ModelCatalogView
   } = {}): Promise<string> {
     // A handover bundle overrides the legacy pin fields: the bundle is the
     // authoritative execution triplet for a continuation card (issue #5). A
@@ -417,7 +427,7 @@ export class HostExecutionRunner {
         // at the gate without its binding.
         options.onSession?.(reused)
         await this.assertReusedPreset(reused, mode)
-        await this.pinAndPrompt(reused, task, permission, options.promptContext, options.onGoalArmed, options.goalEnabled === true)
+        await this.pinAndPrompt(reused, task, permission, options.promptContext, options.onGoalArmed, options.goalEnabled === true, options.catalog)
       } catch (error) {
         throw new SessionLaunchError(reused, error)
       }
@@ -431,7 +441,7 @@ export class HostExecutionRunner {
     options.onSession?.(sessionId)
     try {
       await this.invoke('session', 'rename', { sessionId, title: task.title })
-      await this.pinAndPrompt(sessionId, task, permission, options.promptContext, options.onGoalArmed, options.goalEnabled === true)
+      await this.pinAndPrompt(sessionId, task, permission, options.promptContext, options.onGoalArmed, options.goalEnabled === true, options.catalog)
     } catch (error) {
       throw new SessionLaunchError(sessionId, error)
     }
@@ -467,9 +477,58 @@ export class HostExecutionRunner {
   }
 
   /**
+   * Split a `provider/model` pin. A pin without a provider keeps only the model
+   * id: the provider is the one the host catalog declares for it, resolved at
+   * launch because the session wire contract requires a provider.
+   */
+  private static pinnedRoute(model: string | undefined): ReasoningRoute | undefined {
+    const raw = model?.trim()
+    if (raw === undefined || raw === '') return undefined
+    const slash = raw.indexOf('/')
+    if (slash < 0) return { model: raw }
+    const provider = raw.slice(0, slash).trim()
+    const modelId = raw.slice(slash + 1).trim()
+    if (provider === '' || modelId === '') return undefined
+    return { provider, model: modelId }
+  }
+
+  /**
+   * The route a card that pins no model actually runs at: the session's own
+   * recorded selection (the durable fold the GUI reads; `next` is the pending
+   * user choice, `lastUsed` what the last request consumed), or — for a session
+   * that has selected none yet, which is exactly a session that would start at
+   * the deployment default — the host default from the catalog.
+   *
+   * A route that cannot be READ is undefined and the effort is not sent:
+   * falling back to the host default there would silently switch the model of a
+   * session this run only meant to continue.
+   */
+  private async sessionRoute(sessionId: ExecutionSessionId, catalog?: ModelCatalogView): Promise<ReasoningRoute | undefined> {
+    let selection: { provider?: unknown; model?: unknown } | null | undefined
+    try {
+      const projections = await this.invoke('session', 'projections', { sessionId }) as
+        | { values?: { modelSelection?: { lastUsed?: { provider?: unknown; model?: unknown } | null; next?: { provider?: unknown; model?: unknown } | null } } }
+        | null
+      selection = projections?.values?.modelSelection?.next ?? projections?.values?.modelSelection?.lastUsed
+    } catch (error) {
+      console.warn('[dsh-task-board] session/projections failed while resolving the execution model route', error)
+      return undefined
+    }
+    if (typeof selection?.provider === 'string' && selection.provider !== ''
+      && typeof selection.model === 'string' && selection.model !== '') {
+      return { provider: selection.provider, model: selection.model }
+    }
+    return catalog?.default === undefined
+      ? undefined
+      : { provider: catalog.default.provider, model: catalog.default.model }
+  }
+
+  /**
    * Re-assert the pinned execution contract on a session and queue the task
    * prompt. Shared by the fresh-session and reuse paths so both apply exactly
-   * the same permission/model pins before the prompt.
+   * the same permission/model/effort pins before the prompt. A session that
+   * refuses a selection carrying a catalog-confirmed effort throws here, so the
+   * prompt is never queued behind a run at the wrong level.
    */
   private async pinAndPrompt(
     sessionId: ExecutionSessionId,
@@ -478,6 +537,7 @@ export class HostExecutionRunner {
     context: PromptContext = {},
     onGoalArmed?: (armed: boolean) => void,
     goalEnabled = false,
+    catalog?: ModelCatalogView,
   ): Promise<void> {
     if (permission !== undefined) {
       if (this.commands === undefined) throw new Error('permission command dispatcher is unavailable')
@@ -485,19 +545,43 @@ export class HostExecutionRunner {
       if (command === undefined) throw new Error('permission command was not acknowledged')
       if (command.kind !== 'success') throw new Error(command.text ?? 'permission command failed')
     }
-    if (task.model !== undefined && task.model.trim() !== '') {
-      const rawModel = task.model.trim()
-      const slashIdx = rawModel.indexOf('/')
-      const provider = slashIdx >= 0 ? rawModel.slice(0, slashIdx).trim() : undefined
-      const modelId = slashIdx >= 0 ? rawModel.slice(slashIdx + 1).trim() : rawModel
+    // The effort is bound to the model route the execution runs at. A card that
+    // pins no model of its own runs at the session's route, so that route is
+    // resolved first — and only when there is an effort to place: a card that
+    // never chose one must not gain a model-selection call it did not have.
+    const requestedEffort = normalizeReasoningEffort(task.reasoningEffort)
+    const pinned = HostExecutionRunner.pinnedRoute(task.model)
+    const route = pinned ?? (requestedEffort === undefined ? undefined : await this.sessionRoute(sessionId, catalog))
+    if (route !== undefined) {
+      const routeLabel = `${route.provider === undefined ? '' : route.provider + '/'}${route.model}`
+      const decision = resolveReasoningEffort(requestedEffort, catalog, route)
+      if (decision.dropped !== undefined) {
+        console.warn(`[dsh-task-board] model route ${routeLabel} does not declare reasoning effort "${decision.dropped}"; session ${sessionId} runs at the model default`)
+      }
+      // The catalog completes a bare model pin into the provider the session
+      // request must name; an undeclared pin keeps its own spelling exactly as
+      // before, minus an effort that could not be verified.
+      const declared = declaredRoute(catalog, route)
+      const provider = declared?.provider ?? route.provider
+      const modelId = declared?.model ?? route.model
       try {
         await this.invoke('session', 'selectModel', {
           sessionId,
-          ...(provider ? { provider } : {}),
+          ...(provider === undefined ? {} : { provider }),
           model: modelId,
+          ...(decision.effort === undefined ? {} : { reasoningEffort: decision.effort }),
         })
       } catch (modelError) {
-        console.warn(`[dsh-task-board] failed to select model "${task.model}" for session ${sessionId}, falling back to default:`, modelError)
+        // An effort the catalog CONFIRMED for this route is a contract, not a
+        // preference: if the session refuses the selection, the run fails here,
+        // before the prompt, rather than silently executing at the model default
+        // the user did not pick. A selection that carries no confirmed effort
+        // keeps the best-effort behavior: the card was asked to run, and losing
+        // the work over a model switch this run never promised is worse.
+        if (decision.effort !== undefined) {
+          throw new Error(`session ${sessionId} refused the model selection "${provider === undefined ? modelId : provider + '/' + modelId}" with reasoning effort "${decision.effort}": ` + (modelError instanceof Error ? modelError.message : String(modelError)))
+        }
+        console.warn(`[dsh-task-board] failed to select model "${provider === undefined ? modelId : provider + '/' + modelId}" for session ${sessionId}, falling back to default:`, modelError)
       }
     }
     await this.invoke('session', 'prompt', {

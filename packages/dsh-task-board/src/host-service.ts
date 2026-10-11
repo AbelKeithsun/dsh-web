@@ -523,9 +523,13 @@ export class TaskBoardHostService {
       // The card's opt-out is a DISTINCT reason, not the board switch: the
       // report must be able to say which of the two turned the gate off.
       const skippedBy: ExecutionVerification['applicability'] = opened.task.skipVerification === true ? 'skipped' : 'disabled'
+      // ONE catalog read decides both this execution's acceptance contract and
+      // the reasoning effort its session may be given: the card's effort is sent
+      // only when the same snapshot declares it for the route the run uses.
+      const catalog = await this.verificationCatalog()
       const contract = resolveContract(
         { ...settings, enabled: settings.enabled && opened.task.skipVerification !== true },
-        await this.verificationCatalog(),
+        catalog,
       )
       // An execution that will not become a goal run can never fire the
       // completion gate, so it is marked with the reason that actually applied:
@@ -549,6 +553,8 @@ export class TaskBoardHostService {
         // The frozen global switch travels with the launch, so the runner's
         // arming decision is exactly the one made above.
         goalEnabled,
+        // The same catalog snapshot the acceptance contract was frozen from.
+        catalog,
         // Bind the session to the execution before the prompt is queued, so the
         // completion gate can never observe the agent without its binding.
         onSession: (id) => {

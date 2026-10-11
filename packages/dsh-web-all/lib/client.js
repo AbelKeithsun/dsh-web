@@ -5166,6 +5166,7 @@ window.__ModuleLoader__.load({
 				mode: normalizeTargetId(input.mode),
 				permission: isTaskPermission(input.permission) ? input.permission : void 0,
 				model: normalizeTargetId(input.model),
+				reasoningEffort: normalizeTargetId(input.reasoningEffort),
 				reuseSession: input.reuseSession === true ? true : void 0,
 				teamRun: input.teamRun === true ? true : void 0,
 				goalRun: input.goalRun === true ? true : void 0,
@@ -5796,11 +5797,13 @@ window.__ModuleLoader__.load({
 					error: `subtask depth limit (${limit}) exceeded`
 				};
 			}
+			const picksOwnModel = input.model !== void 0 && input.model.trim() !== "";
 			let task = createTask(parent === void 0 ? input : {
 				...input,
 				workspaceId: input.workspaceId ?? parent.workspaceId,
 				mode: input.mode ?? parent.mode,
-				model: input.model ?? parent.model
+				model: input.model ?? parent.model,
+				reasoningEffort: input.reasoningEffort ?? (picksOwnModel ? void 0 : parent.reasoningEffort)
 			}, now, id);
 			const requested = input.schedule;
 			if (requested?.enabled === true) {
@@ -6250,6 +6253,7 @@ window.__ModuleLoader__.load({
 				const mode = "mode" in patch ? normalizeTargetId(patch.mode) : void 0;
 				const permission = "permission" in patch ? normalizePermission(task.permission, patch.permission) : void 0;
 				const model = "model" in patch ? normalizeTargetId(patch.model) : void 0;
+				const reasoningEffort = "reasoningEffort" in patch ? normalizeTargetId(patch.reasoningEffort) : void 0;
 				const next = {
 					...task,
 					...rest,
@@ -6275,6 +6279,7 @@ window.__ModuleLoader__.load({
 				if (mode !== void 0 || "mode" in patch) next.mode = mode;
 				if (permission !== void 0 || "permission" in patch) next.permission = permission;
 				if (model !== void 0 || "model" in patch) next.model = model;
+				if (reasoningEffort !== void 0 || "reasoningEffort" in patch) next.reasoningEffort = reasoningEffort;
 				return next;
 			});
 		}
@@ -6935,6 +6940,139 @@ window.__ModuleLoader__.load({
 				for (const fn of [...this.listeners]) fn();
 			}
 		};
+		//#endregion
+		//#region ../dsh-task-board/src/client/board/model-options.ts
+		/** A plain JSON object, or undefined for anything else (including arrays). */
+		function record(value) {
+			return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
+		}
+		/** A non-empty string, or undefined. */
+		function text(value) {
+			return typeof value === "string" && value !== "" ? value : void 0;
+		}
+		/** The effort ids an adapter published for one model, in catalog order. */
+		function effortIdsOf(reasoning) {
+			const efforts = [];
+			for (const entry of Array.isArray(reasoning.efforts) ? reasoning.efforts : []) {
+				const id = text(record(entry)?.id);
+				if (id !== void 0 && !efforts.includes(id)) efforts.push(id);
+			}
+			return efforts;
+		}
+		/**
+		* What the catalog declares about one model's reasoning: a published
+		* `reasoning` block is what "this route reasons" means, and a model published
+		* without one is declared to have none. A model the reply never described at
+		* all is a different state, expressed by the row carrying no capability.
+		*/
+		function reasoningOf(model) {
+			const reasoning = record(model.reasoning);
+			if (reasoning === void 0) return { supported: false };
+			const efforts = effortIdsOf(reasoning);
+			return {
+				supported: true,
+				...efforts.length === 0 ? {} : { efforts }
+			};
+		}
+		/**
+		* One picker row, or undefined when the entry carries no usable id.
+		* @param withCapability - whether this reply declares reasoning metadata at
+		* all; the flat discovery list does not, so its rows stay silent about it.
+		*/
+		function rowOf(model, provider, withCapability) {
+			const id = text(model.id);
+			if (id === void 0) return void 0;
+			const reasoning = withCapability ? reasoningOf(model) : void 0;
+			return {
+				id: provider === void 0 ? id : `${provider}/${id}`,
+				name: text(model.name) ?? id,
+				...provider === void 0 ? {} : { provider },
+				...reasoning === void 0 ? {} : { reasoning }
+			};
+		}
+		/**
+		* Normalize a `session/modelCatalog` reply into picker rows: one row per model
+		* of every provider group, keyed by the qualified route an execution pins.
+		* @param value - the raw catalog reply.
+		* @returns the rows, empty when the reply is unreadable.
+		*/
+		function modelOptionsFromCatalog(value) {
+			const options = [];
+			const groups = record(value)?.groups;
+			for (const entry of Array.isArray(groups) ? groups : []) {
+				const group = record(entry);
+				if (group === void 0) continue;
+				const provider = text(group.id) ?? text(group.provider);
+				for (const item of Array.isArray(group.models) ? group.models : []) {
+					const model = record(item);
+					if (model === void 0) continue;
+					const row = rowOf(model, provider, true);
+					if (row !== void 0) options.push(row);
+				}
+			}
+			return options;
+		}
+		/**
+		* Normalize the flat `llm/discoverModels` list into picker rows. That reply
+		* names models only, so every row leaves the reasoning capability unknown.
+		* @param value - the raw discovery list.
+		* @returns the rows, empty when the list is unreadable.
+		*/
+		function modelOptionsFromDiscoveredModels(value) {
+			const options = [];
+			for (const item of Array.isArray(value) ? value : []) {
+				const model = record(item);
+				if (model === void 0) continue;
+				const row = rowOf(model, void 0, false);
+				if (row !== void 0) options.push(row);
+			}
+			return options;
+		}
+		/**
+		* The capability row the roster publishes for one model route.
+		* @returns undefined when no model is pinned, or the roster does not describe
+		* the pinned one — an unknown model is not the same as a model without
+		* reasoning.
+		*/
+		function reasoningOfModel(models, modelId) {
+			if (modelId === "") return void 0;
+			return models.find((item) => item.id === modelId)?.reasoning;
+		}
+		/**
+		* The effort ids the picker offers for a model, in catalog order.
+		* @returns an empty list when the model is unpinned, unknown, declares no
+		* reasoning, or publishes no selectable level.
+		*/
+		function reasoningEffortsFor(models, modelId) {
+			const reasoning = reasoningOfModel(models, modelId);
+			return reasoning?.supported === true ? [...reasoning.efforts ?? []] : [];
+		}
+		/** Whether the effort picker may be operated: a pinned model with declared, selectable levels. */
+		function reasoningPickerEnabled(models, modelId) {
+			return reasoningEffortsFor(models, modelId).length > 0;
+		}
+		/**
+		* The effort to keep when the picked model changes. Only a model that declares
+		* its levels can invalidate one: a model the roster cannot describe keeps the
+		* stored value, because the roster has no grounds to call it invalid.
+		* @param effort - the effort currently stored/selected ('' = follow the default).
+		* @returns the effort to keep.
+		*/
+		function reconcileReasoningEffort(models, modelId, effort) {
+			if (effort === "") return "";
+			const reasoning = reasoningOfModel(models, modelId);
+			if (reasoning === void 0) return modelId === "" ? "" : effort;
+			return reasoning.efforts?.includes(effort) === true ? effort : "";
+		}
+		/**
+		* The copy explaining why the picker is in its current state. One lookup for
+		* both editors, so the create dialog and the detail page never drift apart.
+		*/
+		function reasoningHintKey(models, modelId) {
+			if (modelId === "") return "exec.reasoning.hint.pickModel";
+			if (reasoningOfModel(models, modelId) === void 0) return "exec.reasoning.hint.unknownModel";
+			return reasoningPickerEnabled(models, modelId) ? "exec.reasoning.hint.inherit" : "exec.reasoning.hint.noEfforts";
+		}
 		//#endregion
 		//#region ../dsh-task-board/src/client/main-session.ts
 		/**
@@ -7685,6 +7823,7 @@ window.__ModuleLoader__.load({
 			if (record.parentId !== void 0 && typeof record.parentId !== "string") return false;
 			if (record.workspaceId !== void 0 && typeof record.workspaceId !== "string") return false;
 			if (record.mode !== void 0 && typeof record.mode !== "string") return false;
+			if (record.reasoningEffort !== void 0 && typeof record.reasoningEffort !== "string") return false;
 			if (record.permission !== void 0 && typeof record.permission !== "string") return false;
 			if (record.integrations !== void 0 && (typeof record.integrations !== "object" || record.integrations === null || Array.isArray(record.integrations))) return false;
 			if (record.hidden !== void 0 && typeof record.hidden !== "boolean") return false;
@@ -7850,6 +7989,7 @@ window.__ModuleLoader__.load({
 				}));
 				task.workspaceId = normalizeTargetId(row.workspaceId);
 				task.mode = normalizeTargetId(row.mode);
+				task.reasoningEffort = normalizeTargetId(row.reasoningEffort);
 				task.archivedAt = typeof row.archivedAt === "number" && Number.isFinite(row.archivedAt) ? row.archivedAt : void 0;
 				task.permission = isTaskPermission(row.permission) ? row.permission : void 0;
 				task.reuseSession = row.reuseSession === true ? true : void 0;
@@ -8190,6 +8330,14 @@ window.__ModuleLoader__.load({
 			"exec.permission.danger-full-access": "完全访问",
 			"exec.model.default": "宿主默认（agent-default-model）",
 			"exec.model.unknown": "（未知模型/回退默认）",
+			"exec.reasoning": "思考档位",
+			"exec.reasoning.inherit": "沿用模型/宿主默认",
+			"exec.reasoning.unknown": "（未知档位）",
+			"exec.reasoning.hint.pickModel": "先选择要钉住的模型，才能设置它的思考档位。",
+			"exec.reasoning.hint.unknownModel": "无法从当前名册确认该模型的可选档位；已保存的值原样保留。",
+			"exec.reasoning.hint.noEfforts": "该模型没有可选的思考档位，始终沿用模型/宿主的默认值。",
+			"exec.reasoning.hint.inherit": "留空即沿用该模型/宿主的默认档位。",
+			"exec.teamRunAutoHint": "创建或关联子任务成功后，父任务会自动开启 Agent Team 执行（可随时手动关闭）。",
 			"exec.reuseSession": "在同一对话继续",
 			"exec.teamRun": "用 Agent Team 执行（Leader/teammate）",
 			"exec.teamRunHint": "开启后：执行本任务只启动一个 Leader 会话，每个子任务由它派生为 teammate 并在该会话内并行工作（子任务自身的权限钉住不适用）。关闭则每个成员各开独立会话。",
@@ -8614,6 +8762,14 @@ window.__ModuleLoader__.load({
 			"exec.permission.danger-full-access": "Full Access",
 			"exec.model.default": "Host default (agent-default-model)",
 			"exec.model.unknown": " (unknown / fallback to default)",
+			"exec.reasoning": "Reasoning effort",
+			"exec.reasoning.inherit": "Model or Host default",
+			"exec.reasoning.unknown": " (unknown effort)",
+			"exec.reasoning.hint.pickModel": "Pin a model first, then choose its reasoning effort.",
+			"exec.reasoning.hint.unknownModel": "The current roster cannot confirm this model's effort levels; the stored value is kept as it is.",
+			"exec.reasoning.hint.noEfforts": "This model offers no selectable reasoning effort, so the model or Host default always applies.",
+			"exec.reasoning.hint.inherit": "Leave it empty to follow the model or Host default.",
+			"exec.teamRunAutoHint": "Once a subtask is created or linked, the parent task turns on Agent Team execution automatically (you can switch it off at any time).",
 			"exec.reuseSession": "Continue in the same conversation",
 			"exec.teamRun": "Run with an Agent Team (Lead + teammates)",
 			"exec.teamRunHint": "On: running this task starts one Lead session and spawns a teammate per subtask inside it, working in parallel (a subtask permission pin does not apply). Off: every member gets its own independent session.",
@@ -12187,6 +12343,68 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return t$5("exec.mode.inheritWith", { preset: presetLabel(fallback) });
 		}
 		//#endregion
+		//#region ../dsh-task-board/src/client/board/ReasoningEffortField.tsx
+		/** The controlled reasoning-effort picker. */
+		function ReasoningEffortField({ models, modelId, value, pending, onChange }) {
+			const efforts = reasoningEffortsFor(models, modelId);
+			const unlisted = value !== "" && !efforts.includes(value);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+				className: board_module_css_default.field,
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: board_module_css_default.fieldLabel,
+					children: t$5("exec.reasoning")
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("select", {
+					className: board_module_css_default.select,
+					value,
+					disabled: pending || !reasoningPickerEnabled(models, modelId),
+					onChange: (event) => {
+						onChange(event.target.value);
+					},
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+							value: "",
+							children: t$5("exec.reasoning.inherit")
+						}),
+						unlisted && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("option", {
+							value,
+							disabled: true,
+							children: [value, t$5("exec.reasoning.unknown")]
+						}),
+						efforts.map((effort) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+							value: effort,
+							children: effort
+						}, effort))
+					]
+				})]
+			}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+				className: board_module_css_default.detailText,
+				children: t$5(reasoningHintKey(models, modelId))
+			})] });
+		}
+		//#endregion
+		//#region ../dsh-task-board/src/client/board/team-run-promotion.ts
+		/**
+		* Whether a join would promote this parent: the deployment serves Agent Teams
+		* and the parent has not opted in yet.
+		* @param controller - the board controller (the snapshot carries both facts).
+		* @param parent - the task that gained a subtask, if there is one.
+		*/
+		function parentAwaitsTeamRunPromotion(controller, parent) {
+			if (parent === void 0) return false;
+			const snapshot = controller.getSnapshot();
+			if (snapshot.host?.teamRunAvailable !== true) return false;
+			return (snapshot.tasks.find((task) => task.id === parent.id) ?? parent).teamRun !== true;
+		}
+		/**
+		* Opt the parent in after the Host confirmed the join.
+		* @returns true when the opt-in was written; false when it did not apply.
+		*/
+		async function promoteParentForTeamRun(controller, parent) {
+			if (parent === void 0) return false;
+			if (!parentAwaitsTeamRunPromotion(controller, parent)) return false;
+			return await controller.updateTask(parent.id, { teamRun: true });
+		}
+		//#endregion
 		//#region ../dsh-task-board/src/client/board/NewTaskModal.tsx
 		/**
 		* New-task modal: title + description + the prompt that execution will send.
@@ -12202,6 +12420,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			const [mode, setMode] = (0, react.useState)(initialTask?.mode ?? parentTask?.mode ?? "");
 			const [permission, setPermission] = (0, react.useState)(initialTask?.permission ?? "");
 			const [model, setModel] = (0, react.useState)(initialTask?.model ?? parentTask?.model ?? "");
+			const [reasoningEffort, setReasoningEffort] = (0, react.useState)(initialTask?.reasoningEffort ?? parentTask?.reasoningEffort ?? "");
 			const inheritedPermission = parentTask === void 0 ? void 0 : effectiveTaskPermission(parentTask);
 			const [reuseSession, setReuseSession] = (0, react.useState)(initialTask?.reuseSession ?? false);
 			const [goalRun, setGoalRun] = (0, react.useState)(initialTask?.goalRun ?? false);
@@ -12229,18 +12448,18 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			const [parsePending, setParsePending] = (0, react.useState)(false);
 			const [parseError, setParseError] = (0, react.useState)(void 0);
 			const parseAbort = (0, react.useRef)(void 0);
-			const parseModels = options.models ?? [];
+			const models = options.models ?? [];
 			const workspaceKnown = workspaceId === "" || options.workspaces.some((item) => item.workspaceId === workspaceId);
 			const modeKnown = mode === "" || options.presets.some((item) => item.id === mode);
-			const modelKnown = model === "" || parseModels.some((item) => item.id === model);
+			const modelKnown = model === "" || models.some((item) => item.id === model);
 			(0, react.useEffect)(() => controller.subscribe(() => {
 				const snapshot = controller.getSnapshot();
 				setOptions(snapshot.executionOptions);
 				setGoalRunEnabled(snapshot.host?.goalRunEnabled === true);
 			}), [controller]);
 			(0, react.useEffect)(() => {
-				if (parseModel === "" || parseModels.length === 0) return;
-				if (parseModels.some((option) => option.id === parseModel)) return;
+				if (parseModel === "" || models.length === 0) return;
+				if (models.some((option) => option.id === parseModel)) return;
 				setParseModel("");
 				writeParseModelPreference("");
 			}, [parseModel, options.models]);
@@ -12328,6 +12547,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					mode: mode === "" ? void 0 : mode,
 					permission: permission === "" ? void 0 : permission,
 					model: model === "" ? void 0 : model,
+					...reasoningEffort === "" ? {} : { reasoningEffort },
 					...reuseSession ? { reuseSession: true } : {},
 					...goalRun ? { goalRun: true } : {},
 					...skipVerification ? { skipVerification: true } : {},
@@ -12350,6 +12570,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					setError(controller.getSnapshot().transportError ?? t$5("new.required"));
 					return;
 				}
+				await promoteParentForTeamRun(controller, parentTask);
 				if (isDuplicate && archiveOriginal && initialTask !== void 0) if (onDuplicateSuccess !== void 0) await onDuplicateSuccess(initialTask.id);
 				else await controller.archiveTask(initialTask.id);
 				if (runAfterCreate) {
@@ -12369,11 +12590,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			const workspaceLabel = workspaceId === "" ? t$5("exec.workspace.recent") : options.workspaces.find((item) => item.workspaceId === workspaceId)?.title ?? workspaceId;
 			const permissionLabel = permission === "" ? inheritedPermission === void 0 ? t$5("exec.permission.default") : t$5("exec.permission.inheritParent", { permission: t$5(`exec.permission.${inheritedPermission}`) }) : t$5(`exec.permission.${permission}`);
 			const modelLabel = model === "" ? t$5("exec.model.default") : (options.models ?? []).find((item) => item.id === model)?.name ?? model;
+			const modelSummary = reasoningEffort === "" ? modelLabel : `${modelLabel} · ${reasoningEffort}`;
 			const executionSummary = [
 				workspaceLabel,
 				modeLabel,
 				permissionLabel,
-				...model === "" ? [] : [modelLabel]
+				...model === "" ? [] : [modelSummary]
 			].join(" · ");
 			const tagCount = cleanTags(tags).length;
 			const labelsSummary = tagCount === 0 ? t$5("new.summary.none") : t$5("new.summary.labelCount", { count: String(tagCount) });
@@ -12439,7 +12661,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 										children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
 											value: "",
 											children: t$5("exec.model.default")
-										}), parseModels.map((option) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+										}), models.map((option) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
 											value: option.id,
 											children: option.name ?? option.id
 										}, option.id))]
@@ -12467,7 +12689,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							]
 						})
 					}),
-					parentTask !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("p", {
+					parentTask !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("p", {
 						className: board_module_css_default.detailText,
 						"data-dsh-part": "subtask-inherit",
 						children: [
@@ -12477,7 +12699,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							" · ",
 							t$5("new.subtaskInherit")
 						]
-					}),
+					}), parentAwaitsTeamRunPromotion(controller, parentTask) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+						className: board_module_css_default.detailText,
+						children: t$5("exec.teamRunAutoHint")
+					})] }),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(CollapsibleSection, {
 						title: t$5("new.section.content"),
 						defaultOpen: true,
@@ -12618,7 +12843,9 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 									className: board_module_css_default.select,
 									value: model,
 									onChange: (event) => {
-										setModel(event.target.value);
+										const next = event.target.value;
+										setModel(next);
+										setReasoningEffort((current) => reconcileReasoningEffort(models, next, current));
 									},
 									children: [
 										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
@@ -12629,12 +12856,19 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 											value: model,
 											children: [model, t$5("exec.model.unknown")]
 										}),
-										options.models?.map((item) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+										models.map((item) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
 											value: item.id,
 											children: item.name ?? item.id
 										}, item.id))
 									]
 								})]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ReasoningEffortField, {
+								models,
+								modelId: model,
+								value: reasoningEffort,
+								pending,
+								onChange: setReasoningEffort
 							})
 						]
 					}),
@@ -13291,6 +13525,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				setPending(true);
 				setError(void 0);
 				if (await controller.setParent(taskId, parent.id)) {
+					await promoteParentForTeamRun(controller, parent);
 					onClose();
 					return;
 				}
@@ -13316,6 +13551,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 							className: board_module_css_default.fieldHint,
 							children: t$5("link.subtask.hint")
+						}),
+						parentAwaitsTeamRunPromotion(controller, parent) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+							className: board_module_css_default.fieldHint,
+							children: t$5("exec.teamRunAutoHint")
 						}),
 						candidates.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 							className: board_module_css_default.detailText,
@@ -13766,13 +14005,15 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		/** The execution-target editor: workspace / mode / permission pickers. */
 		function ExecutionSettingsSection({ controller, task, pending, executionOptions, teamRunAvailable, goalRunEnabled }) {
 			const options = executionOptions;
+			const models = options.models ?? [];
 			const workspaceId = task.workspaceId ?? "";
 			const mode = task.mode ?? "";
 			const permission = task.permission ?? "";
 			const model = task.model ?? "";
+			const reasoningEffort = task.reasoningEffort ?? "";
 			const workspaceKnown = workspaceId === "" || options.workspaces.some((item) => item.workspaceId === workspaceId);
 			const modeKnown = mode === "" || options.presets.some((item) => item.id === mode);
-			const modelKnown = model === "" || (options.models ?? []).some((item) => item.id === model);
+			const modelKnown = model === "" || models.some((item) => item.id === model);
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
 				className: board_module_css_default.detailSection,
 				children: [
@@ -13873,7 +14114,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							value: model,
 							disabled: pending,
 							onChange: (event) => {
-								controller.updateTask(task.id, { model: event.target.value === "" ? void 0 : event.target.value });
+								const next = event.target.value;
+								const effort = reconcileReasoningEffort(models, next, reasoningEffort);
+								controller.updateTask(task.id, {
+									model: next,
+									...effort === reasoningEffort ? {} : { reasoningEffort: effort }
+								});
 							},
 							children: [
 								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
@@ -13884,12 +14130,21 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 									value: model,
 									children: [model, t$5("exec.model.unknown")]
 								}),
-								options.models?.map((item) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+								models.map((item) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
 									value: item.id,
 									children: item.name ?? item.id
 								}, item.id))
 							]
 						})]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ReasoningEffortField, {
+						models,
+						modelId: model,
+						value: reasoningEffort,
+						pending,
+						onChange: (effort) => {
+							controller.updateTask(task.id, { reasoningEffort: effort });
+						}
 					}),
 					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 						className: board_module_css_default.scheduleToggle,
@@ -17724,43 +17979,14 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 						}
 						if (typeof sessionRemote?.modelCatalog === "function") {
 							const res = await sessionRemote.modelCatalog();
-							if (res.ok && Array.isArray(res.value?.groups)) for (const g of res.value.groups) {
-								const provider = g.id ?? g.provider;
-								for (const m of g.models ?? []) {
-									const qualifiedId = provider ? `${provider}/${m.id}` : m.id;
-									models.push({
-										id: qualifiedId,
-										name: m.name ?? m.id,
-										provider
-									});
-								}
-							}
+							if (res.ok) models = modelOptionsFromCatalog(res.value);
 						}
 						if (models.length === 0) {
 							const conn = ctx.get("connection");
 							if (conn?.api) {
-								if (typeof conn.api.llm?.discoverModels === "function") {
-									const list = (await conn.api.llm.discoverModels())?.result?.value?.models;
-									if (Array.isArray(list)) models = list.map((m) => ({
-										id: m.id,
-										name: m.name
-									}));
-								}
+								if (typeof conn.api.llm?.discoverModels === "function") models = modelOptionsFromDiscoveredModels((await conn.api.llm.discoverModels())?.result?.value?.models);
 								const catalogFn = typeof conn.api.session?.modelCatalog === "function" ? conn.api.session.modelCatalog : typeof conn.api.sessions?.modelCatalog === "function" ? conn.api.sessions.modelCatalog : void 0;
-								if (models.length === 0 && catalogFn !== void 0) {
-									const groups = (await catalogFn())?.result?.value?.groups;
-									if (Array.isArray(groups)) for (const g of groups) {
-										const provider = g.id ?? g.provider;
-										for (const m of g.models ?? []) {
-											const qualifiedId = provider ? `${provider}/${m.id}` : m.id;
-											models.push({
-												id: qualifiedId,
-												name: m.name ?? m.id,
-												provider
-											});
-										}
-									}
-								}
+								if (models.length === 0 && catalogFn !== void 0) models = modelOptionsFromCatalog((await catalogFn())?.result?.value);
 							}
 						}
 						if (models.length > 0) controller.setExecutionOptions({ models });
