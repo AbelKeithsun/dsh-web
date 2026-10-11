@@ -37,25 +37,13 @@ window.__ModuleLoader__.load({
 		}) : target, mod));
 		//#endregion
 		let _deepseek_ai_cordis = require("@deepseek-ai/cordis");
+		let _deepseek_ai_dsh_client_store = require("@deepseek-ai/dsh-client-store");
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let react = require("react");
 		react = __toESM(react, 1);
 		let react_dom_client = require("react-dom/client");
 		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		let react_dom = require("react-dom");
-		//#region \0dsh-store-engine
-		const platform = ["@deepseek-ai/dsh-client", "-store"].join("");
-		const legacy = ["@deepseek-ai/dsh-client-runtime", "/client"].join("");
-		let engine;
-		try {
-			engine = require(platform);
-		} catch {
-			engine = require(legacy);
-		}
-		const createSnapshotStore = engine.createSnapshotStore;
-		const defineStore = engine.defineStore;
-		engine.shallowEqual;
-		//#endregion
 		//#region ../dsh-web-settings/src/protocol.ts
 		/**
 		* Settings-bridge protocol shared by the host and client halves of
@@ -220,7 +208,7 @@ window.__ModuleLoader__.load({
 			constructor(api, spec) {
 				this.api = api;
 				this.spec = spec;
-				this.store = createSnapshotStore(pendingSnapshot$7("loading"));
+				this.store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(pendingSnapshot$7("loading"));
 			}
 			getSnapshot() {
 				return this.store.getSnapshot();
@@ -451,7 +439,7 @@ window.__ModuleLoader__.load({
 				if (native !== void 0) return projectNative(native);
 				return fallback?.getSnapshot() ?? unavailableSnapshot();
 			}
-			const store = createSnapshotStore(project());
+			const store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(project());
 			const publish = () => {
 				store.set(project());
 			};
@@ -2644,7 +2632,7 @@ window.__ModuleLoader__.load({
 			}
 			/** Publish a projection of this form, rebuilt whenever the form or a draft changes. */
 			bind(project) {
-				const store = createSnapshotStore(project());
+				const store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(project());
 				this.listeners.add(() => {
 					store.set(project());
 				});
@@ -16350,7 +16338,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			}
 			/** Publish a projection of this form, rebuilt whenever the form or a draft changes. */
 			bind(project) {
-				const store = createSnapshotStore(project());
+				const store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(project());
 				this.listeners.add(() => {
 					store.set(project());
 				});
@@ -18564,7 +18552,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			}
 			/** Publish a projection of this form, rebuilt whenever the form or a draft changes. */
 			bind(project) {
-				const store = createSnapshotStore(project());
+				const store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(project());
 				this.listeners.add(() => {
 					store.set(project());
 				});
@@ -25969,7 +25957,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			}
 			/** Publish a projection of this form, rebuilt whenever the form or a draft changes. */
 			bind(project) {
-				const store = createSnapshotStore(project());
+				const store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(project());
 				this.listeners.add(() => {
 					store.set(project());
 				});
@@ -46591,7 +46579,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				this.selectTimeoutMs = options.selectTimeoutMs ?? 1e4;
 				this.sessions = readService(() => ctx.sessions);
 				this.remote = readService(() => ctx.remote.agentPresets);
-				this.store = createSnapshotStore({
+				this.store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)({
 					state: "off",
 					restoreLabel: "",
 					busy: false,
@@ -47478,7 +47466,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			}
 			/** Publish a projection of this form, rebuilt whenever the form or a draft changes. */
 			bind(project) {
-				const store = createSnapshotStore(project());
+				const store = (0, _deepseek_ai_dsh_client_store.createSnapshotStore)(project());
 				this.listeners.add(() => {
 					store.set(project());
 				});
@@ -49862,7 +49850,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		*/
 		/** Create the usage store handle (apply world only; never module-level). */
 		function createUsageStore() {
-			return defineStore({
+			return (0, _deepseek_ai_dsh_client_store.defineStore)({
 				init: () => ({
 					snapshot: null,
 					status: "loading",
@@ -52864,7 +52852,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		* @module @linxin666/dsh-session-archive/client/archive-store
 		*/
 		function createArchiveStore() {
-			return defineStore({
+			return (0, _deepseek_ai_dsh_client_store.defineStore)({
 				init: () => ({
 					inventory: null,
 					status: "loading",

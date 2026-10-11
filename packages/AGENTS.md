@@ -47,9 +47,9 @@
   （权威清单是 `scripts/sync-shared.mjs` 的 manifest），包内同名文件是生成的同步副本
   （generated 头注释，禁止手改；改 shared 源后重跑同步，test:scripts 含 drift 门禁）。
   只被一个包使用的模块归该包所有，不进 `shared/`。
-- **浏览器 bundle 纯度门**：`@deepseek-ai/*` 只能 type-only 导入；值导入只允许
-  平台种子表成员（react / cordis / ui-slots / ui-primitives，见
-  `shared/web-platform.ts`）。跨插件协作走 cordis 服务
+- **浏览器 bundle 纯度门**：`@deepseek-ai/*` 的值导入仅允许
+  [平台种子表](../shared/web-platform.ts)成员，其余只能 type-only 导入。
+  跨插件协作走 cordis 服务
   （`ctx.slots` / `ctx.sessions` / `ctx.workspaces`）或 slot，不走 value import。
 - **样式**：CSS Modules（`*.module.css`）经 lightningcss 编译进 bundle；不引入
   UI 框架样式库。填充主按钮一律用主按钮三件套
