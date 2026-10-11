@@ -33,6 +33,8 @@ A task row carries an optional `parentId` and the Host is the only writer of tha
 
 ### Execution-target inheritance
 
+The [reasoning-effort decision](2026-10-11-task-board-reasoning-effort.md) owns model-coupled effort inheritance.
+
 - A subtask's own workspace, agent preset, permission and model win; anything left unset resolves to the nearest ancestor at launch, up to the root. Creation prefills the parent's workspace, preset and model into the form while the permission picker stays at inherit, and the stored card keeps only what it was actually given.
 - An inherited permission is the ancestor's effective binding (its handover pin included) and carries that ancestor's confirmation stamp, so a subtask of an already-confirmed elevated card is runnable, while a subtask that pins or bundles its own permission keeps its own gate. The gate judges the resolved binding, so an unconfirmed binding anywhere in the tree refuses the whole run before any session starts.
 - The permission is resolved, never copied: a subtask stores no inherited binding and no inherited confirmation, so detaching it leaves an ordinary card instead of a confirmed elevated one. Copying the binding at creation would have had to copy the human's confirmation with it, and one confirmed parent would then have minted unbounded detached elevated cards — the escalation the create path therefore no longer performs.
