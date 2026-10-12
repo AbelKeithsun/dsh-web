@@ -1,6 +1,60 @@
 {
-  "generated": "2026-10-10",
+  "generated": "2026-10-12",
   "items": [
+    {
+      "id": "frutiger-aero",
+      "name": "冰蓝气泡玻璃",
+      "nameEn": "Frutiger Aero Glass",
+      "author": "lohipo",
+      "rank": 1,
+      "tagline": "冰蓝玻璃 · 气泡上浮 · 晴天与夜海的两种蓝",
+      "description": "Frutiger Aero 风格皮肤：原创的蓝天白云草地壁纸垫在冰蓝半透明玻璃面板之下，背景里六枚气泡持续上浮。整窗只在顶边留一道连续高光，而不是给每个面板各描一圈边。全部 --dsw-alias-* 与 --aion-* token 重映射为冷色体系：浅色是正午晴空，深色是入夜后的冷蓝海面。正文与次要文字的对比度按真实合成底色核算，两套配色均满足 WCAG AA。",
+      "tags": [
+        "frutiger-aero",
+        "冰蓝",
+        "玻璃",
+        "气泡",
+        "天空",
+        "草地",
+        "半透明",
+        "css-only",
+        "dual-theme"
+      ],
+      "version": "1.0.0",
+      "accent": "#3FB8E8",
+      "preview": {
+        "light": "assets/skins/frutiger-aero/preview/light.jpg",
+        "dark": "assets/skins/frutiger-aero/preview/dark.jpg"
+      },
+      "files": [
+        "LICENSE",
+        "README.md",
+        "README.zh.md",
+        "assets/aero-sky.webp",
+        "patches.css",
+        "preview/dark.jpg",
+        "preview/light.jpg",
+        "skin.css",
+        "skin.json"
+      ],
+      "repo": "https://github.com/zhu1090093659/dsh-skins/tree/main/skins/frutiger-aero",
+      "contributes": {
+        "stylesheet": "skin.css",
+        "patches": "patches.css",
+        "backgroundMedia": {
+          "light": {
+            "type": "image",
+            "src": "assets/skins/frutiger-aero/assets/aero-sky.webp",
+            "scrim": "linear-gradient(180deg, rgba(246,251,255,0.12) 0%, rgba(240,249,255,0.18) 46%, rgba(232,246,255,0.26) 100%)"
+          },
+          "dark": {
+            "type": "image",
+            "src": "assets/skins/frutiger-aero/assets/aero-sky.webp",
+            "scrim": "linear-gradient(180deg, rgba(8,22,40,0.62) 0%, rgba(10,26,46,0.68) 46%, rgba(12,30,52,0.74) 100%)"
+          }
+        }
+      }
+    },
     {
       "id": "porco-rosso",
       "name": "吉卜力·红猪侠",
@@ -89,7 +143,7 @@
         "dark",
         "light"
       ],
-      "version": "1.0.3",
+      "version": "1.0.4",
       "accent": "#8e2438",
       "preview": {
         "light": "assets/skins/verdandi/preview/light.jpg",
@@ -817,17 +871,19 @@
       "nameEn": "Hatsune Miku",
       "author": "涂山苏苏",
       "rank": 10,
-      "tagline": "初音青绿机甲方格 · 明暗双主题独立配色 · 会话栏全透明露出壁纸",
-      "description": "初音未来主题的整体重做：明亮档是青空舞台（冷调青白平涂 + 墨蓝描边 + 硬投影），暗色档是夜海霓虹（深蓝平涂 + 青绿冷光边 + 品红高光），两套配色各自独立；会话栏完全透明让壁纸直通，面板改用机甲斜切角、拉丝金属与青蓝品红渐变描边，输入区做成座舱凹槽并配主题色光标，左上角字标为代号铭牌加渐变名号；界面字体换成 Bahnschrift 几何无衬线，顶栏与底栏收起，正文与设置面板按明暗两套分别校验可读性。",
+      "tagline": "声波青 · 单色青绿 + 一处洋红 · 圆角发丝线取代机甲 · Inter 字体 · 明暗双主题独立配色",
+      "description": "初音未来主题的第二次整体重做：初版那套机甲语汇（12px 斜切角、角部铆钉、拉丝金属、4px 硬投影、彩虹渐变横幅、6px 网点铺面）整套换成现代桌面语言 —— 圆角、发丝线、三档柔影。配色收成一支青绿（初音的 #39C5BB 家族）加一处洋红点缀，洋红只出现在「人」的位置（用户轮左缘信号条、活口）；字体从 Bahnschrift 换成 Inter + Noto Sans SC，拉丁数字与中文字形同路。明暗两套仍各自独立设计：明亮是晴空台（近白面板 + 深墨青正文 + 亮青绿填充），暗色是夜航台（夜蓝石板 + 冷白正文 + 青绿光）。母题从铆钉换成声波：空会话首屏一排细声波柱、输入卡底缘一道聚焦时亮起的信号线、品牌行一枚 MIKU 徽标。会话栏保持全透明让插画直通，自定义光标与两张插画未改动。",
       "tags": [
         "miku",
         "vocaloid",
-        "blue",
+        "teal",
         "music",
         "idol",
+        "flat",
+        "inter",
         "waveform"
       ],
-      "version": "0.4.0",
+      "version": "0.5.1",
       "accent": "#39c5bb",
       "preview": {
         "light": "assets/skins/miku/preview/light.jpg",
@@ -2392,7 +2448,7 @@
       "author": "stushansusu",
       "rank": 51,
       "tagline": "宣纸与蓝墨 · 墨分五色 · 一点墨绿 · 笔锋与墨点 · 静帧墨画",
-      "description": "鲸鱼娘 · 水墨丹青：背景是作者 2026-10-05 交付的视频 —— 一张满幅宣纸，墨从左侧漫进来、铺满，然后停在一张静止的墨画上（25.333s / 608 帧一帧不丢，源片原生 24fps；源片是 HEVC，而 HEVC 在 Chromium 家族（Electron / WebView2）是平台相关的支持 —— 实测 Edge 123 不支持、Chrome 154 支持，所以发行档把**编码格式**转成 H.264，帧数 / 帧率 / 时长 / 回接方式一律不动）。配色是用户给的 14 支，**逐支对着这条片子量过命中率**：深墨蓝 25.4%、夜色蓝 30.0%、长发蓝黑 29.0%、竹林墨青 11.2%、靛青蓝 9.5% 是画面里真实存在的墨阶；朱红 0.067%、暖黄 0.009% 稀有到只能当钤记与警示；而**青绿眼眸 0.000%** —— 她的眼睛不在画里，所以那一支只能来自界面，它只给「活着」的地方：当前行、聚焦、链接、悬停、新会话的四角墨点。语言是「墨分五色，一点墨绿」：面是五个深度的墨玻璃，骨架是**笔锋**（两端收笔的细线）与**墨点**，边框是画出来的，全屏唯一的实心是那颗**墨绿**的发送键。**暗色专用**，左上角品牌行换成「**鲸鱼娘 · 水墨丹青**」，左边落一方朱印。",
+      "description": "鲸鱼娘 · 水墨丹青：背景是作者 2026-10-05 交付的视频 —— 一张满幅宣纸，墨从左侧漫进来、铺满，然后停在一张静止的墨画上（25.333s / 608 帧一帧不丢，源片原生 24fps；源片是 HEVC，而 HEVC 在 Chromium 家族（Electron / WebView2）是平台相关的支持 —— 实测 Edge 123 不支持、Chrome 154 支持，所以发行档把**编码格式**转成 H.264；顺带把**片尾 1.2s 溶回「首帧的克隆」**（= 宣纸），回接差 **0.01**，读起来是「墨迹化开、退回纸面」；帧数 / 帧率 / 时长 / 分辨率一律不动）。配色是用户给的 14 支，**逐支对着这条片子量过命中率**：深墨蓝 25.4%、夜色蓝 30.0%、长发蓝黑 29.0%、竹林墨青 11.2%、靛青蓝 9.5% 是画面里真实存在的墨阶；朱红 0.067%、暖黄 0.009% 稀有到只能当钤记与警示；而**青绿眼眸 0.000%** —— 她的眼睛不在画里，所以那一支只能来自界面，它只给「活着」的地方：当前行、聚焦、链接、悬停、新会话的四角墨点。语言是「墨分五色，一点墨绿」：面是五个深度的墨玻璃，骨架是**笔锋**（两端收笔的细线）与**墨点**，边框是画出来的，全屏唯一的实心是那颗**墨绿**的发送键。**暗色专用**，左上角品牌行换成「**鲸鱼娘 · 水墨丹青**」，左边落一方朱印。",
       "tags": [
         "shuimo",
         "ink-wash",
