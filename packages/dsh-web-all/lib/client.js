@@ -48238,6 +48238,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			list: "api/dsh-skill-explorer/list",
 			read: "api/dsh-skill-explorer/read",
 			setEnabled: "api/dsh-skill-explorer/set-enabled",
+			setProviderEnabled: "api/dsh-skill-explorer/set-provider-enabled",
 			create: "api/dsh-skill-explorer/create",
 			update: "api/dsh-skill-explorer/update",
 			delete: "api/dsh-skill-explorer/delete"
@@ -48258,6 +48259,25 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					body: {
 						name,
 						path,
+						enabled
+					}
+				});
+			}
+			/**
+			* Switch a plugin-provided skill off/on in this panel.
+			*
+			* There is no path to certify: the row's file belongs to the provider and
+			* sits outside the roots this panel scans, so the host records the
+			* (provider, name) pair in the panel's own store instead of rewriting a
+			* SKILL.md the panel does not own. The host answers with the stored state;
+			* the invocable view itself comes from the next list call.
+			*/
+			async setProviderEnabled(name, provider, enabled) {
+				return this.request(API.setProviderEnabled, {
+					method: "POST",
+					body: {
+						name,
+						provider,
 						enabled
 					}
 				});
@@ -48443,7 +48463,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"list.noFileHint": "该技能没有本地 SKILL.md 文件，无法在此启用/禁用、编辑或删除。",
 			"list.providerFile": "由插件提供",
 			"list.providerFileTooltip": "该技能的文件由插件 provider 提供，未落在本面板扫描的技能根目录下",
-			"list.providerFileHint": "该技能由插件提供、确有 SKILL.md 文件，但不在本面板扫描的技能根目录下，因此无法在此启用/禁用、编辑或删除。",
+			"list.providerFileHint": "该技能由插件提供、确有 SKILL.md 文件，但不在本面板扫描的技能根目录下，因此无法在此编辑或删除；开关只改变本面板的可调用视图，不会改变模型实际加载的技能。",
 			"list.mark.model": "模型",
 			"list.mark.user": "用户",
 			"provider.filesystem": "文件系统",
@@ -48520,7 +48540,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"list.noFileHint": "This skill has no local SKILL.md file, so it cannot be enabled/disabled, edited, or deleted here.",
 			"list.providerFile": "Provided by plugin",
 			"list.providerFileTooltip": "This skill has a file supplied by its plugin provider, outside the skill roots this panel scans",
-			"list.providerFileHint": "This skill is supplied by a plugin and does have a SKILL.md file, but it sits outside the skill roots this panel scans, so it cannot be enabled/disabled, edited, or deleted here.",
+			"list.providerFileHint": "This skill is supplied by a plugin and does have a SKILL.md file, but it sits outside the skill roots this panel scans, so it cannot be edited or deleted here. Its switch only changes what this panel considers invocable; the model still loads the skill.",
 			"list.mark.model": "model",
 			"list.mark.user": "user",
 			"provider.filesystem": "Filesystem",
@@ -49026,11 +49046,25 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return key in zh$3 ? tt(key) : provider;
 		}
 		/**
+		* Whether this row carries an enable switch.
+		*
+		* A row with a writable path switches by rewriting its own SKILL.md
+		* frontmatter. A plugin-provided file (issue #1854) has no such path, so its
+		* switch is recorded in the panel's own store; a truly fileless registration
+		* has nothing to switch and still shows none.
+		* @param skill - the row's entry.
+		* @returns whether the row offers the switch.
+		*/
+		function canToggle(skill) {
+			return skill.path !== void 0 || skill.fileState === "provider-file";
+		}
+		/**
 		* The local-file badge for a row that the write routes cannot serve.
 		*
 		* A skill with a plugin-supplied file and a skill with no file at all are
 		* different facts (issue #1842): the first is "Provided by plugin", only the
-		* second is "No local file". Both are pathless, so neither offers controls.
+		* second is "No local file". Both are pathless, so neither offers file
+		* controls.
 		* @param skill - the row's entry.
 		* @returns the badge copy and its tooltip.
 		*/
@@ -49060,14 +49094,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			const [error, setError] = (0, react.useState)(void 0);
 			const busyRef = (0, react.useRef)(false);
 			const toggle = async () => {
-				if (busyRef.current) return;
-				const path = skill.path;
-				if (path === void 0) return;
+				if (busyRef.current || !canToggle(skill)) return;
 				busyRef.current = true;
 				setBusy(true);
 				setError(void 0);
 				try {
-					await api.setEnabled(skill.name, path, !skill.modelInvocable);
+					if (skill.path !== void 0) await api.setEnabled(skill.name, skill.path, !skill.modelInvocable);
+					else await api.setProviderEnabled(skill.name, skill.provider, !skill.modelInvocable);
 					onChanged();
 				} catch (err) {
 					setError(tt("list.toggleFailed", { error: err instanceof Error ? err.message : String(err) }));
@@ -49135,7 +49168,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 								title: tt("list.invokableTooltip"),
 								children: tt("list.invokable", { marks: invokableMarks(skill) })
 							}),
-							skill.path !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							canToggle(skill) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 								type: "button",
 								className: panel_module_css_default.switch,
 								role: "switch",
