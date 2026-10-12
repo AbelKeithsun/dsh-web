@@ -104,7 +104,29 @@ const CONVERSATION_PHASE_ATTR = 'data-verdandi-phase'
 const CONVERSATION_VIEW_ATTR = 'data-verdandi-view'
 const DETAILS_EMPTY_ATTR = 'data-verdandi-details-empty'
 const SLIP_ATTR = 'data-verdandi-slip'
-const RUNNING_ATTR = 'data-verdandi-running'
+/**
+ * The shell mounts its running status as a node of its own and paints it from its
+ * own pieces (a whale mark and a TextShimmer sweep). This skin takes that line
+ * over completely — icon, copy and sweep — so every name below is the skin's;
+ * the only shell identifiers involved are its `data-chat-running` marker and the
+ * running phrase itself.
+ *
+ * `RUNNING_PREFIX` is the whole contract: a phrase we know buys the replacement,
+ * an unknown one (a locale nobody wrote a prefix for) leaves the shell's own line
+ * exactly as it is rather than half-replaced. The skin's phrase and the shell's
+ * live-region string are the same words, so assistive tech keeps hearing the
+ * shell's own localization while the paint is ours.
+ */
+const RUNNING_HOST_SELECTOR = '[data-chat-running]'
+const RUNNING_BAR_ATTR = 'data-verdandi-running-bar'
+const RUNNING_LINE_ATTR = 'data-verdandi-running-line'
+const RUNNING_ICON_ATTR = 'data-verdandi-running-icon'
+const RUNNING_COPY_ATTR = 'data-verdandi-running-copy'
+const RUNNING_LIVE_ATTR = 'data-verdandi-running-a11y'
+const RUNNING_PREFIX = {
+  '深度求索中': '薇儿烧烤中',
+  'Deep diving': 'Verdandi is grilling',
+}
 const STAGE_SELECTOR = '[data-verdandi-stage]'
 const DECORATION_SELECTOR = '[data-verdandi-decoration]'
 const LEGACY_SELECTOR = '[data-verdandi-sidebar-card], [data-verdandi-wedding], [data-verdandi-chrome]'
@@ -138,7 +160,7 @@ const OWNED_HOOKS = [
   'data-verdandi-new-session',
   'data-verdandi-nav-entry',
   'data-verdandi-sidebar-action',
-  RUNNING_ATTR,
+  RUNNING_BAR_ATTR,
   DETAILS_EMPTY_ATTR,
 ]
 
@@ -211,8 +233,47 @@ function isRendered(element) {
   return style.display !== 'none' && style.visibility !== 'hidden'
 }
 
-function removeLegacyNodes() {
-  for (const node of document.querySelectorAll(LEGACY_SELECTOR)) node.remove()
+/**
+ * The shell's own running phrase, read off the deepest element that carries it.
+ * Text, not a class name: the shell's CSS-module names are build hashes and its
+ * markup is an implementation detail, while the phrase is the one thing the
+ * replacement has to recognise anyway. The shell's live region repeats the bare
+ * phrase, so the last match in document order is the visual line the timer lives in.
+ */
+function runningPhraseNode(host) {
+  let found = null
+  let phrase = ''
+  for (const node of host.querySelectorAll('*')) {
+    // our own line carries the phrase too (its live region repeats it verbatim),
+    // so it must never be mistaken for the shell's label
+    if (node.closest(`[${RUNNING_LINE_ATTR}]`) !== null) continue
+    if (node.children.length !== 0) continue
+    const text = (node.textContent ?? '').trim()
+    for (const candidate of Object.keys(RUNNING_PREFIX)) {
+      // the shell's live region carries the bare phrase and its label carries the
+      // phrase plus the live timer, so the longest match is the label
+      if (text.startsWith(candidate) && text.length > (found === null ? 0 : (found.textContent ?? '').trim().length)) {
+        found = node
+        phrase = candidate
+      }
+    }
+  }
+  return found === null ? null : { node: found, phrase }
+}
+
+function removeLegacyNodes() {  for (const node of document.querySelectorAll(LEGACY_SELECTOR)) node.remove()
+}
+
+// True when the shell's own top bar is a native window-drag region. Chromium reports
+// `drag` where the host enables it (macOS today) and the initial `none` where it does
+// not (the `[data-platform="darwin"]` gate means a platform with a native title bar
+// never gets one). A value the environment cannot report at all -- jsdom in the tests
+// computes no such property -- is treated as "assume drag" so fixtures keep describing
+// the macOS shape.
+function shellUsesDragRegion(header) {
+  if (!header) return false
+  const region = getComputedStyle(header).webkitAppRegion
+  return region === 'drag' || region === '' || region == null
 }
 
 function ensureDecoration(parent, part) {
@@ -241,6 +302,22 @@ function ensureWeddingDecorations(sidebar, conversation, details) {
   ensureDecoration(header, 'header-bridal-corners')
   ensureDecoration(header, 'header-veil-corners')
   ensureDecoration(header, 'header-vow-crest')
+  // The shell's top bar is an Electron window-drag region and `-webkit-app-region` is
+  // inherited, so every layer above inherits `drag` (which is what swallowed real
+  // clicks on the controls) and, once they opt out with `no-drag`, they carve the
+  // whole band out of the shell's own drag region. This strip gives dragging back
+  // where the skin is decoration only: the empty middle of the bar, centred on the
+  // crest, clear of every control.
+  //
+  // Only where the shell actually uses that mechanism, though: its own drag-region
+  // rules are platform-gated (`[data-platform="darwin"]`), and a platform whose window
+  // has a native title bar leaves `-webkit-app-region` unused. Inventing a drag band
+  // there could swallow clicks in an area the host never reserved.
+  if (shellUsesDragRegion(header)) {
+    ensureDecoration(header, 'header-drag-strip')
+  } else {
+    header?.querySelector(`:scope > [data-verdandi-decoration='header-drag-strip']`)?.remove()
+  }
 
   const composer = conversation?.querySelector('[data-composer-card]') ?? null
   ensureDecoration(composer, 'composer-seal')
@@ -365,29 +442,6 @@ function decorateStableRegions() {
   }
 }
 
-/**
- * Mark the turn-process control while its turn is actually running.
- *
- * dsh 0.1.7 moved the live status into that control and switches its label copy
- * with the turn state (running / worked / took / failed), so the skin's copy
- * swap has to be scoped by state instead of by the removed `_turnStatus` class.
- * Only the running label is marked, so the finished states keep the host wording.
- * @param conversation - Visible conversation pane, or null when unrendered.
- */
-function markRunningStatus(conversation) {
-  const running = conversation
-    ? [...conversation.querySelectorAll('[data-turn-process]')].filter((node) => {
-      const text = (node.querySelector("[class*='_label']")?.textContent ?? '').trim()
-      return /^(深度求索中|Deep diving)/i.test(text)
-    })
-    : []
-
-  for (const marked of document.querySelectorAll(`[${RUNNING_ATTR}]`)) {
-    if (!running.includes(marked)) marked.removeAttribute(RUNNING_ATTR)
-  }
-  for (const node of running) node.setAttribute(RUNNING_ATTR, '')
-}
-
 function setSidebarSize(body, sidebar) {
   const width = sidebar?.getBoundingClientRect().width || sidebar?.offsetWidth || 0
   if (width > 0 && width < 96) body.setAttribute(SIDEBAR_SIZE_ATTR, 'rail')
@@ -453,13 +507,25 @@ export default function defineSkinHooks() {
       // attribute created by the skin must not survive cleanup.
       const hadStyleAttribute = body.hasAttribute('style')
 
-      for (const [property, file] of Object.entries(ASSET_PROPERTIES)) {
-        previousAssetProperties.set(property, {
-          value: body.style.getPropertyValue(property),
-          priority: body.style.getPropertyPriority(property),
-        })
-        const source = file === null ? SVG_PROPERTIES[property] : asset(file)
-        body.style.setProperty(property, `url(${JSON.stringify(source)})`)
+      // Art URL variables (--vd-art-*) are now declared in skin.css :root
+      // instead of set through body.style.setProperty. This makes them
+      // immune to the skin-center double-activation cleanup bug where
+      // hooks cleanup removeProperty would clear variables set by a newer
+      // activation (the persisted-selection follower re-adopt path).
+      //
+      // We still snapshot any pre-existing inline values so cleanup can
+      // restore them (important when another skin left inline overrides
+      // that Verdandi should not clobber on exit), but we no longer set
+      // them ourselves — skin.css owns the cascade now.
+      for (const [property] of Object.entries(ASSET_PROPERTIES)) {
+        const existingValue = body.style.getPropertyValue(property)
+        const existingPriority = body.style.getPropertyPriority(property)
+        if (existingValue) {
+          previousAssetProperties.set(property, {
+            value: existingValue,
+            priority: existingPriority,
+          })
+        }
       }
       removeLegacyNodes()
 
@@ -472,6 +538,65 @@ export default function defineSkinHooks() {
       const cancelFrame = typeof window.cancelAnimationFrame === 'function'
         ? window.cancelAnimationFrame.bind(window)
         : window.clearTimeout.bind(window)
+
+      let runningObserver = null
+      let runningObservedNode = null
+      let runningFrame = 0
+
+      /**
+       * Paint the running line. Idempotent and cheap: called from the main sync and
+       * from the line's own observer, which is what keeps the shell's live timer
+       * (", 用时 20 秒 ···") ticking through the replacement. Fail closed — with no
+       * known phrase nothing is painted and the shell's own line stands.
+       */
+      const renderRunningLine = () => {
+        const host = document.querySelector(RUNNING_HOST_SELECTOR)
+        if (host === null) return
+        const found = runningPhraseNode(host)
+        if (found === null) return
+        const text = (found.node.textContent ?? '').trim()
+        const copy = RUNNING_PREFIX[found.phrase] + text.slice(found.phrase.length)
+
+        let line = host.querySelector(`:scope > [${RUNNING_LINE_ATTR}]`)
+        if (line === null) {
+          line = document.createElement('span')
+          line.setAttribute(RUNNING_LINE_ATTR, '')
+          const icon = document.createElement('span')
+          icon.setAttribute(RUNNING_ICON_ATTR, '')
+          const body = document.createElement('span')
+          body.setAttribute(RUNNING_COPY_ATTR, '')
+          const live = document.createElement('span')
+          live.setAttribute(RUNNING_LIVE_ATTR, '')
+          live.setAttribute('role', 'status')
+          live.setAttribute('aria-live', 'polite')
+          live.setAttribute('aria-atomic', 'true')
+          live.textContent = found.phrase
+          line.append(icon, body, live)
+          host.append(line)
+        }
+        // `clearOwnedHooks()` sweeps every owned attribute on each pass, so the
+        // marker is re-asserted here rather than only when the line is created
+        host.setAttribute(RUNNING_BAR_ATTR, '')
+        const body = line.querySelector(`[${RUNNING_COPY_ATTR}]`)
+        if (body !== null && body.textContent !== copy) body.textContent = copy
+        const live = line.querySelector(`[${RUNNING_LIVE_ATTR}]`)
+        if (live !== null && live.textContent !== found.phrase) live.textContent = found.phrase
+
+        if (runningObservedNode !== found.node) {
+          runningObserver?.disconnect()
+          runningObservedNode = found.node
+          runningObserver = new MutationObserver(scheduleRunningLine)
+          runningObserver.observe(found.node, { characterData: true, childList: true, subtree: true })
+        }
+      }
+
+      const scheduleRunningLine = () => {
+        if (runningFrame) return
+        runningFrame = requestFrame(() => {
+          runningFrame = 0
+          renderRunningLine()
+        })
+      }
 
       const syncResizeTargets = (targets) => {
         if (!resizeObserver) return
@@ -497,7 +622,7 @@ export default function defineSkinHooks() {
         setSidebarSize(body, sidebar)
         ensureWeddingDecorations(sidebar, workspaceVisible ? conversation : null, details)
         decorateLegibilityRows(workspaceVisible ? conversation : null)
-    markRunningStatus(workspaceVisible ? conversation : null)
+        renderRunningLine()
 
         if (workspaceVisible) {
           const stage = ensureCharacterStage(conversation)
@@ -544,6 +669,12 @@ export default function defineSkinHooks() {
       ctx.onCleanup(() => {
         mutationObserver.disconnect()
         resizeObserver?.disconnect()
+        runningObserver?.disconnect()
+        runningObserver = null
+        runningObservedNode = null
+        if (runningFrame) cancelFrame(runningFrame)
+        runningFrame = 0
+        for (const line of document.querySelectorAll(`[${RUNNING_LINE_ATTR}]`)) line.remove()
         if (animationFrame) cancelFrame(animationFrame)
         window.removeEventListener('resize', scheduleSync)
         window.visualViewport?.removeEventListener('resize', scheduleSync)
