@@ -50,8 +50,14 @@ the list route uses.
 4. `routes.ts` resolves the workspace through `panelCwd(override)` — explicit override, then the
    active session workspace, then the process cwd — and uses it for the list route, the health
    probe, and every `resolveScannedSkill` call. The two halves can no longer disagree.
-5. A listed skill with no local file carries a "No local file" badge and an explanatory line
-   instead of rendering a row whose controls are silently missing.
+5. A pathless row states which kind it is instead of rendering controls that are silently missing.
+   A registration with no instruction file at all carries a "No local file" badge and an
+   explanatory line and offers no control; a registration whose file a plugin provider supplies
+   carries a "Provided by plugin" badge and the same kind of line, offers no edit or delete —
+   those controls would answer 404, because the panel cannot certify a path its own scan never
+   produced — and does carry the enable switch, which the host records in the panel's own store
+   rather than in a SKILL.md the provider owns
+   ([The Skill Center Gives Plugin-Provided Skills an Enable Switch](../feature/2026-10-12-skill-explorer-provider-skill-toggles.md)).
 
 ## Scope
 
@@ -92,7 +98,10 @@ root was never scanned, so no filesystem entry existed to outrank or to carry a 
 - The two halves of the route family resolve one workspace, so a project skill stays manageable
   regardless of the host process cwd.
 - A bundled or runtime registration no longer looks like a broken row: it states that it has no
-  local file.
+  local file, and a plugin-supplied file is named as such rather than lumped in with it. The two
+  pathless states stay apart in what they offer too: a truly fileless registration has no switch at
+  all, while a plugin-provided one can be switched off in the panel even though it still cannot be
+  edited or deleted.
 - A root declared in both places is scanned once, and relative entries resolve to absolute paths as
   the official provider resolves them.
 
@@ -108,4 +117,4 @@ serves a list; and a project skill is toggleable when the process cwd is a diffe
 a same-name skill (the write route must not answer 409). `tests/host-apply.spec.ts` adds the
 end-to-end case: a fake host whose loader carries the provider row serves that root's skill with its
 path through the real route. All eleven fail against the pre-fix source; the package suite passes
-(145 tests).
+(176 tests).

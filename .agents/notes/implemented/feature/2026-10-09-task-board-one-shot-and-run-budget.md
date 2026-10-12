@@ -72,7 +72,10 @@ nothing else.** Concretely:
   launch-failed` on a one-shot, which has no later occurrence to serve. A launch
   that DID reach a session is a real run and is never refunded. Either way a
   failure never triggers an immediate re-run, so it can never push a rule past
-  its cap.
+  its cap. A target the refund restores is served like any other: the service
+  re-arms the native timer for it, so a rule that regains its occurrence does not
+  wait for an unrelated write ([native panel and
+  timer](../architecture/2026-09-25-task-board-native-panel-and-timer.md)).
 - A settled outcome never moves the counter, so "ran twice, both failed" is two
   runs of a two-run budget, not zero.
 
@@ -194,7 +197,9 @@ or if the board's authority boundary itself changes.
 - A launch that fails before any session exists is refunded, so a host-side launch
   failure cannot silently eat a limited budget. The failed attempt still appears in
   the execution history; only the counter is returned, and the rule serves its next
-  occurrence (a one-shot, having none, ends).
+  occurrence (a one-shot, having none, ends). The occurrence a refund restores is
+  armed at once, so the returned budget is served at that occurrence's own instant
+  rather than at whatever target happened to be armed.
 - Re-enabling a stopped rule resets its budget. The user's act of arming it again
   is what buys a new round, and the exhausted display makes the previous round's
   count visible before that happens.
