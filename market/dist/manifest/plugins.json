@@ -1730,6 +1730,18 @@
       "npm": "@noob-stupid/dsh-connection-card-host",
       "category": "integration",
       "subcategory": "bridge"
+    },
+    {
+      "id": "dsh-trae-relay",
+      "name": "TRAE CN 反代与控制台",
+      "rank": 136,
+      "nameEn": "TRAE CN Relay and Console",
+      "author": "FuSheng-cs",
+      "description": "TRAE CN 反代与内嵌控制台，支持自动签到、多账号管理和轮询、模型发现、思考档位及模型显示/隐藏。自动签到与轮询默认关闭；仅限有权使用且服务方允许的账号与功能，详见仓库免责声明。",
+      "descriptionEn": "TRAE CN relay and embedded console with daily check-in, multiple accounts, rotation, model discovery, reasoning levels and visibility controls. Automation is off by default; account/service permission is required. See the repository disclaimer.",
+      "repo": "https://github.com/FuSheng-cs/dsh-trae-relay",
+      "category": "integration",
+      "subcategory": "external-ai"
     }
   ]
 }
