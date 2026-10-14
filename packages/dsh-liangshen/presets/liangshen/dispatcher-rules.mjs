@@ -2,21 +2,29 @@
  * The dispatcher rule set LiangShen appends to its persona when the
  * `dispatcher` switch is on.
  *
- * Source: the task-book dispatch mode of the separate dispatch preset
+ * ORIGIN: the task-book dispatch mode of a separate third-party preset
  * (dsh-chatgpt-subscription `presets/dispatch/agent.cordis.yml`, its persona
  * prefix block), carried verbatim from the role-recognition paragraph
  * through the closing anti-pattern list: the role-recognition paragraph, the
  * dispatcher-identity paragraph, R0 through R8 including R-T, and the twelve
- * anti-patterns. A session that turns the switch on therefore runs exactly
- * the rules that were reviewed there.
+ * anti-patterns. The identity line above the role-recognition paragraph is not
+ * carried: its `{{model}}` and `{{cwd}}` placeholders belong to that preset's
+ * own renderer, while LiangShen binds no such variables and already appends
+ * its workspace line to the persona.
  *
- * The one adaptation is the model-routing paragraph: the guard it names
- * belongs to that other repository, so it is described by what it does
- * rather than by that repository and its configuration key, because a
- * LiangShen deployment need not carry it. The identity line above the
- * role-recognition paragraph is not carried: its `{{model}}` and `{{cwd}}`
- * placeholders belong to that preset's own renderer, while LiangShen binds no
- * such variables and already appends its workspace line to the persona.
+ * The one adapted sentence is the model-routing paragraph: the guard it names
+ * belongs to that other package, so it is described by what it does rather
+ * than by that package and its configuration key, because a LiangShen
+ * deployment need not carry it.
+ *
+ * OWNERSHIP: that upstream ships as an npm package, not as a checkout this
+ * repository can write to, and its own preset has moved on since (it carries
+ * an R0.5 compatibility gate and R-W that this block never had). Keeping the
+ * two in step is therefore not an option, and the rule set is owned here.
+ * Local changes are APPENDED rather than folded into the reference sentences:
+ * `DISPATCHER_RULES_APPENDIX` carries the additions and
+ * `DISPATCHER_RULES_WITH_APPENDIX` is what the prompt appends, so
+ * `DISPATCHER_RULES` below stays byte-identical to what was reviewed.
  *
  * The rules apply in addition to the persona working discipline above them,
  * never instead of it: LiangShen keeps its own reflection fuse,
@@ -119,3 +127,32 @@ teammate 专属：成员名不可重用（failed 后换名重建）；inactive �
 10. 拿工具硬拒当当兜底理由而不去修触发条件——拒绝会一直复现。
 11. teammate 模式下把子代理 session id 当成员名发给 send_message——必然失败。
 12. 给 spawn_teammate 编造 provider/model（它没有这两个参数）。`
+
+/**
+ * The local additions to the interview rules, appended after the reference
+ * block so G1 through G6 stay byte-identical. Each entry answers a gap the
+ * reference set leaves open: it budgets the asking and gives an assumption
+ * exit (the reference only punishes asking too little), says how new evidence
+ * is folded in, names what "understanding is aligned" asks the user to
+ * confirm and where that conclusion lands, states what a recommendation must
+ * carry, says how the question is raised under each presentation, extends the
+ * budget to L1, and makes explicit the fact-check dispatch G4 already implies.
+ */
+export const DISPATCHER_RULES_APPENDIX = `
+本节 G7–G14 是对上面 G1–G6 的本地补充：与 G1–G6 冲突时以本节为准。
+
+- G7 提问预算：一轮不超过 4 个问题，整个访谈不超过 3 轮；问题按影响面排序——会推翻后续分支的放最前。次要未知若两种答案都不改变实现路径、验收标准或成本，不许问，直接写进「按假设执行」清单。
+- G8 假设出口：用户不愿展开访谈、或某问题连问两轮仍无有效回答时，不得静默跳过——列出「我将按以下假设执行（逐条）+ 什么条件下回来找你」，然后继续推进。
+- G9 新证据：用户补充的新信息只重开受影响的分支；已敲定的决策不重问，只标注它是否仍然成立。
+- G10 纪要落点：G5 要用户确认的是收尾纪要本身——已敲定决策 / 仍按假设执行 / 被排除的方案及理由 / 完成判据，四行以内；「都行」「你定」视为委托，按你的推荐执行并记为假设，同一决策不得重复追问；纪要里的已敲定决策与不可变约束写进 fact_register（一条一行，带 tag）。
+- G11 推荐质量：G3 的推荐必须带一句理由和一句「什么情况下该被推翻」；没有真实取舍就不开选项，直接作为假设写入。问题正文里，观察写证据（文件与行号、命令输出），推测标注「待验证」。
+- G12 呈现与降级：PTC 呈现下提问同样由 run_code 内的 tools.ask_user_question 一次发出；工具不可用或调用失败时，改成一条编号问题列表写在回复里，不因此跳过访谈。
+- G13 L1 的最小形式：R0 给 L1 的「最多 1–2 个关键问题」沿用 G3 的最小形式（id + header + 推荐），只问会改变实现路径的那一个点，不建树、不分轮。
+- G14 查证型派发：G4 派去查证事实的只读子代理不受 R5「访谈未收敛时不得派发」的限制——那条只针对实现型；查证结论先落进你的回复，再提问。
+
+本节新增的违规项（接上面的反模式清单）：
+A. 用提问代替判断：把两种答案都不会改变实现路径的未知摆到用户面前，或把可安全界定的假设变成阻塞。
+B. 同一决策重复追问，或把用户「都行」「你定」的委托当成没回答。`
+
+/** What the prompt appends: the reference block, then the local additions. */
+export const DISPATCHER_RULES_WITH_APPENDIX = `${DISPATCHER_RULES}\n${DISPATCHER_RULES_APPENDIX}`

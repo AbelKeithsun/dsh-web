@@ -23,7 +23,7 @@ import {
   WORKSPACE_INSTRUCTIONS_SECTION_NAME,
 } from '../presets/liangshen/minimal-prompt.mjs'
 import * as promptModule from '../presets/liangshen/minimal-prompt.mjs'
-import { DISPATCHER_RULES } from '../presets/liangshen/dispatcher-rules.mjs'
+import { DISPATCHER_RULES, DISPATCHER_RULES_APPENDIX, DISPATCHER_RULES_WITH_APPENDIX } from '../presets/liangshen/dispatcher-rules.mjs'
 
 type Listener = (first: any, second: any, third: any) => Promise<any>
 
@@ -631,7 +631,7 @@ describe('liangshen-minimal-prompt', () => {
       const text = personaText(result)
       const off = personaText(await assemble(register({ dispatcher: false }), FULL_SECTIONS, undefined, agentAt(cwd)))
       expect(text.startsWith(off)).toBe(true)
-      expect(text.slice(off.length)).toBe(`${DISPATCHER_RULES_HEADING}${DISPATCHER_RULES}`)
+      expect(text.slice(off.length)).toBe(`${DISPATCHER_RULES_HEADING}${DISPATCHER_RULES_WITH_APPENDIX}`)
       // The persona discipline is still ahead of the appended rules.
       expect(text.indexOf('You are a helpful software engineer assistant.'))
         .toBeLessThan(text.indexOf('## Dispatcher rules'))
@@ -668,6 +668,11 @@ describe('liangshen-minimal-prompt', () => {
         '## R8 · 兜底',
         '## 反模式（出现即为违规）',
         '12. 给 spawn_teammate 编造 provider/model',
+        '本节 G7–G14 是对上面 G1–G6 的本地补充',
+        '- G7 提问预算',
+        '- G14 查证型派发',
+        'A. 用提问代替判断',
+        'B. 同一决策重复追问',
       ]) {
         expect(text, marker).toContain(marker)
       }
@@ -682,6 +687,50 @@ describe('liangshen-minimal-prompt', () => {
       // No unbound template variables ride in with the block: the renderer
       // interpolates strictly, so a stray placeholder would fail every request.
       expect(text).not.toMatch(/\{\{/)
+    })
+
+    test('operator gets the interview additions after the reference block, which stays byte-identical', async () => {
+      // Given the switch on, When the operator assembles the prompt, Then the
+      // local interview additions ride after the last reference sentence and
+      // the reference block itself is unchanged: the additions are an appendix,
+      // not a rewrite of the text that was reviewed elsewhere.
+      const result = await assemble(register({ dispatcher: true }), FULL_SECTIONS, undefined, agentAt(project()))
+      const text = personaText(result)
+      // The reference block ends at anti-pattern 12 and carries no addition.
+      expect(DISPATCHER_RULES.endsWith('12. 给 spawn_teammate 编造 provider/model（它没有这两个参数）。')).toBe(true)
+      expect(DISPATCHER_RULES).not.toContain('G7')
+      expect(DISPATCHER_RULES_APPENDIX).not.toContain('## R-G · 澄清访谈')
+      expect(DISPATCHER_RULES_WITH_APPENDIX).toBe(`${DISPATCHER_RULES}\n${DISPATCHER_RULES_APPENDIX}`)
+      // The appendix follows the reference block, and every addition is
+      // present once.
+      for (const marker of [
+        '本节 G7–G14 是对上面 G1–G6 的本地补充',
+        '- G7 提问预算：一轮不超过 4 个问题',
+        '- G8 假设出口：',
+        '- G9 新证据：',
+        '- G10 纪要落点：',
+        '- G11 推荐质量：',
+        '- G12 呈现与降级：',
+        '- G13 L1 的最小形式：',
+        '- G14 查证型派发：',
+        'A. 用提问代替判断：',
+        'B. 同一决策重复追问，',
+      ]) {
+        expect(text, marker).toContain(marker)
+        expect(text.split(marker)).toHaveLength(2)
+      }
+      expect(text.indexOf('12. 给 spawn_teammate 编造 provider/model'))
+        .toBeLessThan(text.indexOf('本节 G7–G14'))
+    })
+
+    test('operator keeps the additions when the persona already carries the reference block', async () => {
+      // Given a persona that already holds the reference block but not the
+      // additions, When the block is appended, Then only the additions are
+      // added: the two halves are checked separately so neither is duplicated.
+      const withReference = `persona\n${DISPATCHER_RULES}`
+      const once = promptModule.withDispatcherRules(withReference)
+      expect(once).toBe(`${withReference}\n${DISPATCHER_RULES_APPENDIX}`)
+      expect(promptModule.withDispatcherRules(once)).toBe(once)
     })
 
     test('operator sees the appended block rendered by the harness renderer', async () => {
@@ -703,7 +752,7 @@ describe('liangshen-minimal-prompt', () => {
       const result = await assemble(register({ dispatcher: true }), FULL_SECTIONS, undefined, { session: { header: {} } })
       const text = personaText(result)
       expect(text).not.toContain('Your working directory is')
-      expect(text).toBe(`${PERSONA.text}${DISPATCHER_RULES_HEADING}${DISPATCHER_RULES}`)
+      expect(text).toBe(`${PERSONA.text}${DISPATCHER_RULES_HEADING}${DISPATCHER_RULES_WITH_APPENDIX}`)
     })
 
     test('operator does not get the block twice when the persona already carries it', async () => {
