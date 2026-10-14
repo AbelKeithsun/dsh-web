@@ -63,14 +63,15 @@ Every CI change states which item it advances, or why the item does not apply he
 
 Baseline on `origin/dev` (run 38499514986): `CI checks` 164s, `plugin-mount` 144s, run wall 168s. Two real runs of this change's pull request (38506503973 and 38506816812):
 
-| measured | baseline | run 1 | run 2 |
-| --- | --- | --- | --- |
-| the serialized gate job | `CI checks` 164s | `Static checks` 135s (a 47s checkout and a 34s text-gate step on a slow runner) | `Static checks` 92s |
-| `plugin-mount` | 144s | 157s (44s cold CLI install) | 165s (41s cold CLI install) |
-| the required context | 164s | aggregator 4s | aggregator 2s |
-| run wall clock | 168s | 161s | 170s |
+| measured | baseline | run 1 | run 2 | run 3 (both fixes) |
+| --- | --- | --- | --- | --- |
+| the serialized gate job | `CI checks` 164s | `Static checks` 135s (a 47s checkout and a 34s text-gate step on a slow runner) | `Static checks` 92s | `Static checks` 71s |
+| `plugin-mount` | 144s | 157s (44s cold CLI install) | 165s (41s cold CLI install) | 143s (36s CLI install) |
+| the required context | 164s | aggregator 4s | aggregator 2s | `CI checks` 73s (71s lane + 2s aggregator) |
+| the other lanes | (steps of the one job) | 39-53s shards, 33s consistency | 46-80s shards, 38s consistency | 47-57s shards, 33s consistency |
+| run wall clock | 168s | 161s | 170s | 147s |
 
-The restructure moved the required-check work out of one 164s serialized job into a 92s worst lane, and those first two runs still showed no wall-clock win, because the run is bounded by `plugin-mount` and the two things that made that lane slower than baseline were exactly the two ideas this change had to retract: the text gates running before the install (24-34s) and the cached CLI install being cold (41-44s). Both were fixed after those runs — the install now precedes the gates, and the mount lane is back to the plain pinned install with a version guard. The run's bound therefore returns to the mount lane, whose floor is the remaining problem: its CLI install is the largest single step, and removing it requires the `dsh-app-boot` peer collision to be fixed first. The structural win stands on its own: no further gate lengthens the required check linearly, and the four shard lanes (39-53s, shard steps 18-32s) and the consistency lane (33s) sit well inside the bound.
+The restructure moved the required-check work out of one 164s serialized job, and the first two runs showed no wall-clock win, because the run is bounded by `plugin-mount` and the two things that made that lane slower than baseline were exactly the two ideas this change had to retract: the text gates running before the install (24-34s) and the cached CLI install being cold (41-44s). Run 3 carries both fixes — the install now precedes the gates, and the mount lane is back to the plain pinned install with a version guard — and measures `CI checks` at 73s against 164s and the run at 147s against 168s. The required check is 55% shorter and the run 12% shorter, and the bound has moved to `plugin-mount` (143s, of which the CLI install is 36s and the mount smoke 36s): the next win needs the `dsh-app-boot` peer collision fixed so that CLI install can move into the workspace install, which is the follow-up this work hands over. The structural win stands on its own: no further gate lengthens the required check linearly.
 
 ## Alternatives considered
 
