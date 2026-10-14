@@ -466,6 +466,70 @@ export function resolveLlmRuntime(ctx: Context): LlmRuntime | undefined {
 }
 
 /**
+ * The subset of `sessionController` the board uses to wake a cold persisted
+ * session before running a slash command on it (issue #1861).
+ */
+interface SessionControllerFace {
+  resolveAgent(
+    sessionId: Parameters<Context['agents']['get']>[0],
+  ): Promise<
+    | { readonly agent: Parameters<Context['commands']['execute']>[0] }
+    | { readonly error: { readonly message?: string } }
+  >
+}
+
+/**
+ * Resolve the optional `sessionController` service. Like the tool registry and
+ * the llm runtime, it is read dynamically so capture-only test contexts that do
+ * not mount the full session controller still activate the board.
+ * @param ctx - the plugin context.
+ * @returns the session controller face, or undefined when unavailable.
+ */
+export function resolveSessionController(ctx: Context): SessionControllerFace | undefined {
+  try {
+    const controller = (ctx as { get?: (name: string) => unknown }).get?.('sessionController') as SessionControllerFace | undefined
+    return controller !== undefined && typeof controller.resolveAgent === 'function' ? controller : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Resolve the live Agent for an execution session, resuming a cold persisted
+ * session through `sessionController.resolveAgent` when it is not yet in
+ * `ctx.agents` (issue #1861).
+ *
+ * A fresh run (`session/create`) or a session the browser is currently
+ * following is already in `ctx.agents`, so the fast path returns immediately.
+ * A scheduled or manual reuse of a cold session — one that `session/list`
+ * reports as idle from disk without activating its Agent — is not in
+ * `ctx.agents` when `pinAndPrompt` runs `/permission` ahead of
+ * `session/selectModel` and `session/prompt`; delegating to
+ * `sessionController.resolveAgent` resumes it with its recorded preset and
+ * model-selection state, matching what those gateway endpoints do next.
+ * @param ctx - the plugin context.
+ * @param sessionId - the target execution session id.
+ * @returns the live Agent for `sessionId`.
+ */
+export async function resolveExecutionAgent(
+  ctx: Context,
+  sessionId: Parameters<Context['agents']['get']>[0],
+): Promise<Parameters<Context['commands']['execute']>[0]> {
+  const live = ctx.agents.get(sessionId)
+  if (live !== undefined) return live
+  const controller = resolveSessionController(ctx)
+  if (controller !== undefined) {
+    const resolved = await controller.resolveAgent(sessionId)
+    if ('agent' in resolved && resolved.agent !== undefined) return resolved.agent
+    const detail = 'error' in resolved && typeof resolved.error?.message === 'string' && resolved.error.message !== ''
+      ? `: ${resolved.error.message}`
+      : ''
+    throw new Error(`execution session ${sessionId} is not available${detail}`)
+  }
+  throw new Error(`execution session ${sessionId} is not available`)
+}
+
+/**
  * Activate the board's host half: ledger, routes, cron scheduler, power
  * inhibitor, and the model-facing announcement.
  *
@@ -540,8 +604,7 @@ function applyImpl(ctx: Context, config?: Config): void {
     team: buildTeamDispatcher(ctx, config?.teamProvider ?? DEFAULT_TEAM_PROVIDER),
     commandDispatcher: {
       async execute(sessionId, line, signal) {
-        const agent = ctx.agents.get(sessionId)
-        if (agent === undefined) throw new Error(`execution session ${sessionId} is not available`)
+        const agent = await resolveExecutionAgent(ctx, sessionId)
         return (await ctx.commands.execute(agent, line, [], signal))?.result
       },
     },
