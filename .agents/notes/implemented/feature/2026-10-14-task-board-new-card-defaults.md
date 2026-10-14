@@ -22,6 +22,8 @@ A default permission may sit above the session permission baseline. That is a co
 
 The Host create path opts in. The create action gains the boolean `applyCardDefaults`, which fills the targets the caller left out with the board defaults, and `task_board_create` sets it. Without the flag the action behaves exactly as before, so the extension provider's `tasks.create` and the legacy browser import — neither of which sets it — keep their own meaning for an absent field.
 
+A saved default reaches a page that is already open. The board's client follows the settings form the settings card saves through: when the signature of the four `cardDefault*` keys changes it re-reads the authoritative Host snapshot (`BoardController.refreshHostState()`), so a new-task dialog opened later in the same page session prefills from the saved values with no reload, and a cleared default stops being offered at once — the Host represents "not configured" by omitting the key, so the browser mirror takes that field from the snapshot rather than from the previous value. One save causes one re-read; a write to any other setting causes none.
+
 ## Required verification
 
 - The four keys persist in the settings namespace, are volatile, and an empty value leaves every create path byte-for-byte as it was: no pin is added and no default is substituted.
@@ -30,6 +32,7 @@ The Host create path opts in. The create action gains the boolean `applyCardDefa
 - The effort binding holds in every direction: the default level is applied only while the card's final model is `cardDefaultModel` and the caller picked no model; a caller that picks a model of its own gets no level, neither the source's nor the default; a blank `cardDefaultModel` makes the default level inert; and a source card's own model/level pair still travels together.
 - The gate still holds: a default permission above the baseline leaves the card unconfirmed, and a manual run or a cron trigger still refuses until a human confirms it.
 - `applyCardDefaults: true` fills only omitted values and never overwrites one the caller passed; the same create action without the flag, the provider's `tasks.create` and the legacy import produce unchanged cards.
+- Saving the defaults reaches a page that is already open: without a reload, a new-task dialog opened after the save prefills from the saved values, and clearing a default returns that field to unset on the next open.
 
 ## Alternatives considered
 
@@ -40,6 +43,8 @@ The Host create path opts in. The create action gains the boolean `applyCardDefa
 **Offer a universal reasoning-level list as the default's choices.** Rejected: adapters own the levels their model supports, and the existing effort decision already refuses a universal low/medium/high list; a default level the resolved model does not declare could only be rejected by model selection at run time. The default is chosen from the same catalog-derived list the card's own selector uses.
 
 **A board-level pin rather than a prefill** — the shape [the create-dialog decision](./2026-09-27-task-board-create-dialog-regions.md) rejected when the deployment default was the only inherit target. Rejected here for the same reason: a pin would override the deployment default for every card the user never configured. A prefill with its own "unset" state leaves that inherit target in place, so what the earlier note protected still holds — the per-card choice stays where the judgement is made.
+
+**Publish the values on the board's event stream.** Tried, measured on an isolated probe host, and reverted. The browser mirror would have followed the SSE frames instead, with a frame re-sent after a volatile settings write. The connection frame did carry the current value, but the frame emitted right after a save carried the value as of BEFORE that write — two consecutive edits both lagged one step — while `GET /api/task-board/state` already answered with the new one: the Loader hands a volatile update to its fiber while the new document is not yet visible to that fiber. Frames also merged into the mirror as an unconditional overwrite, so that stale value could replace a fresher one, which is worse than the defect it was meant to fix. Re-reading the snapshot on the settings-form signature has neither failure.
 
 ## Consequences
 

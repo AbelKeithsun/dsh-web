@@ -6473,6 +6473,21 @@ window.__ModuleLoader__.load({
 				return await this.initializeRemote();
 			}
 			/**
+			* Re-read the authoritative Host snapshot.
+			*
+			* The board's volatile deployment configuration — the new-card defaults among
+			* it — is republished the moment the settings document is written, but the SSE
+			* frame that republish emits carries the value as of BEFORE the write (the
+			* loader hands the update to the fiber while the new document is not yet
+			* visible to it), so a mirror that followed frames alone would stay one edit
+			* behind and the create dialog would prefill from the previous defaults for
+			* the rest of the session. The surface that owns the write asks for the
+			* snapshot again instead of trusting the frame.
+			*/
+			refreshHostState() {
+				this.refreshRemote();
+			}
+			/**
 			* Show the board. The layout owns which panel the center column renders, so
 			* the state flip and the panel selection travel together here; a composition
 			* with no layout face (tests, a shell-less host) still flips the state.
@@ -6938,19 +6953,20 @@ window.__ModuleLoader__.load({
 				return this.hostState?.maxSubtaskDepth ?? 1;
 			}
 			/**
-			* Project a Host snapshot onto the browser's mirror. SSE frames and partial
-			* snapshots carry only the volatile subset (revision/scheduler/power), so the
-			* deployment constants the UI reads — the session-default permission the
-			* confirmation banner compares against, the subtask depth limit, and the
-			* new-card defaults the create dialog prefills from — are carried over from
-			* the last full snapshot instead of being dropped by a heartbeat frame.
+			* Project a Host snapshot onto the browser's mirror. Every snapshot the
+			* transport serves is a full document (bootstrap/state/action all answer
+			* `TaskBoardHostService.snapshot()`), so the deployment constants the UI reads
+			* — the session-default permission the confirmation banner compares against,
+			* the subtask depth limit, the platform switches and the extensions a provider
+			* published — are taken as published, carried over only where the snapshot
+			* itself omits the key.
 			*/
 			mirrorOf(snapshot) {
 				const sessionDefaultPermission = snapshot.sessionDefaultPermission ?? this.hostState?.sessionDefaultPermission;
 				const maxSubtaskDepth = snapshot.maxSubtaskDepth ?? this.hostState?.maxSubtaskDepth;
 				const teamRunAvailable = snapshot.teamRunAvailable ?? this.hostState?.teamRunAvailable;
 				const goalRunEnabled = snapshot.goalRunEnabled ?? this.hostState?.goalRunEnabled;
-				const cardDefaults = snapshot.cardDefaults ?? this.hostState?.cardDefaults;
+				const cardDefaults = snapshot.cardDefaults;
 				const extensions = snapshot.extensions ?? this.hostState?.extensions;
 				return {
 					revision: snapshot.revision,
@@ -18278,6 +18294,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				const disposers = [];
 				liveController = controller;
 				if (presetRoster !== void 0) controller.setExecutionOptions({ presets: presetRoster });
+				let followedDefaults = cardDefaultSignature(settingsForm.getSnapshot().value);
+				disposers.push(settingsForm.subscribe(() => {
+					const next = cardDefaultSignature(settingsForm.getSnapshot().value);
+					if (next === followedDefaults) return;
+					followedDefaults = next;
+					controller.refreshHostState();
+				}));
 				const pushWorkspaceOptions = () => {
 					const snapshot = workspaces.list.getSnapshot();
 					controller.setExecutionOptions({ workspaces: snapshot.items.map((item) => ({
@@ -18378,6 +18401,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				forms: ctx.configForms,
 				entryIds: TASK_BOARD_ENTRY_IDS
 			});
+		}
+		/**
+		* The four new-card defaults one settings document holds, as a change
+		* signature.
+		*
+		* Deliberately nothing but those four keys: the settings form also carries the
+		* board's own switches and the acceptance configuration, and an edit to one of
+		* those says nothing about the defaults the create dialog prefills from. Not a
+		* second normalization of Host state — the value never leaves this comparison.
+		* @param value - the settings form's effective section, if it has one.
+		* @returns a stable string that changes exactly when the defaults do.
+		*/
+		function cardDefaultSignature(value) {
+			const section = value ?? {};
+			return JSON.stringify([
+				section.cardDefaultMode,
+				section.cardDefaultPermission,
+				section.cardDefaultModel,
+				section.cardDefaultReasoningEffort
+			]);
 		}
 		/**
 		* The profile entry id this package's own row carries, for a page that serves

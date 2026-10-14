@@ -329,6 +329,22 @@ export class BoardController {
     return await this.initializeRemote()
   }
 
+  /**
+   * Re-read the authoritative Host snapshot.
+   *
+   * The board's volatile deployment configuration — the new-card defaults among
+   * it — is republished the moment the settings document is written, but the SSE
+   * frame that republish emits carries the value as of BEFORE the write (the
+   * loader hands the update to the fiber while the new document is not yet
+   * visible to it), so a mirror that followed frames alone would stay one edit
+   * behind and the create dialog would prefill from the previous defaults for
+   * the rest of the session. The surface that owns the write asks for the
+   * snapshot again instead of trusting the frame.
+   */
+  refreshHostState(): void {
+    void this.refreshRemote()
+  }
+
   // --- view state -------------------------------------------------------------
 
   /**
@@ -815,19 +831,25 @@ export class BoardController {
   }
 
   /**
-   * Project a Host snapshot onto the browser's mirror. SSE frames and partial
-   * snapshots carry only the volatile subset (revision/scheduler/power), so the
-   * deployment constants the UI reads — the session-default permission the
-   * confirmation banner compares against, the subtask depth limit, and the
-   * new-card defaults the create dialog prefills from — are carried over from
-   * the last full snapshot instead of being dropped by a heartbeat frame.
+   * Project a Host snapshot onto the browser's mirror. Every snapshot the
+   * transport serves is a full document (bootstrap/state/action all answer
+   * `TaskBoardHostService.snapshot()`), so the deployment constants the UI reads
+   * — the session-default permission the confirmation banner compares against,
+   * the subtask depth limit, the platform switches and the extensions a provider
+   * published — are taken as published, carried over only where the snapshot
+   * itself omits the key.
    */
   private mirrorOf(snapshot: TaskBoardSnapshot): HostMirror {
     const sessionDefaultPermission = snapshot.sessionDefaultPermission ?? this.hostState?.sessionDefaultPermission
     const maxSubtaskDepth = snapshot.maxSubtaskDepth ?? this.hostState?.maxSubtaskDepth
     const teamRunAvailable = snapshot.teamRunAvailable ?? this.hostState?.teamRunAvailable
     const goalRunEnabled = snapshot.goalRunEnabled ?? this.hostState?.goalRunEnabled
-    const cardDefaults = snapshot.cardDefaults ?? this.hostState?.cardDefaults
+    // The new-card defaults are NOT carried over: the Host publishes a target
+    // nothing configures by omitting it (protocol.ts states that explicitly), so
+    // an absent key means "this deployment configures none". Carrying the last
+    // value over would keep a CLEARED default alive in the create dialog, which
+    // is the mirror image of the staleness this key is re-read for.
+    const cardDefaults = snapshot.cardDefaults
     const extensions = snapshot.extensions ?? this.hostState?.extensions
     return {
       revision: snapshot.revision,

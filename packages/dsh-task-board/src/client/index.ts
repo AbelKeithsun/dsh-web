@@ -297,6 +297,24 @@ export function apply(ctx: ClientContext): void {
     liveController = controller
     if (presetRoster !== undefined) controller.setExecutionOptions({ presets: presetRoster })
 
+    // The new-card defaults are written through the very settings form this
+    // plugin binds (that is the card's save), and the Host republishes its
+    // snapshot on that write. Its SSE frame carries the value as of BEFORE the
+    // write, though, so a mirror that only followed frames would hand the create
+    // dialog the previous defaults for the rest of the page session — the
+    // "configure a default, create a card, get nothing" report. Follow the form
+    // instead: when the four defaults it holds change, re-read the authoritative
+    // snapshot. The signature keeps one write to one GET (the form announces a
+    // settled document more than once) and keeps an unrelated settings write, or
+    // any board action, from pulling the ledger again.
+    let followedDefaults = cardDefaultSignature(settingsForm.getSnapshot().value)
+    disposers.push(settingsForm.subscribe(() => {
+      const next = cardDefaultSignature(settingsForm.getSnapshot().value)
+      if (next === followedDefaults) return
+      followedDefaults = next
+      controller.refreshHostState()
+    }))
+
     // Execution-target option feeds: the workspace list drives the workspace
     // picker, and the agent-preset roster drives the mode picker. Both are
     // runtime facts (not ledger state), so the wiring pushes them into the
@@ -443,6 +461,27 @@ export function bindSettingsForm(ctx: ClientContext): ConfigForm<TaskBoardSettin
     forms: ctx.configForms,
     entryIds: TASK_BOARD_ENTRY_IDS,
   })
+}
+
+/**
+ * The four new-card defaults one settings document holds, as a change
+ * signature.
+ *
+ * Deliberately nothing but those four keys: the settings form also carries the
+ * board's own switches and the acceptance configuration, and an edit to one of
+ * those says nothing about the defaults the create dialog prefills from. Not a
+ * second normalization of Host state — the value never leaves this comparison.
+ * @param value - the settings form's effective section, if it has one.
+ * @returns a stable string that changes exactly when the defaults do.
+ */
+function cardDefaultSignature(value: unknown): string {
+  const section = (value ?? {}) as Record<string, unknown>
+  return JSON.stringify([
+    section.cardDefaultMode,
+    section.cardDefaultPermission,
+    section.cardDefaultModel,
+    section.cardDefaultReasoningEffort,
+  ])
 }
 
 /**
