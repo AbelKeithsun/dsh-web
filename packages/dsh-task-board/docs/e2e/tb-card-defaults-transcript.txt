@@ -1,0 +1,334 @@
+任务看板：「新建卡片默认值」专题与新建对话框预填的真实核验
+============================================================
+
+目的
+----
+在真实渲染的设置页与看板页面里核验：
+ 1. 设置 -> Web 插件 -> 任务看板 下第三个自有专题「新建卡片默认值」的四个字段与未配置态；
+ 2. 把「权限」默认值设为 workspace-write 并保存后，新建任务对话框是否按默认值预填；
+ 3. 在对话框里改回「会话默认/继承」后创建，卡片是否真的没钉住该项（界面 + 账本双重证据）；
+ 4. 顺带：模型默认值声明了思考档位时「思考档位」选择器是否从锁定变为可选、默认值是否不影响既有卡片。
+
+结论摘要
+--------
+- 目标 1（专题与四个字段的真实渲染、未配置态）：**已证明**，见「观察结果」。
+- 目标 2（保存默认值后对话框按默认值预填）：**已证明**，见「目标 2」。观察到的原值为
+  权限=工作区可写（未配置时为 会话默认）。
+- 目标 3（对话框改回继承后创建的卡片不钉住该字段）：**已证明**，界面与账本双重证据，见「目标 3」；
+  卡片记录里**没有** permission 键。
+- 目标 4（顺带项）：模型选择器选中声明档位的模型后「思考档位」由锁定变为可选（已证明）；
+  「不影响既有卡片」以既有卡片记录键未变为证（已证明）。
+- **目标 2 的前置条件随后被推翻**：上面「目标 2」的预填是在**手动刷新页面之后**观察到的。
+  修复（SSE 帧必带 cardDefaults + volatile 提交后补发帧 + 浏览器同 revision 无条件覆盖镜像）
+  声称不再需要刷新，但**第四次尝试的针对性复核未通过**：保存后不刷新，新建对话框仍显示
+  「会话默认」而不是「工作区可写」。详见「第四次尝试 / 修复后复核（无需刷新）—— 未通过」，
+  该节的观察与本条并列保留（原始观察作为历史不改写）。
+- **第四次尝试的结论已在第五次尝试中复核通过**：上一轮那套 SSE 帧方案已被回退（实测该帧携带的是
+  提交前的旧值，见第五次尝试一节保留的数据点），新方案是客户端订阅自己绑定的设置表单、
+  cardDefault* 签名变化时重拉一次权威 /state。第五次尝试证明：保存后**不刷新页面**，
+  新建对话框立即预填「工作区可写」；改回「不设置」保存后同样立即回到「会话默认」。
+  仍保留上一轮的未通过记录作为历史。
+- 两次因本机锁屏导致的中断保留在「中断记录」与「第二次尝试」两节，并注明 20:07 后已恢复并补做完成。
+
+Date: 2026-10-14（Asia/Shanghai）；核验时间跨度 17:09–20:52，其中 17:12:55–20:07 因锁屏中断。
+Build: 使用工作树既有产物（packages/*/lib 与聚合包 packages/dsh-web-all/lib/client.js 已由
+       pnpm build 刷新）。本次核验未重建、未改动任何 src/、README、AGENTS.md、note 或 lib/**。
+
+环境（隔离，绝不触碰用户正在使用的宿主）
+----------------------------------------
+- 探针 home：/tmp/dsh-verify-card-defaults（每次开始前确认不存在才创建；结束已删除）。
+  profiles/web 为 ~/.dsh/profiles/web 的复制；profiles/node_modules 为符号链接；
+  task-board 账本为该 home 私有（ledgerId 2855e37b-…，与用户账本无关）。
+- 探针宿主：DSH_HOME=/tmp/dsh-verify-card-defaults dsh --profile web --port 19410 --no-open
+  （dsh 0.2.0-rc.2，/Users/zcl/.local/bin/dsh）。该实例的 tokenized URL 形如
+  http://127.0.0.1:19410/?token=<per-run token>（token 随进程消失，未写入仓库任何文件；
+  无鉴权探测 curl http://127.0.0.1:19410/ 返回 401 authentication required）。
+- 浏览器：/Applications/Google Chrome.app 的独立实例
+  --user-data-dir=/tmp/dsh-verify-card-defaults/chrome-profile（与用户 Chrome pid 717 完全隔离），
+  窗口 1470x860（窗口级 PNG 1567x917）。
+- 驱动方式：只用原生 Computer Use（cua_driver_native__*）：list_windows 取窗口、get_window_state
+  取 AX 元素数组 + 窗口级 PNG、click 走 element_token 或窗口内像素、press_key 走元素级按键、
+  scroll 走目标元素滚轮、type_text 写标题。未使用 CDP / browser-use / Playwright；
+  未做全屏桌面截图（get_desktop_state / screencapture 均未调用）。
+- 授权前置：check_permissions({"prompt": false}) 报 Accessibility: granted / Screen Recording: granted。
+
+观察结果（目标 1；真实 AX 读回，2026-10-14 17:11–17:12）
+--------------------------------------------------------
+A. 设置 -> Web 插件 的卡片顺序：远程访问 / 任务看板 / 梁神模式。
+
+B. 展开「任务看板」后，其内部专题按钮按渲染顺序与 frame.y 为：
+
+     展开设置: 启用任务看板        y=404
+     展开设置: 运行行为            y=490
+     展开设置: 任务验收            y=577
+     展开设置: 新建卡片默认值      y=663
+     展开设置: GitHub Issues 同步  y=808
+
+   即「新建卡片默认值」排在「任务验收」之后、GitHub Issues 提供方席位之前（与预期一致）。
+
+C. 展开「新建卡片默认值」（AX 读回为 收起设置: 新建卡片默认值）后的四个字段与未配置态：
+
+     AXPopUpButton  Agent 预设  -> 继承（部署默认：PTC（程序化工具调用））
+     AXPopUpButton  权限        -> 会话默认
+     AXPopUpButton  模型        -> 宿主默认（agent-default-model）
+     AXStaticText   思考档位    -> 选择器锁定，提示「先选择要钉住的模型，才能设置它的思考档位。」
+     AXStaticText   留空不钉住任何值，新建卡片照常沿用部署默认预设。取值优先级为：…
+     AXStaticText   留空为不设置（用会话默认）。高于会话默认权限基线的默认值仍只是预填：…
+     AXStaticText   留空为宿主默认（agent-default-model）。对话框里的显式选择优先于…
+
+   三条 hint 与 packages/dsh-task-board/src/client/locales.ts 的 settings.cardDefaultModeHint /
+   settings.cardDefaultPermissionHint / settings.cardDefaultModelHint 文案逐字一致；四个字段标签
+   来自 new.agentPreset / new.permission / new.model / exec.reasoning。
+
+中断记录（17:12:55–20:07 锁屏；后来已恢复并补做，见下两节）
+-----------------------------------------------------------
+17:12:55 之后本机 GUI 会话进入锁屏态，Computer Use 的两条路径同时失效：
+
+- AX 面：Chrome / 访达 / QQ / DeepSeek Harness 等所有应用的 get_window_state 一律返回
+  total_element_count=0，degraded_reason=ax_window_unresolved
+  （"…none of the 0 AXWindow element(s) under that pid reports this CGWindowID"）。
+  换用全新 Chrome 实例（含 --force-renderer-accessibility）复现同样结果。
+- 输入投递：background 像素点击被拒
+  （"Background input refused (off_space_or_ax_unresolved)…"）；delivery_mode:"foreground"
+  的像素点击被接受但 effect:"unverifiable"，落点用 click 的 debug_image_out 十字线核对确认
+  就在目标控件上，页面仍无任何变化。
+- 旁证：osascript 取前台应用返回 -1719；统一日志中最后一次 lockStateChanged 为 17:12:55。
+- 轮询 421s 未恢复；未做任何解锁动作（锁屏解锁需要用户凭据）。
+- 注意：cua_driver_native__get_accessibility_tree 走 CGWindowList/NSWorkspace，锁屏时照样列出
+  16 个应用 / 18 个可见窗口，**不能**用来判定「AX 元素面已恢复」；应看 lsappinfo front 是否
+  不再是 loginwindow，或任一窗口 get_window_state 是否返回 total_element_count > 0。
+
+第二次尝试（17:29–17:40，收到「锁屏已解除」指示后重建探针）
+------------------------------------------------------------
+- 探针按同一手法重建（scratch home、19410、独立 Chrome pid 63009 / window 5350，页面已渲染），
+  但 AX 元素面仍全机为空（Chrome/访达/QQ/DSH Trading/富途牛牛/微信/QQ音乐 均 total=0）。
+- lsappinfo front -> "loginwindow" (in front)，bundleID="com.apple.loginwindow"：屏幕实际未解锁；
+  核验期内最后一次 lockStateChanged 仍为 17:12:55。再轮询 501s 未恢复，随后清理并如实回报。
+
+第三次尝试（20:07 后，解锁确认后补做；本节的其余观察均出自此次）
+----------------------------------------------------------------
+- 解锁确认：lsappinfo front -> "DSH Trading" (in front)；对 6 个应用窗口 get_window_state 全部
+  返回 total_element_count > 0（DSH Trading 7 / DeepSeek Harness 9 / 微信 1 / Chrome 9 / QQ 4 / 终端 11）。
+- 会话：隐式会话曾过期（"this session has ended"），用 start_session 重建后恢复；
+  命名 label 会话在两次 run_code 之间会过期，因此后续统一用隐式会话 + 每次程序内先 start_session。
+
+目标 2（保存权限默认值 workspace-write 后，对话框按默认值预填）
+--------------------------------------------------------------
+1. 设置 -> Web 插件 -> 任务看板 -> 新建卡片默认值 展开后，「权限」当前值 AX 读回为
+   "会话默认"（frame {h:34,w:491,x:581,y:731}）。
+2. 该控件是自绘弹层（皮肤激活时 isSkinActive() 回退原生 select 语义）：set_value 失败，原文为
+     "set_value failed: No AX child matching '工作区可写' in AXPopUpButton [38] "权限". Available: [""]"
+   改用键盘驱动：对 trigger 元素按 ArrowUp 打开弹层（截图可见 会话默认 / 只读 / 工作区可写 /
+   完全访问 四行，当前项高亮），再按 ArrowUp 移到「工作区可写」，按 Enter 提交。提交后 AX 读回：
+     before: "完全访问"   after up: "完全访问"   after return: "工作区可写"
+   （弹层关闭后才刷新 AX value，所以必须在提交后读回。）
+3. 点卡片自己的「保存」按钮（AXButton "保存"，token s00000050:53）后：脏标记
+   （未保存 / 已覆盖 / 恢复默认）全部消失，权限读回仍为 "工作区可写"。
+4. 机械证据（探针 home 内；用户 profile 无此键）：
+     $DSH_HOME/profiles/web/cordis.patch.yml 的 web-ui-task-board 行出现
+       cardDefaultPermission: workspace-write
+     grep cardDefault ~/.dsh/profiles/web/cordis.patch.yml -> 无匹配（即该值确为本次界面保存写入）
+   这是该部署保存设置卡的落点：设置表单 -> host 配置 -> profile patch。
+5. 打开看板 -> 新建任务 -> 展开「执行设置」，四个执行目标字段读回为：
+     工作区     最近使用（默认）
+     Agent 预设  继承（部署默认：PTC（程序化工具调用））
+     权限       **工作区可写**
+     模型       宿主默认（agent-default-model）
+     思考档位    先选择要钉住的模型，才能设置它的思考档位。（锁定）
+   对话框顶部摘要同时显示「执行设置 最近使用（默认） · 继承（部署默认：PTC（程序化工具调用）） ·
+   工作区可写」。截图 tb-card-defaults-prefill.png。
+6. 一个值得记录的界面事实：**同一个页面会话内，保存后立刻打开对话框并不会预填**——第一次打开
+   时权限仍是「会话默认」。对话框的预填取自客户端持有的看板快照
+   （src/client/board/NewTaskModal.tsx 读 controller.getSnapshot().host?.cardDefaults），
+   该快照要等一次页面刷新（或后续看板事件）才带上新默认值；点浏览器「重新加载」后重开对话框，
+   即变为上面第 5 条的「工作区可写」。这不是保存失败（第 4 条的写入与第 3 条的脏标记消失都在）。
+
+目标 3（对话框改回继承后创建，卡片不钉住该字段）
+------------------------------------------------
+1. 在同一对话框把「权限」改回继承：对 trigger 按 ArrowUp 打开弹层，再按 ArrowUp 两次移到
+   「会话默认」，按 Enter 提交（background 键事件；该 Chrome 进程若还有第二个可命中顶层窗口
+   ——例如翻译气泡——background 会被拒，需先关掉它或改用前台，本次先关掉气泡）。
+   读回：before "工作区可写" -> after "会话默认"。
+2. 「标题」填 tb-card-defaults-unpinned（AXTextField 读回 value 一致；type_text 报
+   effect:"unverifiable"、delivered_count:25，故以读回为准）。
+3. 点「创建」（不是「创建并执行」）。对话框关闭，看板「待办」计数 1，卡片标题
+   tb-card-defaults-unpinned「创建于刚刚」。
+4. 机械证据（探针账本原样）：
+     $DSH_HOME/task-board/ledger-v2.json  revision 1, tasks 1
+     {
+       "createdAt": 1791981877922,
+       "description": "",
+       "executions": [],
+       "id": "575b48b4-c5b9-40b2-be1d-36a71f00523c",
+       "prompt": "",
+       "status": "todo",
+       "title": "tb-card-defaults-unpinned",
+       "updatedAt": 1791981877922
+     }
+   键集为 createdAt/description/executions/id/prompt/status/title/updatedAt：
+   **没有 permission 键**，也没有 model / mode / reasoningEffort —— 在默认值就是
+   workspace-write 的前提下，清空选择器 = 真的不钉住，而不是存了默认值。
+5. 界面旁证：打开该卡详情，执行设置区读回
+     工作区 最近使用（默认） / Agent 预设 继承（部署默认：PTC（程序化工具调用）） /
+     权限 **会话默认** / 模型 宿主默认（agent-default-model） / 思考档位 沿用模型/宿主默认
+   截图 tb-card-defaults-unpinned.png（该文件为卡片详情视图；同一次创建后的看板列视图未单独留存，
+   其内容为「待办 1 / tb-card-defaults-unpinned / 创建于刚刚」）。
+
+顺带项（目标 4）
+----------------
+- 思考档位由锁定变可选：在设置卡把「模型」默认值从 宿主默认 改为
+  deepseek-official · DeepSeek-V41-Flash（弹层内 4 个模型之一，用 ArrowDown×4 + Enter 选中）后，
+  「思考档位」由 StaticText（锁定，提示 先选择要钉住的模型…）变为 **PopUpButton**，读回
+  value="沿用模型/宿主默认"，hint 变为「留空即沿用该模型/宿主的默认档位。」——即该模型声明了
+  可选档位，选择器解锁。该值在表单里处于已覆盖（未保存）态，核验结束时**未保存**，探针随后删除。
+- 不影响既有卡片：改动模型默认值之后再读账本，此前创建的卡片键集不变
+  （permission? False | model? False | mode? False | reasoningEffort? False）。
+
+驱动注意（复现用，均未造成仓库或用户状态变化）
+----------------------------------------------
+- 设置卡与对话框里的执行目标选择器都是自绘弹层：AXPress 打不开，set_value 也拿不到子项；
+  可靠路径是「对 trigger 元素发 ArrowUp 打开 -> ArrowUp/ArrowDown 移动 -> Enter 提交」，
+  并在提交后用 AX value 或截图复核。
+- 该 Chrome 进程存在第二个可命中顶层窗口时，元素级 background 键事件会被拒
+  （same_pid_keyboard_ambiguity / element_outside_target_window），先关掉多余窗口再发。
+- Escape 会关掉整个设置弹窗；弹层未打开时 Enter 会触发对话框提交（本次因标题为空被校验拦下，
+  未创建任何卡片，随后已补做）。一次误点窗口级「关闭」关掉了探针浏览器窗口，已重启探针浏览器重做。
+
+第四次尝试 / 修复后复核（无需刷新）—— 未通过
+----------------------------------------------
+背景：上一轮记录到「保存后同一会话内立刻打开对话框不预填，刷新后才正确」。随后收到的修复说明称：
+SSE 帧 TaskBoardEventPayload 现必填 cardDefaults，Host 在 volatile 配置提交后补发一帧（revision 不变），
+浏览器在同一 revision 的就地合并分支里无条件用帧值覆盖镜像，因此保存后无需刷新即应预填。
+本轮就是对该主张的针对性复核；结论是**在该探针里未复现修复效果**。
+
+本轮确实运行的是修复后的产物（先排除「加载了旧包」这一解释）：
+  ls -l packages/dsh-web-all/lib/client.js            -> 21:02
+  ls -l packages/dsh-task-board/lib/{client,index}.js -> 21:02
+  ps -p <probe host> -o lstart                        -> Wed Oct 14 21:03:02 2026（晚于构建）
+  readlink -f ~/.dsh/profiles/node_modules/@linxin666/dsh-web-all
+                                                      -> /Users/zcl/code/dsh-web/packages/dsh-web-all
+    （profile 把聚合包软链到本仓工作树，因此探针宿主与浏览器拿到的就是刚重建的产物）
+
+复核步骤与原始输出：
+1. 重建探针（scratch home + 19410 + 独立 Chrome pid 3158 / window 5658，页面已渲染），
+   解锁确认 lsappinfo front -> "DeepSeek Harness" (in front)。
+2. 设置 -> Web 插件 -> 任务看板 -> 新建卡片默认值，把「权限」设为 workspace-write：
+     permission before: "会话默认"
+     permission after:  "工作区可写"
+3. 点卡片自己的「保存」：
+     permission after save = "工作区可写" | dirty markers = []      （未保存/已覆盖/恢复默认 全部消失）
+     grep -n cardDefault /tmp/dsh-verify-card-defaults/profiles/web/cordis.patch.yml
+       82:    cardDefaultPermission: workspace-write
+4. **不刷新页面**，直接 关闭设置 -> 任务看板 -> 新建任务 -> 展开「执行设置」：
+     summary (NO reload): "执行设置 最近使用（默认） · 继承（部署默认：PTC（程序化工具调用）） · 会话默认"
+     permission in dialog = "会话默认"
+   即保存值确为 workspace-write，但对话框里没有预填；截图 tb-card-defaults-prefill-noreload.png
+   （该图记录的正是这个**未通过**的状态）。
+5. 同一形态第二次复现：随后一次保存把默认值改成
+     cardDefaultPermission: danger-full-access
+     cardDefaultModel: deepseek-official/deepseek-flash
+   不刷新再开一次对话框：
+     summary (no reload, after second save): "… · 会话默认"
+     dialog permission = "会话默认" | model = "宿主默认（agent-default-model）"
+   仍是未预填（两张截图同名，最终保留的是这一次）。
+
+旁证（宿主确实在帧里发布 cardDefaults；但这不能证明保存时刻补发了一帧）：
+  在探针上用 curl 建立会话后订阅 http://127.0.0.1:19410/api/task-board/events，抓到原始帧：
+    data: {"revision":0,…,"cardDefaults":{"permission":"workspace-write"}}
+    … 后续一次抓取抓到两帧：{"cardDefaults":{"permission":"danger-full-access","model":"deepseek-official/deepseek-flash","reasoningEffort":"high"}}
+  帧里始终带 cardDefaults（与该帧所在连接的建立时刻一致），说明「帧必填 cardDefaults」这一半成立；
+  但本次无法判定保存动作是否**当场**触发补发帧，也无法判定浏览器是否合并了它——两者都只是推断。
+
+未能完成的一步：反向核对（清空默认值后不刷新即应回到「会话默认」）。
+  由于正向用例本身就没出现预填，反向用例即使读到「会话默认」也不构成证据；
+  另外本轮把「权限」改回继承的两条驱动路径都没落地：点「恢复默认」按钮（AXButton，三次尝试）
+  没有改变字段值，键盘路径则出现了按键落到**另一个字段**（模型）的情况——这也是本轮探针里
+  一度出现 cardDefaultModel: deepseek-official/deepseek-flash 的原因（全部发生在已删除的探针 home 内，
+  用户 profile 始终没有 cardDefault* 键：grep -c cardDefault ~/.dsh/profiles/web/cordis.patch.yml -> 0）。
+
+与修复说明的差异（如实并列，不做修饰）：
+  - 说明预期：保存后不刷新，新建对话框立即预填。
+  - 本轮观察：保存成功且帧里带 cardDefaults，但同一页面会话内新建对话框未预填，仍需刷新才正确。
+  - 未定位到断点在哪一半：可能是保存路径没有发出 loader/volatile-update 因而不补发帧，
+    也可能是浏览器同 revision 的合并分支没有生效；本轮证据不足以二选一。
+
+第五次尝试 / 修复后复核（订阅设置表单 → 重拉快照）—— 通过
+------------------------------------------------------------
+修复方案（本轮据此建立预期）：上一轮的 SSE 帧方案被完全回退。回退理由是实测该帧携带的是
+**提交前**的旧值（原样保留提供方的数据点）：
+  「连接帧正确、提交后补发的那帧慢一拍，而同刻 /state 已是新值；这个旧值还会盖掉更新鲜的镜像」。
+现方案：看板客户端订阅它自己绑定的设置表单，四个 cardDefault* 签名变化时**重新拉一次权威
+/state 快照**，镜像因而立即更新——不需要刷新页面。
+
+产物新鲜度（先排除跑旧包）：
+  packages/dsh-web-all/lib/client.js / packages/dsh-task-board/lib/index.js -> Oct 14 21:40
+  探针宿主 lstart -> 启动晚于构建；profile 的 @linxin666/dsh-web-all 软链到本仓工作树。
+
+正向（本轮唯一必须证明的目标）原始输出：
+  permission before: "会话默认"
+  permission staged: "工作区可写"                       （对 trigger 发 ArrowUp 开弹层 -> ArrowDown×2 -> Enter）
+  clicked 保存
+  persisted: 82:    cardDefaultPermission: workspace-write
+  dirty markers: []                                    （未保存/已覆盖/恢复默认 全部消失）
+  —— 以下**全程不刷新页面** ——
+  summary (NO reload): "执行设置 最近使用（默认） · 继承（部署默认：PTC（程序化工具调用）） · 工作区可写"
+  dialog permission = "工作区可写"
+  截图 tb-card-defaults-prefill-live.png
+即：保存后同一页面会话内打开的新建对话框**已按默认值预填**（这正是第四次尝试做不到的状态）。
+
+反向（清空也即时生效，证明重拉快照对两个方向都生效）：
+  permission before: "工作区可写"
+  permission staged: "会话默认"                        （ArrowUp 开弹层 -> ArrowUp×2 -> Enter）
+  clicked 保存
+  persisted: (no cardDefault key)                      （默认值清空后该键被移除，不是留空串）
+  dirty markers: []
+  —— 仍然不刷新页面 ——
+  summary (NO reload, after clear): "执行设置 最近使用（默认） · 继承（部署默认：PTC（程序化工具调用）） · 会话默认"
+  dialog permission = "会话默认"
+
+驱动注意（本轮新增，复现用）：该自绘弹层的 ArrowUp/Enter 只在目标字段位于滚动容器**较下方**时
+才稳定打开（本轮先把列表滚到让权限字段落在 y≈811 才成功；字段贴在容器顶部 y≈198 时，
+同样的按键与像素点击都不生效，也不出现弹层选项行）。这不是被测功能的缺陷，只是驱动手法。
+
+截图（同目录）
+--------------
+- tb-card-defaults-topic-open.png   设置 -> Web 插件 -> 任务看板 -> 新建卡片默认值 展开态（未配置）：
+                                    Agent 预设=继承（部署默认：PTC（程序化工具调用））、权限=会话默认、
+                                    模型=宿主默认（agent-default-model）、思考档位锁定
+- tb-card-defaults-prefill.png      默认值保存并刷新页面后，新建任务对话框展开「执行设置」：
+                                    权限已预填为「工作区可写」（其余三项为默认/继承态）
+- tb-card-defaults-unpinned.png     由该对话框改回继承后创建的卡片详情：权限=会话默认，
+                                    与账本里没有 permission 键一致
+- tb-card-defaults-prefill-noreload.png  第四次尝试：保存 workspace-write（后为 danger-full-access）
+                                    **不刷新页面**打开的新建任务对话框——「执行设置」摘要与权限字段
+                                    仍是「会话默认」，即修复预期未达成（本图记录的是未通过状态）
+- tb-card-defaults-prefill-live.png  第五次尝试（当前方案）：保存 workspace-write 后**不刷新页面**
+                                    打开的新建任务对话框——权限已预填为「工作区可写」
+
+未完成 / 边界
+-------------
+- 本记录不断言保存后的默认值对**其他会话或宿主重启后**的行为：探针 home 已删除，只核验了本会话
+  加一次页面刷新后的界面。
+- 「同一会话内保存后立刻打开对话框不预填」：第三次尝试观察到、第四次尝试（SSE 帧方案）复核仍复现；
+  第五次尝试（订阅设置表单 → 重拉 /state）**已不再复现**：保存后不刷新即预填、清空后不刷新即回到
+  继承态，两个方向都对。此前未定位到的断点（宿主补发帧还是浏览器合并）随该方案的完全回退而失效。
+- 未核验「创建并执行」按钮（本次只需创建）。
+- 第四次尝试只跑了「设置保存 -> 不刷新开对话框」这条路径；第五次尝试补上了反向（清空后不刷新）用例。
+
+回收（Teardown）
+----------------
+- 四次尝试启动的每个进程都按 pid 归因后终止：
+    探针宿主 29985/29987（第一次）、60880/60882（第二次）、73477/73479（第三次）、153/155（第四次）、
+    26134/26136（第五次）；
+    探针浏览器 40306 / 47120 / 54453 / 56727 / 59037（第一次）、63009（第二次）、76165 / 89808（第三次）、
+    3158（第四次）、28555（第五次）——全部为隔离 --user-data-dir 实例，其 helper 子进程随父进程退出。
+- /tmp/dsh-verify-card-defaults 已删除（每次结束各删一次，删除前核对绝对路径与 basename、
+  并确认不是符号链接）。
+- 用户正在使用的宿主从未被信号、重启或占用端口：DeepSeek Harness.app pid 80806 的启动时间在
+  核验前后均为 Wed Oct 14 15:29:05 2026（核验开始于 17:09），命令行始终为
+  /Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness，核验结束后仍在运行；
+  最后一次收尾时 lsappinfo front 为 "DeepSeek Harness" (in front)。
+- 复核三条命令均无输出（exit 1）：
+    pgrep -fl "dsh-verify-card-defaults"
+    ls /tmp | grep dsh-verify
+    lsof -nP -iTCP:19410
