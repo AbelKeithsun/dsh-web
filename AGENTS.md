@@ -41,6 +41,12 @@ Before merging, run at least `pnpm typecheck && pnpm test && pnpm test:standards
 
 Market build order: build `market/shell` first (`npm run build` in `market/shell`; its dist is git-ignored), then `node scripts/market-build` to refresh `market/dist` (`tryon/` copies the shell build, `tryon-assets/` is derived with Skin Center `transformSkinCss`). In a clean checkout without the shell dist, `market-build --check` verifies the committed `tryon/` against its hash manifest instead of rebuilding. Deploy with `node scripts/deploy-market`.
 
+## CI
+
+`dev` and `main` observe four required check contexts, frozen by the repository ruleset: `CI checks`, `plugin-mount`, `Validate PR contribution evidence`, `guard-agent-notes`. Never rename those jobs — `CI checks` is a fan-in job over the parallel lanes.
+
+CI changes follow the [CI optimization checklist](.agents/notes/implemented/process/2026-10-14-ci-parallel-lanes-and-optimization-checklist.md): a change states which of its items it advances, or why the item does not apply here.
+
 ## Repository Rules
 
 - Mount plugins only through `cordis.patch.yml` and profiles. TypeScript configuration must not reference a DSH checkout; use official `@deepseek-ai/*` SDK packages from `node_modules`.

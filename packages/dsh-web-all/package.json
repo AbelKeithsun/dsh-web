@@ -50,7 +50,7 @@
     "build": "tsdown",
     "test": "vitest run",
     "prepare": "tsdown",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "watch": "tsdown --watch"
   },
   "peerDependencies": {

@@ -15,15 +15,59 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# The DSH CLI the mount lane installs. One entry, because the cache key and the
+# install command must not drift apart: a bumped install line behind an
+# unchanged key restores the old prefix, the existence guard then skips the
+# install, and the mount smoke silently tests the previous CLI.
+env:
+  DSH_CLI_VERSION: 0.2.0-rc.2
+
+# Three independent gates run in parallel and a fourth job aggregates them into
+# the required "CI checks" context:
+#
+#   static-checks  text rules, typecheck and the build
+#   unit-tests     the workspace suite, split into four shards
+#   consistency    tree-wide consistency checks against the committed tree
+#   ci             fan-in: fails unless all three lanes returned success
+#
+# The lanes used to be steps of one job, which serialized ~4 minutes of
+# independent work. They stay separate jobs rather than a matrix so each keeps
+# its own timeout and its own step-level failure name.
+
 jobs:
-  ci:
-    name: CI checks
+  # Lane 1 of 3: the tree-wide text rules, the type program and the build. The
+  # three rule gates run before `pnpm install` on purpose: they scan
+  # hand-written sources with Node builtins and local script modules only, so a
+  # contributor's most common violation fails in seconds instead of after a
+  # dependency install and a typecheck.
+  static-checks:
+    name: Static checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
+      # Elastic checkout: a stalled clone is the most common flake in this
+      # repository's runs and it is silent until the job timeout, so the first
+      # attempt is capped at 3 minutes and allowed to fail; a failure drops the
+      # partial .git and retries once with a 5-minute cap. The three steps
+      # below are repeated verbatim in every job that checks out (ci.yml,
+      # nightly.yml, release.yml); this is the one place that explains them.
+      # They cannot be factored into a composite action because
+      # `timeout-minutes` is not a key a composite action step may use.
       - name: Checkout
+        id: checkout
         uses: actions/checkout@v5
+        continue-on-error: true
+        timeout-minutes: 3
+
+      - name: Drop a partial clone
+        if: steps.checkout.outcome == 'failure'
+        run: rm -rf "$GITHUB_WORKSPACE/.git"
+
+      - name: Checkout (retry)
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v5
+        timeout-minutes: 5
 
       - name: Lint GitHub Actions workflows
         uses: docker://rhysd/actionlint:latest
@@ -36,16 +80,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-
-      # --ignore-scripts: the consistency checks below compare COMMITTED
-      # bundle artifacts against the committed sources; a fresh build embeds
-      # the checkout's absolute path into every bundle (CSS-module hashes
-      # and \0dsh-css region markers), so rebuilt bytes would differ per
-      # machine and make the check non-deterministic. The explicit Build step
-      # below still verifies that everything builds.
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
 
       # The three rule gates below are tree-wide text scans over hand-written
       # sources: they need neither the built artifacts nor a type program, yet
@@ -64,35 +98,183 @@ jobs:
       - name: Bilingual dictionary consistency
         run: pnpm i18n:check
 
+      # --ignore-scripts: the consistency checks in the consistency lane
+      # compare COMMITTED bundle artifacts against the committed sources; a
+      # fresh build embeds the checkout's absolute path into every bundle
+      # (CSS-module hashes and \0dsh-css region markers), so rebuilt bytes would
+      # differ per machine and make that check non-deterministic. Every lane
+      # gets its own clean checkout, so the build at the end of THIS lane cannot
+      # hide a stale commit from the consistency lane. The explicit Build step
+      # below still verifies that everything builds.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # Oxlint, syntax-only: .oxlintrc.json scopes the scan to hand-written
+      # sources and enables every defect-shaped rule category (correctness,
+      # suspicious, perf) while excluding the two purely stylistic ones. The
+      # gate REPORTS and does not block: measured 2026-10-14, the tree already
+      # carries 896 findings across 37 rules, far more than this lane may fix
+      # without behavior risk, so `|| true` keeps the per-rule counts in the log
+      # instead of turning a pre-existing finding into a red lane. It sits after
+      # the install because the binary comes from node_modules, and before
+      # Typecheck because it is the cheaper of the two (155ms for the tree).
+      - name: Lint (syntax only)
+        run: pnpm lint || true
+
       - name: Typecheck
         run: pnpm typecheck
+
+      # The one build in ci.yml. It belongs to this lane rather than the unit
+      # lane: the suites that read built output (packages/dsh-web-all) load the
+      # committed lib/ artifacts, and a fresh checkout already has them --
+      # measured 2026-10-14 on a tree whose lib/ proved byte-identical to HEAD,
+      # every workspace suite passed there with no build -- and the consistency
+      # lane reads those same committed artifacts, so no lane needs freshly
+      # built bytes before it runs.
+      - name: Build
+        run: pnpm build
+
+  # Lane 2 of 3: the workspace suite, sharded so the four heaviest packages no
+  # longer queue behind each other. scripts/test-shard.mjs owns the partition
+  # (complete, disjoint, deterministic; asserted by scripts/test-shard.test.mjs
+  # in pnpm test:scripts): it enumerates the test-bearing workspace packages,
+  # assigns them to the requested shard by measured weight, and runs them with
+  # bounded concurrency.
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      # One red shard must not cancel the other three before the aggregator has
+      # seen their results.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    steps:
+      # Same elastic checkout as static-checks: 3-minute first attempt, one 5-minute retry.
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        timeout-minutes: 3
+
+      - name: Drop a partial clone
+        if: steps.checkout.outcome == 'failure'
+        run: rm -rf "$GITHUB_WORKSPACE/.git"
+
+      - name: Checkout (retry)
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v5
+        timeout-minutes: 5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # No build in this lane on purpose: see the Build step in static-checks.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Unit tests (shard ${{ matrix.shard }} of 4)
+        run: node scripts/test-shard.mjs ${{ matrix.shard }} 4
+
+  # Lane 3 of 3: the tree-wide consistency gates. This lane must never build:
+  # libs:check fingerprints the COMMITTED lib/ bundles against the committed
+  # sources they were built from, and a build would replace the working tree
+  # with freshly built bytes before the comparison -- masking exactly the stale
+  # commit the check exists to catch. That guarantee no longer depends on step
+  # order inside one job: every job starts from its own clean checkout, so this
+  # lane always sees the committed artifacts, whatever the other lanes do.
+  consistency:
+    name: Consistency gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # Same elastic checkout as static-checks: 3-minute first attempt, one 5-minute retry.
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        timeout-minutes: 3
+
+      - name: Drop a partial clone
+        if: steps.checkout.outcome == 'failure'
+        run: rm -rf "$GITHUB_WORKSPACE/.git"
+
+      - name: Checkout (retry)
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v5
+        timeout-minutes: 5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Shared host copy consistency
         run: pnpm sync-shared:check
 
-      # Fingerprints the committed lib/ bundles against the sources they were
-      # built from; it must run BEFORE the Build step, which would otherwise
-      # leave the working tree freshly rebuilt and mask a stale commit.
       - name: Committed lib artifact fingerprints
         run: pnpm libs:check
-
-      - name: Build
-        run: pnpm build
-
-      - name: Tests
-        run: pnpm test
-
-      - name: Script tests
-        run: pnpm test:scripts
-
-      - name: Runtime dependency check
-        run: pnpm runtime-deps:check
 
       - name: Aggregate package consistency
         run: pnpm aggregate:check
 
       - name: Documentation consistency
         run: pnpm docs:check
+
+      - name: Runtime dependency check
+        run: pnpm runtime-deps:check
+
+      - name: Script tests
+        run: pnpm test:scripts
+
+  # Fan-in for the required "CI checks" context. Branch protection observes
+  # THIS job, and the three lanes above are independent jobs, so the aggregate
+  # fails unless every lane's result is exactly 'success'. The per-need check is
+  # explicit rather than left to the default `needs` semantics: a skipped or
+  # cancelled lane also leaves `needs` satisfied, and a required check must
+  # never be satisfied by a lane that did not run.
+  ci:
+    name: CI checks
+    if: always()
+    needs: [static-checks, unit-tests, consistency]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every lane to succeed
+        env:
+          LANE_STATIC_CHECKS: ${{ needs.static-checks.result }}
+          LANE_UNIT_TESTS: ${{ needs.unit-tests.result }}
+          LANE_CONSISTENCY: ${{ needs.consistency.result }}
+        run: |
+          failed=0
+          for lane in LANE_STATIC_CHECKS LANE_UNIT_TESTS LANE_CONSISTENCY; do
+            result="${!lane}"
+            if [ "$result" = "success" ]; then
+              echo "ok   ${lane}=${result}"
+            else
+              echo "::error::${lane} result is '${result}', not 'success'"
+              failed=1
+            fi
+          done
+          exit "$failed"
 
   # Pack the aggregate bundle as an npm tarball, mount it into a REAL DSH
   # instance through the official `dsh plugin --profile web add` channel, and
@@ -107,7 +289,21 @@ jobs:
     env:
       DSH_TELEMETRY_DISABLED: '1'
     steps:
-      - uses: actions/checkout@v5
+      # Same elastic checkout as static-checks: 3-minute first attempt, one 5-minute retry.
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        timeout-minutes: 3
+
+      - name: Drop a partial clone
+        if: steps.checkout.outcome == 'failure'
+        run: rm -rf "$GITHUB_WORKSPACE/.git"
+
+      - name: Checkout (retry)
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v5
+        timeout-minutes: 5
 
       - uses: pnpm/action-setup@v5
 
@@ -120,9 +316,37 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Pin the DSH CLI the lane mounts into; the profile's bundle stack
-      # (dsh-base / dsh-web-app) resolves from this installation.
-      - name: Install dsh CLI (pinned)
-        run: npm install -g @deepseek-ai/dsh@0.2.0-rc.2
+      # (dsh-base / dsh-web-app) resolves from this installation. A prefix
+      # install into a cached directory replaces the global one, so the pinned
+      # version is restored instead of re-downloaded on every run. scripts/
+      # e2e-mount.sh resolves `dsh` through PATH, and npm links a prefix
+      # install's binaries into <prefix>/node_modules/.bin, which is the
+      # directory added to GITHUB_PATH below.
+      - name: Cache pinned dsh CLI
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/dsh-cli
+          key: dsh-cli-${{ runner.os }}-${{ env.DSH_CLI_VERSION }}
+
+      - name: Install dsh CLI (pinned, cached)
+        run: |
+          DSH_CLI_DIR="$RUNNER_TEMP/dsh-cli"
+          if [ ! -x "$DSH_CLI_DIR/node_modules/.bin/dsh" ]; then
+            npm install --prefix "$DSH_CLI_DIR" "@deepseek-ai/dsh@$DSH_CLI_VERSION"
+          fi
+          echo "$DSH_CLI_DIR/node_modules/.bin" >> "$GITHUB_PATH"
+
+      # The mount smoke falls back to `npx -y --package @deepseek-ai/dsh` when
+      # `dsh` is not on PATH, which would silently test an unpinned CLI. Assert
+      # the PINNED installation is what resolves, so a layout change fails here
+      # instead of weakening the smoke.
+      - name: Verify the pinned dsh CLI resolves
+        run: |
+          resolved="$(command -v dsh)"
+          case "$resolved" in
+            "$RUNNER_TEMP/dsh-cli/"*) echo "dsh resolves to $resolved" ;;
+            *) echo "::error::dsh resolved to '$resolved', not the cached pinned CLI"; exit 1 ;;
+          esac
 
       # lib/ bundles are committed for the consistency checks, but the
       # aggregate tarball must be produced from a fresh build.

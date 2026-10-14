@@ -55,7 +55,7 @@
     "watch": "tsdown --watch",
     "prepare": "tsc -p tsconfig.build.json && tsdown",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --pretty false"
+    "typecheck": "tsgo --noEmit && tsgo -p tsconfig.test.json --pretty false"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4"

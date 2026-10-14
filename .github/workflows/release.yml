@@ -25,6 +25,11 @@ env:
   # Single switch for the npm publish lane. Decision record:
   # .agents/notes/implemented/process/2026-08-28-pause-release-npm-publish-unstable-dsh-alpha.md
   NPM_PUBLISH_ENABLED: 'true'
+  # The DSH CLI verify-release installs, in one place: the cache key and the
+  # install command must not drift apart, or a bumped install behind an
+  # unchanged key would restore the old prefix and the mount smoke would
+  # silently test the previous CLI.
+  DSH_CLI_VERSION: 0.2.0-rc.2
 
 permissions:
   contents: write
@@ -195,8 +200,21 @@ jobs:
     env:
       DSH_TELEMETRY_DISABLED: '1'
     steps:
+      # Same elastic checkout as static-checks: 3-minute first attempt, one 5-minute retry.
       - name: Checkout
+        id: checkout
         uses: actions/checkout@v5
+        continue-on-error: true
+        timeout-minutes: 3
+
+      - name: Drop a partial clone
+        if: steps.checkout.outcome == 'failure'
+        run: rm -rf "$GITHUB_WORKSPACE/.git"
+
+      - name: Checkout (retry)
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v5
+        timeout-minutes: 5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v5
@@ -210,10 +228,38 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # Pin the DSH CLI the lane mounts into (same pin as ci.yml's
-      # plugin-mount lane).
-      - name: Install dsh CLI (pinned)
-        run: npm install -g @deepseek-ai/dsh@0.2.0-rc.2
+      # Pin the DSH CLI the lane mounts into; the profile's bundle stack
+      # (dsh-base / dsh-web-app) resolves from this installation. A prefix
+      # install into a cached directory replaces the global one, so the pinned
+      # version is restored instead of re-downloaded on every run. scripts/
+      # e2e-mount.sh resolves `dsh` through PATH, and npm links a prefix
+      # install's binaries into <prefix>/node_modules/.bin, which is the
+      # directory added to GITHUB_PATH below.
+      - name: Cache pinned dsh CLI
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/dsh-cli
+          key: dsh-cli-${{ runner.os }}-${{ env.DSH_CLI_VERSION }}
+
+      - name: Install dsh CLI (pinned, cached)
+        run: |
+          DSH_CLI_DIR="$RUNNER_TEMP/dsh-cli"
+          if [ ! -x "$DSH_CLI_DIR/node_modules/.bin/dsh" ]; then
+            npm install --prefix "$DSH_CLI_DIR" "@deepseek-ai/dsh@$DSH_CLI_VERSION"
+          fi
+          echo "$DSH_CLI_DIR/node_modules/.bin" >> "$GITHUB_PATH"
+
+      # The mount smoke falls back to `npx -y --package @deepseek-ai/dsh` when
+      # `dsh` is not on PATH, which would silently test an unpinned CLI. Assert
+      # the PINNED installation is what resolves, so a layout change fails here
+      # instead of weakening the smoke.
+      - name: Verify the pinned dsh CLI resolves
+        run: |
+          resolved="$(command -v dsh)"
+          case "$resolved" in
+            "$RUNNER_TEMP/dsh-cli/"*) echo "dsh resolves to $resolved" ;;
+            *) echo "::error::dsh resolved to '$resolved', not the cached pinned CLI"; exit 1 ;;
+          esac
 
       # The aggregate tarball must be produced from a fresh build.
       - name: Build

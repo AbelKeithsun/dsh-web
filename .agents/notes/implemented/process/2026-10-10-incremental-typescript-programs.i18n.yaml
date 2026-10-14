@@ -1,5 +1,5 @@
 # Bilingual-pair consistency record (docs/i18n.md): the git blob hash of each
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with git hash-object.
-2026-10-10-incremental-typescript-programs.md: 94d0197902c2c8bf78e90c1f131ec5017968a3fc
-2026-10-10-incremental-typescript-programs.zh.md: 5200fd69a37674b91084e958e1ea412f32b58ef1
+2026-10-10-incremental-typescript-programs.md: 3135f199cc4a06bcdadc3ec9b099014fd1a9d068
+2026-10-10-incremental-typescript-programs.zh.md: 3e8d2a6456b295b6190055189f3cddcee3a8948b
