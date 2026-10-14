@@ -27,13 +27,13 @@ Status: implemented
 
 ### 每一处摆放的理由
 
-- **文本规则放在 `pnpm install` 之前。** 它们只 import Node 内置模块与本地脚本模块，而 `pnpm` 在没有 `node_modules` 的树里照样能执行脚本（已实测）。贡献者最常犯的违规因此在数秒内失败，而不是在安装与类型检查之后。
+- **文本规则跑在 `pnpm install` 之后，不是之前。** 在没有 `node_modules` 的树里执行任何 `pnpm` 脚本，pnpm 会先自作主张跑一遍完整的 workspace 安装。runner 上实测：`Scope: all 19 workspace projects` … `Packages: +429` … `added 429, done`，脚本本身开始前已经过去 21.7s（该步骤 24s，慢 runner 上 34s；而改动前该步骤跑在安装之后只要 1s）；在仓库外的临时副本里同一个门禁在缺 `node_modules` 时 33.99s、存在时 5.01s，而裸脚本两种情况都约 1s。这次隐式安装用的还是 pnpm 自己的参数，而不是通道的 `--frozen-lockfile --ignore-scripts`，所以「安装前先失败」既更慢也更不受控。三条规则保留在真正值得快速失败的位置：Typecheck 与 Build 之前。
 - **构建归属 `static-checks`，分片通道不构建。** 唯一读构建产物的套件（`packages/dsh-web-all`）读的是全新 clone 本来就带的已提交 `lib/` 产物，而 `libs:check` 独立地把这些产物与已提交源码绑定。实测：在一棵 `lib/` 被证明与 `HEAD` 逐字节相同的树里，十八个套件在没有构建的情况下全部通过。
 - **`consistency` 从不构建。** `libs:check` 用指纹比对已提交产物与已提交源码；同一工作树里先跑构建会先把产物替换掉，恰好掩盖该检查存在的意义——那个陈旧的提交。各自独立的 job 各自拿到干净 checkout，于是这条保证不再依赖单个 job 内的步骤顺序。
 - **分片是推导出来的，不是写死的。** `scripts/test-shard.mjs` 从 `pnpm-workspace.yaml` 枚举带测试的 workspace 包，按一份写入仓库的权重表做最长处理时间优先的划分。其并集恰好等于 `pnpm -r test` 覆盖的集合，互不重叠且确定，由 `pnpm test:scripts` 里的 `scripts/test-shard.test.mjs` 断言——其中一项还拿 pnpm 自己的 workspace 视图做交叉核对。权重过期只会影响均衡，永远不会影响覆盖。
 - **每个分片同时跑两个套件。** 每个套件运行器本身已经摊开到多个核上，因此在四 vCPU runner 上限制并发中的套件数是在约束超订；这也与覆盖率门禁早已采用的「有界并发、上限二」约定一致。
 - **弹性检出。** 第一次尝试限时三分钟并允许失败，失败时删掉半个 `.git`，再以五分钟上限重试一次。这段步骤在每个检出的 job 里原样内联，因为 `timeout-minutes` 不是 composite action 步骤的合法键（官方 metadata 语法；[actions/runner#1979](https://github.com/actions/runner/issues/1979)），无法抽成一个共享 action。
-- **一个版本只有一个家。** 每个 workflow 只声明一次 `DSH_CLI_VERSION`，缓存 key 与安装命令都读它：如果安装行改了版本而 key 没改，缓存会恢复旧前缀、存在性判断会跳过安装、mount 冒烟就会静默挂载上一个 CLI。
+- **mount 通道在 job 内安装钉版 CLI，并加守卫。** 三种更省的做法都在本次改动的 PR 上实测后否决。带 `actions/cache` 的前缀安装冷启动 41-44s，而朴素全局安装是 32s，且 PR 作用域的缓存不会在首次运行恢复（一次 `workflow_dispatch` 运行记录了 `Cache not found for input keys: dsh-cli-Linux-0.2.0-rc.2`）。把 CLI 作为 workspace devDependency 在本树里根本跑不起来：`dsh-app-boot` 顶层 import `@deepseek-ai/cordis-plugin-group`，却只把它声明为 peer，而本 workspace 设了 `autoInstallPeers: false`，于是 CLI 以 `ERR_MODULE_NOT_FOUND` 退出；满足该 peer（无论是根 devDependency 还是仓库既有的 `packageExtensions` 写法）都会确定性地打红 `packages/dsh-web-all` 的 `tests/shell-config-surface.spec.ts`，那是另一项改动的问题。剩下的是每个 workflow 一个 `DSH_CLI_VERSION` 钉版加一道守卫：`dsh` 必须能解析，且 `dsh --version` 必须恰好输出该钉版——`dsh` 缺失时冒烟会退回未钉版的 `npx`，而版本号（而非路径）才是不会在错误 CLI 上通过的判据。
 - **CLI 解析守卫。** `dsh` 不在 `PATH` 上时 `scripts/e2e-mount.sh` 会退回 `npx -y --package @deepseek-ai/dsh`，那等于测试一个未钉版的 CLI；现在有一道步骤在 `dsh` 未解析到缓存前缀时直接失败，因此布局变化无法再悄悄削弱冒烟。
 - **原生类型检查。** 十五个包的 typecheck 程序改由 `tsgo`（原生编译器）执行，逐包验证与 `tsc` 给出相同 program 集合与相同结论。三个 `typecheck` 为 `tsc -b` 的包保留 `tsc`：build 模式会产出，tsgo 的产出并非逐字节相同（打印器引号风格），其 `tsbuildinfo` 也无法被构建里的 `tsc -b` 复用，因此切换它们让构建慢掉的比 typecheck 赚到的更多。
 
@@ -46,18 +46,31 @@ Status: implemented
 | 1 | 更快的运行器 | **不适用。** 公开仓库 + 免费个人账户：标准 runner 免费，更大的 runner 需要 Team 或 Enterprise Cloud 的组织，且无论仓库可见性都按分钟计费。只有拿到组织计划才重议。 |
 | 2 | 原生类型检查器 | **已落地。** 十五个包改用 `tsgo`；本机热态 `pnpm typecheck` 由 7.66s 降到 2.63s。 |
 | 3 | 去掉类型信息的 lint 规则 | **已落地。** 门禁集合本来就是不需要类型程序的语法级脚本；Oxlint 作为 linter 加入，按 correctness、suspicious、perf 三类配置，这三类都不需要类型信息。 |
-| 4 | Oxlint | **当前先只报告。** 静态通道运行 `pnpm lint`，且该步骤容忍非零退出。扫描覆盖 966 个手写文件，报告 37 条规则下的 892 处发现——远超一次 CI 改动所能修完并验证的规模——因此该步骤只报告数量、不阻断。四条规则带原因关闭：`unicorn/no-array-sort`（类型程序钉的是 `lib: ["ES2022", …]`，`Array#toSorted` 属 ES2023，且仓库里没有调用点）、`eslint/no-underscore-dangle`（命中的全是 `__` 前缀的全局量或构建占位符，而该规则针对的是成员访问）、`unicorn/require-module-specifiers` 与 `import/no-empty-named-blocks`（都命中仓库既有的环境增强写法 `import type {} from '<pkg>'`）。后续计划：按规则分诊，先修缺陷形态的大头（`no-await-in-loop` 189、`consistent-function-scoping` 167、`no-unused-vars` 112、`promise/always-return` 75、`no-shadow` 75），然后把该步骤转为阻断；或者采用 `scripts/test-standards.mjs` 已在用的基线棘轮，让逐文件发现数只减不增。 |
+| 4 | Oxlint | **当前先只报告。** 静态通道运行 `pnpm lint`，且该步骤容忍非零退出。扫描覆盖 966 个手写文件，报告 37 条规则下的 892 处发现——远超一次 CI 改动所能修完并验证的规模——因此该步骤只报告数量、不阻断。脚本用 `--format=unix` 输出：oxlint 隐式的 GitHub 格式会在一次绿色运行上为每条发现打一个 `##[error]` 注解，把真正的失败淹没；`unix` 让每条发现以 `file:line:col: message` 保持可见，900 行而不是代码框格式的 12170 行。四条规则带原因关闭：`unicorn/no-array-sort`（类型程序钉的是 `lib: ["ES2022", …]`，`Array#toSorted` 属 ES2023，且仓库里没有调用点）、`eslint/no-underscore-dangle`（命中的全是 `__` 前缀的全局量或构建占位符，而该规则针对的是成员访问）、`unicorn/require-module-specifiers` 与 `import/no-empty-named-blocks`（都命中仓库既有的环境增强写法 `import type {} from '<pkg>'`）。后续计划：按规则分诊，先修缺陷形态的大头（`no-await-in-loop` 189、`consistent-function-scoping` 167、`no-unused-vars` 112、`promise/always-return` 75、`no-shadow` 75），然后把该步骤转为阻断；或者采用 `scripts/test-standards.mjs` 已在用的基线棘轮，让逐文件发现数只减不增。 |
 | 5 | 更轻量的检出 | **本来就满足。** `actions/checkout` 默认 `fetch-depth: 1`，十六个 workflow 里有十一个根本不检出，只有 `release.yml` 要完整历史（它生成 release notes 时回溯到上一个 tag）。 |
 | 6 | 弹性检出 | **已落地。** `ci.yml`、`nightly.yml`、`release.yml` 的每一次检出都有限时首试加一次重试。 |
 | 7 | 把缓存写入移出关键路径 | **本来就满足。** `setup-node` 的 pnpm store 保存与 `actions/cache` 的保存都发生在 job 收尾阶段，没有通道在等缓存写入。 |
-| 8 | 在 CI 镜像里预安装 | **按字面不适用**——本仓不构建 CI 镜像。它的对应物已落地：钉版 DSH CLI 从缓存恢复而不是重装（32s → 约 2s）。 |
+| 8 | 在 CI 镜像里预安装 | **按字面不适用**——本仓不构建 CI 镜像。它的对应物实测后否决：把钉版 CLI 安装挂在 `actions/cache` 后面，冷启动反而更慢（41-44s 对朴素安装的 32s），而且 PR 首次运行不会恢复该缓存。 |
 | 9 | 过滤安装 | **不适用。** 每条通道都需要完整 workspace 依赖图（`pnpm -r typecheck`、`-r test`、构建），而热缓存下安装只要 3s；过滤只会引入第二种解析方式，却不能让任何门禁少需要依赖。 |
-| 10 | 移除昂贵的缓存 | **评估后保留。** 这一条的规则是「保留缓存前先测量」；本仓实测热 pnpm store 把安装变成 3s，因此缓存是收益而不是该条目所针对的负担。 |
+| 10 | 移除昂贵的缓存 | **评估后保留。** 这一条的规则是「保留缓存前先测量」；本仓实测热 pnpm store 把安装变成 3s，因此缓存是收益而不是该条目所针对的负担。同一条规则随后又否决了缓存化的 CLI 安装（冷启动 41-44s，对朴素安装的 32s）。 |
 | 11 | 用模式快照替代迁移重放 | **不适用。** 没有任何通道启动数据库或重放迁移。 |
 | 12 | 批量小检查 | **已落地，方向相反。** 八道一致性步骤早已批量在同一个 job 里；由于本仓标准分钟免费，取舍方向是反的——用一个冻结的必需上下文，让真正独立的重活跑成并行通道。四分片通道加汇聚 job 让一次运行共九个 job 记录，这也是我们不再拆第五条通道（用于构建）的预算考量。 |
 | 13 | 均衡分片 | **已落地。** 按实测权重表分四个分片（各分片权重 29/30/29/30s，总计 118s），最重的套件不再互相排队。 |
 | 14 | 跨测试文件共享模块状态 | **不落地。** vitest 的逐文件隔离是这些套件的正确性边界，而 workspace 套件本就处在 Tier-1 预算之内；本仓等价的收益来自分片墙钟。套件超出预算时再议。 |
 | 15 | 越过设置成本边界继续分片 | **已落地。** 每条通道的设置约 12s，一个分片只多付一次检出、一次环境安装与一次依赖安装，而必需检查的墙钟现在由静态通道而非套件决定。 |
+
+## Measured effect
+
+`origin/dev` 基线（run 38499514986）：`CI checks` 164s、`plugin-mount` 144s、整轮墙钟 168s。本次改动 PR 上的两次真实运行（38506503973、38506816812）：
+
+| 实测对象 | 基线 | 第 1 次运行 | 第 2 次运行 |
+| --- | --- | --- | --- |
+| 原串行门禁 job | `CI checks` 164s | `Static checks` 135s（慢 runner 上 checkout 47s 与文本门禁步骤 34s） | `Static checks` 92s |
+| `plugin-mount` | 144s | 157s（CLI 冷安装 44s） | 165s（CLI 冷安装 41s） |
+| 必需上下文本体 | 164s | 汇聚 job 4s | 汇聚 job 2s |
+| 整轮墙钟 | 168s | 161s | 170s |
+
+这次重构把必需检查的工作量从单个 164s 串行 job 挪进了最慢 92s 的通道，而那两次运行仍未带来墙钟收益，因为整轮由 `plugin-mount` 决定，而让该通道比基线更慢的恰好是本次改动随后收回的两个想法：文本门禁跑在安装之前（24-34s）与缓存化 CLI 安装冷启动（41-44s）。两次运行之后两者都已修正——安装现在先于文本门禁，mount 通道恢复为朴素钉版安装加版本守卫。整轮的瓶颈因此重新落回 mount 通道，而它的下限就是剩下的问题：CLI 安装是其中最大的单步，去掉它需要先修 `dsh-app-boot` 的 peer 冲突。结构收益本身依然成立：此后新增任何门禁都不会线性拉长必需检查，四个分片通道（39-53s，分片步骤 18-32s）与一致性通道（33s）都远在瓶颈之内。
 
 ## Alternatives considered
 

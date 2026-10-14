@@ -1,5 +1,5 @@
 # Bilingual-pair consistency record (docs/i18n.md): the git blob hash of each
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with git hash-object.
-2026-10-14-ci-parallel-lanes-and-optimization-checklist.md: 65409a8d4b1b3a41ffdc5f9c78dfb6bda7213ee0
-2026-10-14-ci-parallel-lanes-and-optimization-checklist.zh.md: e1c6c761fa757709ac1e0ece3856b3402f5964ea
+2026-10-14-ci-parallel-lanes-and-optimization-checklist.md: cb0d388167925dfec142fdbe5c1b8d04dbad69c0
+2026-10-14-ci-parallel-lanes-and-optimization-checklist.zh.md: fd3b4c9a383256884f86d187fb339bb3d2fe2764

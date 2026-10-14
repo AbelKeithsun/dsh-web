@@ -28,7 +28,7 @@
     "libs:write": "node scripts/lib-artifact-check.mjs --write",
     "i18n:check": "node scripts/i18n-audit.mjs --check",
     "emoji:check": "node scripts/emoji-audit.mjs",
-    "lint": "oxlint --deny-warnings .",
+    "lint": "oxlint --deny-warnings --format=unix .",
     "test:scripts": "node --test scripts/*.test.mjs",
     "test:mount": "bash scripts/e2e-mount.sh",
     "coverage:check": "node scripts/coverage-gate.mjs",

@@ -15,10 +15,10 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# The DSH CLI the mount lane installs. One entry, because the cache key and the
-# install command must not drift apart: a bumped install line behind an
-# unchanged key restores the old prefix, the existence guard then skips the
-# install, and the mount smoke silently tests the previous CLI.
+# The DSH CLI the mount lane installs, in one place inside this workflow: this
+# file is the only thing that installs it now, so the pin lives here rather
+# than in a package.json dependency (a workspace devDependency cannot run in
+# this tree; see the install step).
 env:
   DSH_CLI_VERSION: 0.2.0-rc.2
 
@@ -36,10 +36,9 @@ env:
 
 jobs:
   # Lane 1 of 3: the tree-wide text rules, the type program and the build. The
-  # three rule gates run before `pnpm install` on purpose: they scan
-  # hand-written sources with Node builtins and local script modules only, so a
-  # contributor's most common violation fails in seconds instead of after a
-  # dependency install and a typecheck.
+  # three rule gates run after `pnpm install` but before Typecheck and Build, so
+  # a contributor's most common violation still fails in seconds instead of
+  # after a compile.
   static-checks:
     name: Static checks
     runs-on: ubuntu-latest
@@ -81,6 +80,28 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # --ignore-scripts: the consistency checks in the consistency lane
+      # compare COMMITTED bundle artifacts against the committed sources; a
+      # fresh build embeds the checkout's absolute path into every bundle
+      # (CSS-module hashes and \0dsh-css region markers), so rebuilt bytes would
+      # differ per machine and make that check non-deterministic. Every lane
+      # gets its own clean checkout, so the build at the end of THIS lane cannot
+      # hide a stale commit from the consistency lane. The explicit Build step
+      # below still verifies that everything builds.
+      #
+      # Every `pnpm <script>` step below runs after this install on purpose:
+      # with node_modules absent, pnpm resolves the whole workspace and then
+      # INSTALLS it before it starts the script, which measured 21.7s on the
+      # runner (PR #1864, run 38506503973: the emoji script only began 21.7s
+      # after pnpm printed the workspace scope) against about a second once
+      # node_modules exists. Reproduced in a scratch copy outside the repo:
+      # `pnpm emoji:check` took 34.0s with node_modules absent (its log shows
+      # the implicit 429-package install) against 5.0s with it present, the raw
+      # script being 0.6-1.2s. The explicit install is cheap on a warm store
+      # (1-6s in those runs, 7.9s in the scratch copy).
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
       # The three rule gates below are tree-wide text scans over hand-written
       # sources: they need neither the built artifacts nor a type program, yet
       # they answer the failures a contributor most often has to fix (emoji,
@@ -97,17 +118,6 @@ jobs:
 
       - name: Bilingual dictionary consistency
         run: pnpm i18n:check
-
-      # --ignore-scripts: the consistency checks in the consistency lane
-      # compare COMMITTED bundle artifacts against the committed sources; a
-      # fresh build embeds the checkout's absolute path into every bundle
-      # (CSS-module hashes and \0dsh-css region markers), so rebuilt bytes would
-      # differ per machine and make that check non-deterministic. Every lane
-      # gets its own clean checkout, so the build at the end of THIS lane cannot
-      # hide a stale commit from the consistency lane. The explicit Build step
-      # below still verifies that everything builds.
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Oxlint, syntax-only: .oxlintrc.json scopes the scan to hand-written
       # sources and enables every defect-shaped rule category (correctness,
@@ -316,37 +326,40 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Pin the DSH CLI the lane mounts into; the profile's bundle stack
-      # (dsh-base / dsh-web-app) resolves from this installation. A prefix
-      # install into a cached directory replaces the global one, so the pinned
-      # version is restored instead of re-downloaded on every run. scripts/
-      # e2e-mount.sh resolves `dsh` through PATH, and npm links a prefix
-      # install's binaries into <prefix>/node_modules/.bin, which is the
-      # directory added to GITHUB_PATH below.
-      - name: Cache pinned dsh CLI
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/dsh-cli
-          key: dsh-cli-${{ runner.os }}-${{ env.DSH_CLI_VERSION }}
+      # (dsh-base / dsh-web-app) resolves from this installation, and
+      # env.DSH_CLI_VERSION above is the pin's single home inside this
+      # workflow. Two alternatives were measured and rejected (PR #1864): a
+      # cached prefix install cost 41-44s cold against 32s for this global
+      # install, and a PR-scoped cache never restores on a first run; the CLI
+      # as a workspace devDependency does not run in this tree at all
+      # (dsh-app-boot declares @deepseek-ai/cordis-plugin-group as a peer while
+      # the workspace sets autoInstallPeers: false), and npm's global install
+      # resolves that peer.
+      - name: Install dsh CLI (pinned)
+        run: npm install -g "@deepseek-ai/dsh@$DSH_CLI_VERSION"
 
-      - name: Install dsh CLI (pinned, cached)
-        run: |
-          DSH_CLI_DIR="$RUNNER_TEMP/dsh-cli"
-          if [ ! -x "$DSH_CLI_DIR/node_modules/.bin/dsh" ]; then
-            npm install --prefix "$DSH_CLI_DIR" "@deepseek-ai/dsh@$DSH_CLI_VERSION"
-          fi
-          echo "$DSH_CLI_DIR/node_modules/.bin" >> "$GITHUB_PATH"
-
-      # The mount smoke falls back to `npx -y --package @deepseek-ai/dsh` when
-      # `dsh` is not on PATH, which would silently test an unpinned CLI. Assert
-      # the PINNED installation is what resolves, so a layout change fails here
-      # instead of weakening the smoke.
+      # scripts/e2e-mount.sh resolves `dsh` through PATH and falls back to
+      # `npx -y --package @deepseek-ai/dsh`, which would silently test an
+      # unpinned CLI. Assert a CLI resolves AND reports the pinned version: the
+      # global install path is runner-dependent, so the version is the check
+      # that cannot pass on the wrong CLI. Measured 2026-10-14 on the pinned
+      # install: `dsh --version` prints exactly the version, with no prefix.
       - name: Verify the pinned dsh CLI resolves
         run: |
-          resolved="$(command -v dsh)"
-          case "$resolved" in
-            "$RUNNER_TEMP/dsh-cli/"*) echo "dsh resolves to $resolved" ;;
-            *) echo "::error::dsh resolved to '$resolved', not the cached pinned CLI"; exit 1 ;;
-          esac
+          resolved="$(command -v dsh || true)"
+          if [ -z "$resolved" ]; then
+            echo "::error::no dsh on PATH: the mount smoke would fall back to npx with an unpinned CLI"
+            exit 1
+          fi
+          if ! version="$(dsh --version 2>&1)"; then
+            echo "::error::dsh --version failed at $resolved: $version"
+            exit 1
+          fi
+          echo "dsh resolves to $resolved and reports $version"
+          if [ "$version" != "$DSH_CLI_VERSION" ]; then
+            echo "::error::dsh --version printed '$version', expected the pinned '$DSH_CLI_VERSION'"
+            exit 1
+          fi
 
       # lib/ bundles are committed for the consistency checks, but the
       # aggregate tarball must be produced from a fresh build.
