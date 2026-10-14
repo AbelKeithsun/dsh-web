@@ -121,7 +121,7 @@
 # default keeps the upstream contract. Set `keepPlanPolicy: false` to drop
 # plan mode's policy section as well.
 #
-# `dispatcher` (default false) is orthogonal to `presentation`: it changes the
+# `dispatcher` (default true) is orthogonal to `presentation`: it changes the
 # PROMPT, not the wire. On, the persona section additionally carries the
 # dispatcher rule block (./dispatcher-rules.mjs) after the workspace line, so
 # the session's deliverable becomes the plan, the task book, the review verdict,
