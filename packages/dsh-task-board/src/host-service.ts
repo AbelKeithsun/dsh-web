@@ -7,9 +7,10 @@ import { teammateName } from './core/subtask.ts'
 import { workspaceOwningSession } from './core/workspace-target.ts'
 import { PowerInhibitor } from './power-inhibitor.ts'
 import { TASK_BOARD_SCHEMA_VERSION, type TaskBoardAction, type TaskBoardEventPayload, type TaskBoardSnapshot } from './protocol.ts'
+import type { CardDefaults } from './core/card-defaults.ts'
 import { TaskBoardExtensionRegistry } from './host/extension-registry.ts'
 import type { TaskBoardExtension } from './core/extension.ts'
-import type { ExecutionOutcome, ScheduleMode, TaskRecord, TaskStatus } from './core/tasks.ts'
+import { isTaskPermission, normalizeTargetId, type ExecutionOutcome, type ScheduleMode, type TaskRecord, type TaskStatus } from './core/tasks.ts'
 import { passedAttempt, resolveContract, verificationNeverInvoked, verificationOnlyInvalid, verificationRequired, withAcceptanceDetailCleared, type ExecutionVerification, type ModelCatalogView, type VerificationContract, type VerificationSettings } from './core/verification.ts'
 import type { TaskPermission } from './core/handover.ts'
 
@@ -142,6 +143,29 @@ const PROCESS_TIMERS: HostTimerFace = {
   },
 }
 
+/**
+ * The new-card defaults a snapshot publishes, or undefined when this
+ * deployment configures none. A target the board configures nothing for is
+ * omitted instead of published blank, so the browser can tell "no default
+ * model" from "a blank one" (only a hand-edited settings document can express
+ * the latter).
+ */
+function cardDefaultsOf(defaults: CardDefaults): TaskBoardSnapshot['cardDefaults'] {
+  const mode = normalizeTargetId(defaults.mode)
+  const permission = normalizeTargetId(defaults.permission)
+  const model = normalizeTargetId(defaults.model)
+  const reasoningEffort = normalizeTargetId(defaults.reasoningEffort)
+  const published: NonNullable<TaskBoardSnapshot['cardDefaults']> = {
+    ...(mode === undefined ? {} : { mode }),
+    // The snapshot publishes a permission the board's own vocabulary knows; an
+    // out-of-domain value is ignored here exactly as the create path ignores it.
+    ...(isTaskPermission(permission) ? { permission } : {}),
+    ...(model === undefined ? {} : { model }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  }
+  return Object.keys(published).length === 0 ? undefined : published
+}
+
 export class TaskBoardHostService {
   readonly ledger: HostTaskLedger
   readonly runner: HostExecutionRunner
@@ -175,6 +199,8 @@ export class TaskBoardHostService {
   private readonly timers: HostTimerFace
   /** Live reader of the global native-/goal switch; frozen per execution. */
   private readonly goalRunEnabled: () => boolean
+  /** Live reader of the deployment's new-card defaults (published and applied per create). */
+  private readonly cardDefaults: () => CardDefaults
   private lastPowerJson = ''
   private readonly now: () => number
   /** The deployment's workspaces, consulted to resolve a card that pins none. */
@@ -198,6 +224,13 @@ export class TaskBoardHostService {
      */
     sessionDefaultPermission?: TaskPermission | (() => TaskPermission)
     maxSubtaskDepth?: number
+    /**
+     * Live reader of the deployment's new-card defaults (volatile config reads).
+     * The board publishes them for the create dialog and re-reads them for every
+     * create that opts in, so a settings edit reaches the next created card
+     * without remounting the row. Absent means the deployment configures none.
+     */
+    cardDefaults?: () => CardDefaults
     team?: TaskBoardTeamDispatcher
     timers?: HostTimerFace
     /**
@@ -220,6 +253,7 @@ export class TaskBoardHostService {
     this.ledger = options.ledger ?? new HostTaskLedger(undefined, undefined, {
       sessionDefaultPermission: options.sessionDefaultPermission,
       maxSubtaskDepth: options.maxSubtaskDepth,
+      cardDefaults: options.cardDefaults,
     })
     this.runner = new HostExecutionRunner(gateway, options.commandDispatcher, options.workspaceRegistry)
     this.workspaceRegistry = options.workspaceRegistry
@@ -228,6 +262,7 @@ export class TaskBoardHostService {
     this.power = options.power ?? new PowerInhibitor()
     this.now = options.now ?? Date.now
     this.goalRunEnabled = options.goalRunEnabled ?? (() => false)
+    this.cardDefaults = options.cardDefaults ?? (() => ({}))
     this.verificationSettings = options.verificationSettings ?? (() => ({ enabled: false, model: '', reasoningEffort: '' }))
     this.verificationCatalog = options.verificationCatalog ?? (async () => undefined)
     this.extensions = new TaskBoardExtensionRegistry({
@@ -318,6 +353,7 @@ export class TaskBoardHostService {
   snapshot(): TaskBoardSnapshot {
     const state = this.ledger.state()
     const published = this.extensions.published()
+    const cardDefaults = cardDefaultsOf(this.cardDefaults())
     return {
       schemaVersion: TASK_BOARD_SCHEMA_VERSION,
       revision: state.revision,
@@ -331,6 +367,10 @@ export class TaskBoardHostService {
       // service freezes its own read at launch: this mirror is for the FORM
       // (enable/disable + explanation), never for a run already in flight.
       goalRunEnabled: this.goalRunEnabled(),
+      // The new-card defaults are published live for the same reason the switch
+      // is: the create dialog prefills from them, and each creating session
+      // re-reads them for the create it submits.
+      ...(cardDefaults === undefined ? {} : { cardDefaults }),
       ...(Object.keys(published).length === 0 ? {} : { extensions: published }),
     }
   }

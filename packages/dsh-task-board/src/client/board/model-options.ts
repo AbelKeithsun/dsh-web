@@ -107,6 +107,20 @@ export function modelOptionsFromDiscoveredModels(value: unknown): ExecutionModel
 }
 
 /**
+ * The picker rows of a model roster: the qualified `provider/model` route as
+ * the value a pin stores, and the provider beside the model name so two
+ * providers offering one model name stay distinguishable.
+ * @param models - the roster rows.
+ * @returns the choice rows, in roster order.
+ */
+export function modelChoiceRows(models: readonly ExecutionModelOption[]): Array<{ value: string; label: string }> {
+  return models.map(model => ({
+    value: model.id,
+    label: (model.provider === undefined ? '' : model.provider + ' · ') + (model.name ?? model.id),
+  }))
+}
+
+/**
  * The capability row the roster publishes for one model route.
  * @returns undefined when no model is pinned, or the roster does not describe
  * the pinned one — an unknown model is not the same as a model without

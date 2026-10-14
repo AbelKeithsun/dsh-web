@@ -33,6 +33,7 @@ import {
   verificationCallTimeoutMs,
 } from './core/verification-budget.ts'
 import { DEFAULT_SESSION_PERMISSION } from './core/handover.ts'
+import type { CardDefaults } from './core/card-defaults.ts'
 import { buildTaskBoardTools, TASK_BOARD_TOOL_NAMES } from './host/agent-tools.ts'
 import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
 import { makeTaskBoardRoutes } from './host-routes.ts'
@@ -129,6 +130,33 @@ export interface Config {
    */
   goalRunEnabled?: Volatile<boolean>
   /**
+   * Agent preset a NEW card starts from (volatile, default blank = not set).
+   * A prefill, never a pin: the create dialog opens with it selected, the
+   * caller may override it, and the card stores what it was created with. It
+   * reaches the create path only when that caller opts in with
+   * `applyCardDefaults`, so the extension provider's own create and the legacy
+   * import are untouched.
+   */
+  cardDefaultMode?: Volatile<string>
+  /**
+   * Permission a NEW card starts from (volatile, default blank = not set), one
+   * of the three presets. A prefill like the rest: a value above
+   * `sessionDefaultPermission` still has to be confirmed by a human before the
+   * card may run, because the pre-execution gate is what decides that.
+   */
+  cardDefaultPermission?: Volatile<TaskPermission | ''>
+  /**
+   * Model a NEW card starts from (volatile, default blank = not set).
+   */
+  cardDefaultModel?: Volatile<string>
+  /**
+   * Reasoning level a NEW card starts from (volatile, default blank = not set).
+   * Bound to `cardDefaultModel` exactly as a card's own level is bound to its
+   * own model: it applies only while the card's final model IS that default
+   * model, and a blank `cardDefaultModel` makes it inert.
+   */
+  cardDefaultReasoningEffort?: Volatile<string>
+  /**
    * Goal acceptance for executions this board starts (default ON). When on,
    * update_goal(action: complete) inside a task execution is refused until an
    * acceptance pass is recorded for that execution: the three coding criteria,
@@ -209,6 +237,14 @@ export interface ConfigInput {
   teamProvider?: string
   /** Global native /goal switch; default off, frozen per execution. */
   goalRunEnabled?: boolean
+  /** Agent preset a new card starts from; blank = not set. */
+  cardDefaultMode?: string
+  /** Permission a new card starts from; blank = not set. */
+  cardDefaultPermission?: TaskPermission | ''
+  /** Model a new card starts from; blank = not set. */
+  cardDefaultModel?: string
+  /** Reasoning level a new card starts from; blank = not set. */
+  cardDefaultReasoningEffort?: string
   /** Goal acceptance switch. */
   goalVerification?: boolean
   /** Judge model route for goal acceptance; blank inherits the host default. */
@@ -232,6 +268,10 @@ export const Config: z<ConfigInput, Config> = z.object({
   sessionPollSeconds: z.number().min(SESSION_POLL_MIN_SECONDS).max(SESSION_POLL_MAX_SECONDS).default(DEFAULT_SESSION_POLL_SECONDS).volatile(),
   teamProvider: z.string().min(1).default(DEFAULT_TEAM_PROVIDER),
   goalRunEnabled: z.boolean().default(false).volatile(),
+  cardDefaultMode: z.string().default('').volatile(),
+  cardDefaultPermission: z.union([...TASK_PERMISSIONS, '']).default('').volatile(),
+  cardDefaultModel: z.string().default('').volatile(),
+  cardDefaultReasoningEffort: z.string().default('').volatile(),
   goalVerification: z.boolean().default(true).volatile(),
   goalVerificationModel: z.string().default('').volatile(),
   goalVerificationReasoningEffort: z.string().default('').volatile(),
@@ -529,11 +569,27 @@ function applyImpl(ctx: Context, config?: Config): void {
    * executions that start afterwards.
    */
   const goalRunEnabled = (): boolean => readConfigField(config?.goalRunEnabled, DEFAULT_GOAL_RUN)
+  /**
+   * Live reader of the new-card defaults, read at every use like the switch
+   * above: the create dialog prefills from the published snapshot, and each
+   * creating session re-reads them when it submits the create. A blank value
+   * means "not set" and reaches the resolver as an absent target.
+   */
+  const cardDefaults = (): CardDefaults => {
+    const permission = readConfigField<TaskPermission | ''>(config?.cardDefaultPermission, '')
+    return {
+      mode: readConfigField(config?.cardDefaultMode, '').trim() || undefined,
+      permission: isTaskPermission(permission) ? permission : undefined,
+      model: readConfigField(config?.cardDefaultModel, '').trim() || undefined,
+      reasoningEffort: readConfigField(config?.cardDefaultReasoningEffort, '').trim() || undefined,
+    }
+  }
   const host = new TaskBoardHostService(ctx.typertGateway, {
     workspaceRegistry: ctx.workspaceRegistry,
     sessionDefaultPermission,
     maxSubtaskDepth: maxSubtaskDepth(),
     goalRunEnabled,
+    cardDefaults,
     verificationSettings,
     verificationCatalog,
     timers: resolveHostTimers(ctx),

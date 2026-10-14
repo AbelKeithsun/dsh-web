@@ -5736,6 +5736,57 @@ window.__ModuleLoader__.load({
 			return /^\d+$/.test(value);
 		}
 		//#endregion
+		//#region ../dsh-task-board/src/core/card-defaults.ts
+		/** Trim one optional target: blank text means "not set", like every stored pin. */
+		function textOf(value) {
+			return value?.trim() ?? "";
+		}
+		/**
+		* Resolve the execution targets a new card starts from.
+		* @param defaults - the board's configured new-card defaults, if any.
+		* @param source - the card this one is created from (a duplicate or a parent), if any.
+		* @param picked - what the caller chose explicitly; a non-blank value wins.
+		* @returns the four targets, blank where nothing supplies a value.
+		*/
+		function resolveCardTargets(defaults, source, picked) {
+			const defaultMode = textOf(defaults?.mode);
+			const defaultPermission = textOf(defaults?.permission);
+			const defaultModel = textOf(defaults?.model);
+			const defaultEffort = defaultModel === "" ? "" : textOf(defaults?.reasoningEffort);
+			const chosen = {
+				mode: textOf(picked?.mode),
+				permission: textOf(picked?.permission),
+				model: textOf(picked?.model),
+				reasoningEffort: textOf(picked?.reasoningEffort)
+			};
+			const copied = source === void 0 ? void 0 : {
+				mode: textOf(source.task.mode),
+				permission: textOf(source.task.permission),
+				model: textOf(source.task.model),
+				reasoningEffort: textOf(source.task.reasoningEffort)
+			};
+			/** The value carried over from the source card, or the board default. */
+			const inherited = (key) => {
+				const fallback = key === "mode" ? defaultMode : key === "model" ? defaultModel : defaultPermission;
+				if (copied === void 0 || key === "permission" && source?.kind === "parent") return fallback;
+				return copied[key] === "" ? fallback : copied[key];
+			};
+			const mode = chosen.mode === "" ? inherited("mode") : chosen.mode;
+			const permission = chosen.permission === "" ? inherited("permission") : chosen.permission;
+			const model = chosen.model === "" ? inherited("model") : chosen.model;
+			let reasoningEffort = chosen.reasoningEffort;
+			if (reasoningEffort === "" && chosen.model === "") {
+				const sourced = copied === void 0 ? "" : copied.reasoningEffort;
+				reasoningEffort = sourced !== "" ? sourced : model !== "" && model === defaultModel ? defaultEffort : "";
+			}
+			return {
+				mode,
+				permission,
+				model,
+				reasoningEffort
+			};
+		}
+		//#endregion
 		//#region ../dsh-task-board/src/core/use-cases/task-create.ts
 		/**
 		* Create-task use case: mint a new task from user input, rejecting a blank
@@ -5748,18 +5799,22 @@ window.__ModuleLoader__.load({
 		* appended ledger, or the unchanged ledger when the title is blank or the
 		* requested parent link is refused.
 		*
-		* A subtask inherits the execution targets its parent already pins (workspace,
-		* agent preset, permission, model) unless the form supplied its own; the
-		* parent human permission confirmation travels with an inherited permission,
-		* so a subtask of an already-confirmed elevated card is runnable at once.
+		* The execution targets resolve through {@link resolveCardTargets}: what the
+		* caller sent wins, then the parent's own pins, then - only when the caller
+		* opted in with `applyCardDefaults` - the deployment's configured new-card
+		* defaults. Without the flag the resolution sees no defaults at all, which is
+		* exactly the inline parent inheritance this path has always applied. The
+		* workspace is not part of that resolution: a subtask still takes the parent's
+		* workspace, and the defaults never name one.
 		* @param tasks - current ledger.
 		* @param input - raw user input (title/description/prompt + optional schedule/parent).
 		* @param now - clock instant (ms epoch).
 		* @param id - minted task id.
 		* @param maxSubtaskDepth - deployment subtask depth limit.
 		* @param hostTimeZone - zone a rule that stores no zone of its own follows.
+		* @param cardDefaults - the deployment's new-card defaults, read live at creation.
 		*/
-		function applyCreateTask(tasks, input, now, id, maxSubtaskDepth = 1, hostTimeZone = resolveHostTimeZone()) {
+		function applyCreateTask(tasks, input, now, id, maxSubtaskDepth = 1, hostTimeZone = resolveHostTimeZone(), cardDefaults) {
 			if (input.title.trim() === "") return {
 				task: void 0,
 				tasks,
@@ -5785,13 +5840,22 @@ window.__ModuleLoader__.load({
 					error: `subtask depth limit (${limit}) exceeded`
 				};
 			}
-			const picksOwnModel = input.model !== void 0 && input.model.trim() !== "";
-			let task = createTask(parent === void 0 ? input : {
+			const seed = resolveCardTargets(input.applyCardDefaults === true ? cardDefaults : void 0, parent === void 0 ? void 0 : {
+				kind: "parent",
+				task: parent
+			}, {
+				mode: input.mode,
+				permission: input.permission,
+				model: input.model,
+				reasoningEffort: input.reasoningEffort
+			});
+			let task = createTask({
 				...input,
-				workspaceId: input.workspaceId ?? parent.workspaceId,
-				mode: input.mode ?? parent.mode,
-				model: input.model ?? parent.model,
-				reasoningEffort: input.reasoningEffort ?? (picksOwnModel ? void 0 : parent.reasoningEffort)
+				workspaceId: input.workspaceId ?? parent?.workspaceId,
+				mode: seed.mode,
+				permission: isTaskPermission(seed.permission) ? seed.permission : void 0,
+				model: seed.model,
+				reasoningEffort: seed.reasoningEffort
 			}, now, id);
 			const requested = input.schedule;
 			if (requested?.enabled === true) {
@@ -6481,7 +6545,7 @@ window.__ModuleLoader__.load({
 			}
 			createTask(input) {
 				const id = this.uuid();
-				const { task, tasks } = applyCreateTask(this.tasks, input, this.now(), id, this.mirrorDepth());
+				const { task, tasks } = applyCreateTask(this.tasks, input, this.now(), id, this.mirrorDepth(), void 0, this.hostState?.cardDefaults);
 				if (task === void 0) return void 0;
 				this.tasks = [...tasks];
 				this.persistAndNotify();
@@ -6491,7 +6555,7 @@ window.__ModuleLoader__.load({
 			async createTaskConfirmed(input) {
 				if (this.deps.transport === void 0) return this.createTask(input);
 				const id = this.uuid();
-				if (applyCreateTask(this.tasks, input, this.now(), id, this.mirrorDepth()).task === void 0) return void 0;
+				if (applyCreateTask(this.tasks, input, this.now(), id, this.mirrorDepth(), void 0, this.hostState?.cardDefaults).task === void 0) return void 0;
 				return await this.commitRemote({
 					kind: "create",
 					id,
@@ -6877,15 +6941,16 @@ window.__ModuleLoader__.load({
 			* Project a Host snapshot onto the browser's mirror. SSE frames and partial
 			* snapshots carry only the volatile subset (revision/scheduler/power), so the
 			* deployment constants the UI reads — the session-default permission the
-			* confirmation banner compares against and the subtask depth limit — are
-			* carried over from the last full snapshot instead of being dropped by a
-			* heartbeat frame.
+			* confirmation banner compares against, the subtask depth limit, and the
+			* new-card defaults the create dialog prefills from — are carried over from
+			* the last full snapshot instead of being dropped by a heartbeat frame.
 			*/
 			mirrorOf(snapshot) {
 				const sessionDefaultPermission = snapshot.sessionDefaultPermission ?? this.hostState?.sessionDefaultPermission;
 				const maxSubtaskDepth = snapshot.maxSubtaskDepth ?? this.hostState?.maxSubtaskDepth;
 				const teamRunAvailable = snapshot.teamRunAvailable ?? this.hostState?.teamRunAvailable;
 				const goalRunEnabled = snapshot.goalRunEnabled ?? this.hostState?.goalRunEnabled;
+				const cardDefaults = snapshot.cardDefaults ?? this.hostState?.cardDefaults;
 				const extensions = snapshot.extensions ?? this.hostState?.extensions;
 				return {
 					revision: snapshot.revision,
@@ -6895,6 +6960,7 @@ window.__ModuleLoader__.load({
 					...maxSubtaskDepth === void 0 ? {} : { maxSubtaskDepth },
 					...teamRunAvailable === void 0 ? {} : { teamRunAvailable },
 					...goalRunEnabled === void 0 ? {} : { goalRunEnabled },
+					...cardDefaults === void 0 ? {} : { cardDefaults },
 					...extensions === void 0 ? {} : { extensions }
 				};
 			}
@@ -7017,6 +7083,19 @@ window.__ModuleLoader__.load({
 			return options;
 		}
 		/**
+		* The picker rows of a model roster: the qualified `provider/model` route as
+		* the value a pin stores, and the provider beside the model name so two
+		* providers offering one model name stay distinguishable.
+		* @param models - the roster rows.
+		* @returns the choice rows, in roster order.
+		*/
+		function modelChoiceRows(models) {
+			return models.map((model) => ({
+				value: model.id,
+				label: (model.provider === void 0 ? "" : model.provider + " · ") + (model.name ?? model.id)
+			}));
+		}
+		/**
 		* The capability row the roster publishes for one model route.
 		* @returns undefined when no model is pinned, or the roster does not describe
 		* the pinned one — an unknown model is not the same as a model without
@@ -7060,6 +7139,43 @@ window.__ModuleLoader__.load({
 			if (modelId === "") return "exec.reasoning.hint.pickModel";
 			if (reasoningOfModel(models, modelId) === void 0) return "exec.reasoning.hint.unknownModel";
 			return reasoningPickerEnabled(models, modelId) ? "exec.reasoning.hint.inherit" : "exec.reasoning.hint.noEfforts";
+		}
+		//#endregion
+		//#region ../dsh-task-board/src/client/board/preset-roster.ts
+		/**
+		* Read the agent-preset roster of one deployment. The caller passes the
+		* namespace resolved inside its scoped inject, so a host that serves no such
+		* namespace never reaches here; a host that serves it answers `ok: false`
+		* instead, which leaves the caller's options untouched.
+		* @param remote - the `remote.agentPresets` namespace.
+		* @returns the roster, or a failed read the caller ignores.
+		*/
+		async function readPresetRoster(remote) {
+			const response = await remote.list();
+			if (!response.ok) return {
+				ok: false,
+				presets: []
+			};
+			return {
+				ok: true,
+				presets: response.value.presets
+			};
+		}
+		/**
+		* Normalize one roster into the picker rows the UI consumes. A preset that
+		* cannot compose a session keeps its `broken` reason: the pickers show it and
+		* disable it, so a missing preset never looks like a missing roster.
+		* @param presets - the roster rows.
+		* @returns the picker options.
+		*/
+		function presetOptionsFromRoster(presets) {
+			return presets.map((preset) => ({
+				id: preset.id,
+				name: preset.name,
+				description: preset.description,
+				broken: preset.broken,
+				isDefault: preset.isDefault
+			}));
 		}
 		//#endregion
 		//#region ../dsh-task-board/src/client/main-session.ts
@@ -8399,6 +8515,11 @@ window.__ModuleLoader__.load({
 			"settings.goalVerificationEffortFallback": "所选推理强度 {requested} 不被目标模型支持，已回退为 {resolved}。",
 			"settings.goalVerificationEffortFallbackNone": "所选推理强度 {requested} 不被目标模型支持，已回退为该模型默认档位（不显式传参）。",
 			"settings.goalVerificationModelInvalid": "配置的验收模型不是 provider/model 形式，已回退宿主默认。",
+			"settings.cardDefaultsTitle": "新建卡片默认值",
+			"settings.cardDefaultsCardHint": "新建对话框打开时预填的 Agent 预设、权限、模型与思考档位；留空即不设置，创建卡片的行为与未配置时完全一致。它们只是预填，不改变任何既有语义，新建的卡片仍可随时修改；思考档位默认值只在卡片最终钉住的模型就是这里的默认模型时才生效。",
+			"settings.cardDefaultModeHint": "留空不钉住任何值，新建卡片照旧继承部署默认预设。取值优先级为：新建对话框里的显式选择 > 复制源卡或父任务已钉住的值 > 这里的默认值；子任务沿用父卡已钉住的值。",
+			"settings.cardDefaultPermissionHint": "留空为不设置（用会话默认）。高于会话默认权限基线的默认值仍只是预填：卡片执行前照旧需要人工确认。子任务从不沿用父卡的权限，只在父卡未钉住、且这里设置了默认值时才预填。",
+			"settings.cardDefaultModelHint": "留空为宿主默认（agent-default-model）。对话框里的显式选择优先于源卡/父卡已钉住的值，后者优先于这里的默认值；自己选了模型的调用方不借用任何默认档位。",
 			"running.executing": "执行中",
 			"running.verifying": "验收中",
 			"running.repairing": "验收未通过修复中",
@@ -8830,6 +8951,11 @@ window.__ModuleLoader__.load({
 			"settings.goalVerificationRouteMissing": "The host serves no model catalog, so no judge route resolves: with acceptance on, a goal completion claim is refused and recorded as an acceptance anomaly.",
 			"settings.goalVerificationEffortFallback": "The selected reasoning effort {requested} is not supported by the target model; it falls back to {resolved}.",
 			"settings.goalVerificationEffortFallbackNone": "The selected reasoning effort {requested} is not supported by the target model; it falls back to that model default level (not sent explicitly).",
+			"settings.cardDefaultsTitle": "New-card defaults",
+			"settings.cardDefaultsCardHint": "What the new-task dialog opens with: agent preset, permission, model and reasoning effort. Blank sets nothing, so creating a card behaves exactly as it does unconfigured. They are only prefills and change no existing meaning, and every new card stays editable; the default reasoning effort applies only while a card ends up on the configured default model.",
+			"settings.cardDefaultModeHint": "Blank pins nothing: a new card keeps following the deployment default preset. A target resolves as the explicit choice in the new-task dialog, then the value carried over from the source card or parent, then this default; a subtask keeps what its parent already pinned.",
+			"settings.cardDefaultPermissionHint": "Blank sets nothing (the session default applies). A default above the session permission baseline is still only a prefill: the card still needs a human confirmation before it may run. A subtask never carries its parent permission; this default fills in only where the parent pinned none.",
+			"settings.cardDefaultModelHint": "Blank is the host default (agent-default-model). An explicit choice in the dialog wins over the value carried over from the source card or parent, which wins over this default; a caller that pins a model of its own borrows no default reasoning level.",
 			"settings.goalVerificationModelInvalid": "The configured judge model is not a provider/model route; the host default is used instead.",
 			"running.executing": "Executing",
 			"running.verifying": "Verifying",
@@ -12330,6 +12456,25 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			if (fallback === void 0) return t$5("exec.mode.inherit");
 			return t$5("exec.mode.inheritWith", { preset: presetLabel(fallback) });
 		}
+		/**
+		* The picker rows of one roster, split into the built-in and the user presets.
+		* Both pickers render these rows — the create dialog's mode select and the
+		* settings card's default-preset field — so their wording and their
+		* unavailable rows cannot drift apart.
+		* @param presets - the roster options.
+		* @returns one row list per group, in roster order.
+		*/
+		function presetChoiceRows(presets) {
+			const row = (preset) => ({
+				id: preset.id,
+				label: presetLabel(preset) + (preset.isDefault ? t$5("exec.mode.defaultSuffix") : "") + (preset.broken !== void 0 ? t$5("exec.mode.brokenSuffix") : ""),
+				disabled: preset.broken !== void 0
+			});
+			return {
+				builtin: presets.filter((preset) => isBuiltinPreset(preset.id)).map(row),
+				custom: presets.filter((preset) => !isBuiltinPreset(preset.id)).map(row)
+			};
+		}
 		//#endregion
 		//#region ../dsh-task-board/src/client/board/ReasoningEffortField.tsx
 		/** The controlled reasoning-effort picker. */
@@ -12404,11 +12549,21 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			const [title, setTitle] = (0, react.useState)(initialTask?.title ?? "");
 			const [description, setDescription] = (0, react.useState)(initialTask?.description ?? "");
 			const [prompt, setPrompt] = (0, react.useState)(initialTask?.prompt ?? "");
+			const [seed] = (0, react.useState)(() => {
+				const source = parentTask !== void 0 ? {
+					kind: "parent",
+					task: parentTask
+				} : initialTask !== void 0 ? {
+					kind: "duplicate",
+					task: initialTask
+				} : void 0;
+				return resolveCardTargets(controller.getSnapshot().host?.cardDefaults, source);
+			});
 			const [workspaceId, setWorkspaceId] = (0, react.useState)(initialTask?.workspaceId ?? parentTask?.workspaceId ?? defaultWorkspaceId ?? "");
-			const [mode, setMode] = (0, react.useState)(initialTask?.mode ?? parentTask?.mode ?? "");
-			const [permission, setPermission] = (0, react.useState)(initialTask?.permission ?? "");
-			const [model, setModel] = (0, react.useState)(initialTask?.model ?? parentTask?.model ?? "");
-			const [reasoningEffort, setReasoningEffort] = (0, react.useState)(initialTask?.reasoningEffort ?? parentTask?.reasoningEffort ?? "");
+			const [mode, setMode] = (0, react.useState)(seed.mode);
+			const [permission, setPermission] = (0, react.useState)(seed.permission);
+			const [model, setModel] = (0, react.useState)(seed.model);
+			const [reasoningEffort, setReasoningEffort] = (0, react.useState)(seed.reasoningEffort);
 			const inheritedPermission = parentTask === void 0 ? void 0 : effectiveTaskPermission(parentTask);
 			const [reuseSession, setReuseSession] = (0, react.useState)(initialTask?.reuseSession ?? false);
 			const [goalRun, setGoalRun] = (0, react.useState)(initialTask?.goalRun ?? false);
@@ -12531,10 +12686,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					...parentTask === void 0 ? {} : { parentId: parentTask.id },
 					freeze,
 					handover,
-					workspaceId: workspaceId === "" ? void 0 : workspaceId,
-					mode: mode === "" ? void 0 : mode,
-					permission: permission === "" ? void 0 : permission,
-					model: model === "" ? void 0 : model,
+					...workspaceId === "" ? {} : { workspaceId },
+					...mode === "" ? {} : { mode },
+					...permission === "" ? {} : { permission },
+					...model === "" ? {} : { model },
 					...reasoningEffort === "" ? {} : { reasoningEffort },
 					...reuseSession ? { reuseSession: true } : {},
 					...goalRun ? { goalRun: true } : {},
@@ -12570,8 +12725,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			const scheduleTimeZone = scheduleZone === "" ? hostTimeZone : scheduleZone;
 			const scheduleNextRun = !scheduleEnabled ? void 0 : scheduleMode === "once" ? parseZonedInput(scheduleAt, scheduleTimeZone) : scheduleCron.trim() !== "" && isValidCron(scheduleCron) ? nextRunAtMs(scheduleCron, Date.now(), scheduleTimeZone) : void 0;
 			const modalTitle = parentTask !== void 0 ? t$5("new.subtaskTitle") : isDuplicate ? t$5("new.duplicateTitle") : t$5("board.new");
-			const builtinPresets = options.presets.filter((preset) => isBuiltinPreset(preset.id));
-			const customPresets = options.presets.filter((preset) => !isBuiltinPreset(preset.id));
+			const presetRows = presetChoiceRows(options.presets);
 			const inheritLabel = inheritPresetLabel(options.presets);
 			const selectedPreset = options.presets.find((preset) => preset.id === mode);
 			const modeLabel = mode === "" ? inheritLabel : selectedPreset === void 0 ? mode : presetLabel(selectedPreset);
@@ -12775,29 +12929,21 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 											value: mode,
 											children: [mode, t$5("exec.mode.removed")]
 										}),
-										builtinPresets.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("optgroup", {
+										presetRows.builtin.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("optgroup", {
 											label: t$5("exec.mode.builtinGroup"),
-											children: builtinPresets.map((preset) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("option", {
-												value: preset.id,
-												disabled: preset.broken !== void 0,
-												children: [
-													presetLabel(preset),
-													preset.isDefault ? t$5("exec.mode.defaultSuffix") : "",
-													preset.broken !== void 0 ? t$5("exec.mode.brokenSuffix") : ""
-												]
-											}, preset.id))
+											children: presetRows.builtin.map((row) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: row.id,
+												disabled: row.disabled,
+												children: row.label
+											}, row.id))
 										}),
-										customPresets.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("optgroup", {
+										presetRows.custom.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("optgroup", {
 											label: t$5("exec.mode.customGroup"),
-											children: customPresets.map((preset) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("option", {
-												value: preset.id,
-												disabled: preset.broken !== void 0,
-												children: [
-													presetLabel(preset),
-													preset.isDefault ? t$5("exec.mode.defaultSuffix") : "",
-													preset.broken !== void 0 ? t$5("exec.mode.brokenSuffix") : ""
-												]
-											}, preset.id))
+											children: presetRows.custom.map((row) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: row.id,
+												disabled: row.disabled,
+												children: row.label
+											}, row.id))
 										})
 									]
 								})]
@@ -15819,6 +15965,83 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"selectWrap": "Jh0q7G_selectWrap"
 		};
 		//#endregion
+		//#region ../dsh-task-board/src/client/CardDefaultPresetField.tsx
+		/**
+		* Render the default-preset select.
+		* @param props - the field contract and the roster to list.
+		* @returns the field.
+		*/
+		function CardDefaultPresetField(props) {
+			const presets = props.presets;
+			const rows = presetChoiceRows(presets ?? []);
+			const unlisted = props.text !== "" && presets !== void 0 && !presets.some((preset) => preset.id === props.text);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: settings_card_module_css_default$3.field,
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: settings_card_module_css_default$3.head,
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+							className: settings_card_module_css_default$3.label,
+							htmlFor: props.id,
+							children: props.label
+						}), props.overridden ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+							className: settings_card_module_css_default$3.badges,
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								className: settings_card_module_css_default$3.badge,
+								children: props.overriddenLabel
+							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: settings_card_module_css_default$3.reset,
+								disabled: props.disabled,
+								onClick: props.onReset,
+								children: props.resetLabel
+							})]
+						}) : null]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("select", {
+						id: props.id,
+						className: settings_card_module_css_default$3.select,
+						value: props.text,
+						disabled: props.disabled,
+						"aria-invalid": props.invalid || void 0,
+						onChange: (event) => {
+							props.onEdit(event.target.value);
+						},
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+								value: "",
+								children: inheritPresetLabel(presets ?? [])
+							}),
+							unlisted ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("option", {
+								value: props.text,
+								children: [props.text, t$5("exec.mode.removed")]
+							}) : null,
+							rows.builtin.length > 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("optgroup", {
+								label: t$5("exec.mode.builtinGroup"),
+								children: rows.builtin.map((row) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+									value: row.id,
+									disabled: row.disabled,
+									children: row.label
+								}, row.id))
+							}) : null,
+							rows.custom.length > 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("optgroup", {
+								label: t$5("exec.mode.customGroup"),
+								children: rows.custom.map((row) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+									value: row.id,
+									disabled: row.disabled,
+									children: row.label
+								}, row.id))
+							}) : null
+						]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+						className: props.invalid ? settings_card_module_css_default$3.invalid : settings_card_module_css_default$3.hint,
+						children: props.invalid ? props.invalidLabel : props.hint
+					})
+				]
+			});
+		}
+		//#endregion
 		//#region ../dsh-task-board/src/client/PluginSettingsCard.tsx
 		/**
 		* Family-shared chrome for plugin settings cards: a disclosure header naming
@@ -16278,6 +16501,20 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		}
 		//#endregion
 		//#region ../dsh-task-board/src/client/settings-form.ts
+		/** A free-text field. An empty draft clears the field. */
+		function textField$1(field) {
+			return {
+				field,
+				format: (value) => typeof value === "string" ? value : "",
+				parse: (text) => {
+					const trimmed = text.trim();
+					return trimmed === "" ? { kind: "clear" } : {
+						kind: "set",
+						value: trimmed
+					};
+				}
+			};
+		}
 		/** A boolean field, edited through true/false draft text. */
 		function booleanField$3(field) {
 			return {
@@ -16294,6 +16531,20 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 						kind: "set",
 						value: false
 					};
+				}
+			};
+		}
+		/** An enumerated string field; only the listed choices are accepted. An empty draft clears the field. */
+		function choiceField$1(field, choices) {
+			return {
+				field,
+				format: (value) => typeof value === "string" && choices.includes(value) ? value : "",
+				parse: (text) => {
+					if (text === "") return { kind: "clear" };
+					return choices.includes(text) ? {
+						kind: "set",
+						value: text
+					} : void 0;
 				}
 			};
 		}
@@ -16641,10 +16892,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		* The judge-model field: blank inherits the host model catalog default, and a
 		* non-blank draft must be a qualified provider/model route. An unparseable
 		* draft blocks the save instead of storing a route nothing can resolve.
+		* The new-card default model uses the same gate, so both fields accept exactly
+		* the routes an execution can pin.
 		*/
-		function judgeModelField() {
+		function modelRouteField(field) {
 			return {
-				field: "goalVerificationModel",
+				field,
 				format: (value) => typeof value === "string" ? value : "",
 				parse: (text) => {
 					const trimmed = text.trim();
@@ -16656,29 +16909,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				}
 			};
 		}
-		/**
-		* The reasoning-effort field. Any non-blank id is staged: which levels a model
-		* accepts is decided by the host catalog, and the settings card shows the
-		* resolved level (including a fallback) rather than guessing here.
-		*/
-		function judgeEffortField() {
-			return {
-				field: "goalVerificationReasoningEffort",
-				format: (value) => typeof value === "string" ? value : "",
-				parse: (text) => {
-					const trimmed = text.trim();
-					return trimmed === "" ? { kind: "clear" } : {
-						kind: "set",
-						value: trimmed
-					};
-				}
-			};
-		}
 		/** Bridges the `task-board` settings form onto the card's staged form. */
 		var TaskBoardSettingsCardController = class {
 			dispatch;
 			form;
 			store;
+			/** The deployment's agent-preset roster, once its runtime read has answered. */
+			presets;
 			/** @param scope - the bound configuration form for the `task-board` namespace. */
 			constructor(scope, dispatch) {
 				this.dispatch = dispatch;
@@ -16690,8 +16927,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					sessionPollField(),
 					booleanField$3("goalRunEnabled"),
 					booleanField$3("goalVerification"),
-					judgeModelField(),
-					judgeEffortField()
+					modelRouteField("goalVerificationModel"),
+					textField$1("goalVerificationReasoningEffort"),
+					textField$1("cardDefaultMode"),
+					choiceField$1("cardDefaultPermission", TASK_PERMISSIONS),
+					modelRouteField("cardDefaultModel"),
+					textField$1("cardDefaultReasoningEffort")
 				]);
 				this.store = this.form.bind(() => this.projection());
 			}
@@ -16706,8 +16947,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					goalRunEnabled: this.form.field("goalRunEnabled"),
 					goalVerification: this.form.field("goalVerification"),
 					goalVerificationModel: this.form.field("goalVerificationModel"),
-					goalVerificationReasoningEffort: this.form.field("goalVerificationReasoningEffort")
+					goalVerificationReasoningEffort: this.form.field("goalVerificationReasoningEffort"),
+					cardDefaultMode: this.form.field("cardDefaultMode"),
+					cardDefaultPermission: this.form.field("cardDefaultPermission"),
+					cardDefaultModel: this.form.field("cardDefaultModel"),
+					cardDefaultReasoningEffort: this.form.field("cardDefaultReasoningEffort"),
+					...this.presets === void 0 ? {} : { presets: this.presets }
 				};
+			}
+			/**
+			* Publish the deployment's agent-preset roster to the default-preset field.
+			* The roster is a runtime fact read outside this card (src/client/index.ts
+			* wires it once for both the board's pickers and this topic); it can arrive
+			* late or not at all, and until it does the field lists the inherit choice
+			* alone. This never blocks a save: a deployment that serves no roster still
+			* has a writable settings document.
+			* @param presets - the roster rows.
+			*/
+			setPresetRoster(presets) {
+				this.presets = presets;
+				this.store.set(this.projection());
 			}
 			/**
 			* Build the face the card's slot registration injects.
@@ -16824,6 +17083,22 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				resetLabel: t("settings.reset"),
 				invalidLabel: t("settings.invalidNumber"),
 				disabled
+			};
+			const defaultModels = modelOptionsFromCatalog(catalog);
+			const defaultModel = state.cardDefaultModel.text;
+			const defaultEffortChoices = reasoningEffortsFor(defaultModels, defaultModel).map((effort) => ({
+				value: effort,
+				label: effort
+			}));
+			/**
+			* Drop a staged default level the newly picked default model cannot honour,
+			* exactly as the create dialog's own model picker does (one shared rule):
+			* the level belongs to the route it was chosen for.
+			*/
+			const dropUnhonouredEffort = (nextModel) => {
+				const current = state.cardDefaultReasoningEffort.text;
+				const kept = reconcileReasoningEffort(defaultModels, nextModel, current);
+				if (kept !== current) props.edit("cardDefaultReasoningEffort", kept);
 			};
 			const nestedShell = {
 				available: true,
@@ -17048,6 +17323,83 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 								stagedSettings.model.trim() !== "" && parseModelRoute(stagedSettings.model) === void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 									className: board_settings_module_css_default.note,
 									children: t("settings.goalVerificationModelInvalid")
+								})
+							]
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)(PluginSettingsCard$3, {
+							t,
+							titleKey: "settings.cardDefaultsTitle",
+							descriptionKey: "settings.cardDefaultsCardHint",
+							defaultOpen: false,
+							hideFooter: true,
+							state: nestedShell,
+							onSave: props.save,
+							onDiscard: props.discard,
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CardDefaultPresetField, {
+									id: "settings-task-board-card-default-mode",
+									label: t("new.agentPreset"),
+									hint: t("settings.cardDefaultModeHint"),
+									presets: state.presets,
+									...fieldProps,
+									...state.cardDefaultMode,
+									onEdit: (text) => {
+										props.edit("cardDefaultMode", text);
+									},
+									onReset: () => {
+										props.resetField("cardDefaultMode");
+									}
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ChoiceField$1, {
+									id: "settings-task-board-card-default-permission",
+									label: t("new.permission"),
+									hint: t("settings.cardDefaultPermissionHint"),
+									inheritLabel: t("exec.permission.default"),
+									choices: TASK_PERMISSIONS.map((id) => ({
+										value: id,
+										label: t(`exec.permission.${id}`)
+									})),
+									...fieldProps,
+									...state.cardDefaultPermission,
+									onEdit: (text) => {
+										props.edit("cardDefaultPermission", text);
+									},
+									onReset: () => {
+										props.resetField("cardDefaultPermission");
+									}
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ChoiceField$1, {
+									id: "settings-task-board-card-default-model",
+									label: t("new.model"),
+									hint: t("settings.cardDefaultModelHint"),
+									inheritLabel: t("exec.model.default"),
+									choices: modelChoiceRows(defaultModels),
+									...fieldProps,
+									...state.cardDefaultModel,
+									onEdit: (text) => {
+										props.edit("cardDefaultModel", text);
+										dropUnhonouredEffort(text);
+									},
+									onReset: () => {
+										props.resetField("cardDefaultModel");
+										dropUnhonouredEffort("");
+									}
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ChoiceField$1, {
+									id: "settings-task-board-card-default-effort",
+									label: t("exec.reasoning"),
+									hint: t(reasoningHintKey(defaultModels, defaultModel)),
+									inheritLabel: t("exec.reasoning.inherit"),
+									choices: defaultEffortChoices,
+									...fieldProps,
+									...state.cardDefaultReasoningEffort,
+									disabled: disabled || !reasoningPickerEnabled(defaultModels, defaultModel),
+									onEdit: (text) => {
+										props.edit("cardDefaultReasoningEffort", text);
+									},
+									onReset: () => {
+										props.resetField("cardDefaultReasoningEffort");
+									}
 								})
 							]
 						}),
@@ -17836,25 +18188,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"layout"
 		];
 		/**
-		* Read the agent-preset roster through the generated api-remotes face. The
-		* caller passes the namespace resolved inside its scoped inject, so a host
-		* that serves no such namespace never reaches here; a host that serves it
-		* answers `ok: false` instead, which leaves the picker options untouched.
-		* @param remote - the `remote.agentPresets` namespace.
-		* @returns the roster, or a failed read the caller ignores.
-		*/
-		async function readPresetRoster(remote) {
-			const response = await remote.list();
-			if (!response.ok) return {
-				ok: false,
-				presets: []
-			};
-			return {
-				ok: true,
-				presets: response.value.presets
-			};
-		}
-		/**
 		* Mount the task board.
 		* @param ctx - client root context (services: sessions, workspaces).
 		*/
@@ -17897,6 +18230,31 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			ctx.effect(() => () => {
 				settingsCard.dispose();
 			}, "task-board: settings card");
+			let presetRoster;
+			let liveController;
+			const pushPresetOptions = async (presetRemote) => {
+				try {
+					const roster = await readPresetRoster(presetRemote);
+					if (!roster.ok) return;
+					const presets = presetOptionsFromRoster(roster.presets);
+					presetRoster = presets;
+					settingsCard.setPresetRoster(presets);
+					liveController?.setExecutionOptions({ presets });
+				} catch (error) {
+					console.error("[dsh-task-board] agent preset roster read failed", error);
+				}
+			};
+			const presetRosterFeed = ctx.inject(["remote.agentPresets"], (inner) => {
+				const presetRemote = inner.get("remote.agentPresets");
+				if (presetRemote === void 0) return;
+				pushPresetOptions(presetRemote);
+				return inner.on("connection/reset", () => {
+					pushPresetOptions(presetRemote);
+				});
+			});
+			ctx.effect(() => () => {
+				presetRosterFeed.dispose();
+			}, "task-board: agent preset roster");
 			let uiDisposer;
 			const mountUi = () => {
 				if (uiDisposer !== void 0) return;
@@ -17918,6 +18276,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				controller.start();
 				clientService.attach(controller);
 				const disposers = [];
+				liveController = controller;
+				if (presetRoster !== void 0) controller.setExecutionOptions({ presets: presetRoster });
 				const pushWorkspaceOptions = () => {
 					const snapshot = workspaces.list.getSnapshot();
 					controller.setExecutionOptions({ workspaces: snapshot.items.map((item) => ({
@@ -17929,32 +18289,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				disposers.push(workspaces.list.subscribe(pushWorkspaceOptions));
 				controller.setWorkspaceCreator(async (path) => {
 					return { workspaceId: (await workspaces.create({ path })).workspaceId };
-				});
-				const pushPresetOptions = async (presetRemote) => {
-					try {
-						const roster = await readPresetRoster(presetRemote);
-						if (!roster.ok) return;
-						controller.setExecutionOptions({ presets: roster.presets.map((preset) => ({
-							id: preset.id,
-							name: preset.name,
-							description: preset.description,
-							broken: preset.broken,
-							isDefault: preset.isDefault
-						})) });
-					} catch (error) {
-						console.error("[dsh-task-board] agent preset roster read failed", error);
-					}
-				};
-				const presetRosterFeed = ctx.inject(["remote.agentPresets"], (inner) => {
-					const presetRemote = inner.get("remote.agentPresets");
-					if (presetRemote === void 0) return;
-					pushPresetOptions(presetRemote);
-					return inner.on("connection/reset", () => {
-						pushPresetOptions(presetRemote);
-					});
-				});
-				disposers.push(() => {
-					presetRosterFeed.dispose();
 				});
 				const pushModelOptions = async () => {
 					try {
@@ -18004,6 +18338,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					for (const dispose of disposers.splice(0)) dispose();
 					clientService.detach();
 					controller.dispose();
+					liveController = void 0;
 					uiDisposer = void 0;
 				};
 			};

@@ -10,12 +10,33 @@ import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { useEffect, useState } from 'react'
 import type { TaskBoardPowerSnapshot, TaskBoardVerificationOptions } from '../protocol.ts'
 import type { TaskBoardExtensionDispatch } from '../core/extension.ts'
+import type { ExecutionPresetOption } from '../core/controller.ts'
+import { TASK_PERMISSIONS } from '../core/tasks.ts'
 import { resolveContract, type ModelCatalogView, type VerificationSettings } from '../core/verification.ts'
 import { parseModelRoute } from '../core/verification.ts'
+import { CardDefaultPresetField } from './CardDefaultPresetField.tsx'
 import { PluginSettingsCard, BooleanField, ChoiceField, ValueField } from './PluginSettingsCard.tsx'
+import {
+  modelChoiceRows,
+  modelOptionsFromCatalog,
+  reasoningEffortsFor,
+  reasoningHintKey,
+  reasoningPickerEnabled,
+  reconcileReasoningEffort,
+} from './board/model-options.ts'
 import { SUBTASK_DEPTH_MAX, SUBTASK_DEPTH_MIN } from '../core/subtask.ts'
 import { SESSION_POLL_MAX_SECONDS, SESSION_POLL_MIN_SECONDS } from '../core/poll-cadence.ts'
-import { CardForm, booleanField, type CardActions, type CardShell, type FieldSpec, type FieldState as CardFieldState } from './settings-form.ts'
+import {
+  CardForm,
+  booleanField,
+  choiceField,
+  textField,
+  type CardActions,
+  type CardShell,
+  type FieldSpec,
+  type FieldState as CardFieldState,
+} from './settings-form.ts'
+import type { TaskBoardKey } from './locales.ts'
 import settingsCss from './board-settings.module.css'
 
 /** The depth choices the card offers, derived from the supported range. */
@@ -68,31 +89,17 @@ function subtaskDepthField(): FieldSpec {
  * The judge-model field: blank inherits the host model catalog default, and a
  * non-blank draft must be a qualified provider/model route. An unparseable
  * draft blocks the save instead of storing a route nothing can resolve.
+ * The new-card default model uses the same gate, so both fields accept exactly
+ * the routes an execution can pin.
  */
-function judgeModelField(): FieldSpec {
+function modelRouteField(field: string): FieldSpec {
   return {
-    field: 'goalVerificationModel',
+    field,
     format: value => typeof value === 'string' ? value : '',
     parse: (text) => {
       const trimmed = text.trim()
       if (trimmed === '') return { kind: 'clear' }
       return parseModelRoute(trimmed) === undefined ? undefined : { kind: 'set', value: trimmed }
-    },
-  }
-}
-
-/**
- * The reasoning-effort field. Any non-blank id is staged: which levels a model
- * accepts is decided by the host catalog, and the settings card shows the
- * resolved level (including a fallback) rather than guessing here.
- */
-function judgeEffortField(): FieldSpec {
-  return {
-    field: 'goalVerificationReasoningEffort',
-    format: value => typeof value === 'string' ? value : '',
-    parse: (text) => {
-      const trimmed = text.trim()
-      return trimmed === '' ? { kind: 'clear' } : { kind: 'set', value: trimmed }
     },
   }
 }
@@ -121,6 +128,20 @@ export interface TaskBoardSettings {
   goalVerificationModel?: string
   /** Judge reasoning effort; blank inherits the host default level. */
   goalVerificationReasoningEffort?: string
+  /**
+   * Agent preset the create dialog of this board opens with. Blank pins
+   * nothing, so a new card follows the deployment default as before.
+   */
+  cardDefaultMode?: string
+  /** Permission the create dialog opens with; blank applies no default. */
+  cardDefaultPermission?: string
+  /** Execution model route the create dialog opens with; blank applies none. */
+  cardDefaultModel?: string
+  /**
+   * Reasoning level bound to `cardDefaultModel`; it applies only while a
+   * card's final model IS that configured route, and is inert without one.
+   */
+  cardDefaultReasoningEffort?: string
 }
 
 /** What the task-board card renders. */
@@ -143,6 +164,20 @@ export interface TaskBoardSettingsCardState extends CardShell {
   goalVerificationModel: CardFieldState
   /** Judge reasoning-effort field. */
   goalVerificationReasoningEffort: CardFieldState
+  /** New-card default agent preset. */
+  cardDefaultMode: CardFieldState
+  /** New-card default permission. */
+  cardDefaultPermission: CardFieldState
+  /** New-card default model route. */
+  cardDefaultModel: CardFieldState
+  /** New-card default reasoning level. */
+  cardDefaultReasoningEffort: CardFieldState
+  /**
+   * The deployment's agent-preset roster, published by the runtime read the
+   * plugin wires; undefined until it answers, which leaves the default-preset
+   * field offering the inherit choice alone.
+   */
+  presets?: readonly ExecutionPresetOption[]
 }
 
 /** The registration-side face the card's slot entry injects. */
@@ -159,6 +194,8 @@ export interface TaskBoardSettingsCardFace extends CardActions {
 export class TaskBoardSettingsCardController {
   private readonly form: CardForm<TaskBoardSettings>
   private readonly store: SnapshotStore<TaskBoardSettingsCardState>
+  /** The deployment's agent-preset roster, once its runtime read has answered. */
+  private presets: readonly ExecutionPresetOption[] | undefined
 
   /** @param scope - the bound configuration form for the `task-board` namespace. */
   constructor(scope: ConfigForm<TaskBoardSettings>, private readonly dispatch: TaskBoardExtensionDispatch) {
@@ -170,8 +207,15 @@ export class TaskBoardSettingsCardController {
       sessionPollField(),
       booleanField('goalRunEnabled'),
       booleanField('goalVerification'),
-      judgeModelField(),
-      judgeEffortField(),
+      modelRouteField('goalVerificationModel'),
+      textField('goalVerificationReasoningEffort'),
+      // The new-card defaults: blank is a real value every one of them keeps
+      // ("apply no default"), which is why they are staged like any other field
+      // and only their parse rules differ.
+      textField('cardDefaultMode'),
+      choiceField('cardDefaultPermission', TASK_PERMISSIONS),
+      modelRouteField('cardDefaultModel'),
+      textField('cardDefaultReasoningEffort'),
     ])
     this.store = this.form.bind(() => this.projection())
   }
@@ -188,7 +232,26 @@ export class TaskBoardSettingsCardController {
       goalVerification: this.form.field('goalVerification'),
       goalVerificationModel: this.form.field('goalVerificationModel'),
       goalVerificationReasoningEffort: this.form.field('goalVerificationReasoningEffort'),
+      cardDefaultMode: this.form.field('cardDefaultMode'),
+      cardDefaultPermission: this.form.field('cardDefaultPermission'),
+      cardDefaultModel: this.form.field('cardDefaultModel'),
+      cardDefaultReasoningEffort: this.form.field('cardDefaultReasoningEffort'),
+      ...(this.presets === undefined ? {} : { presets: this.presets }),
     }
+  }
+
+  /**
+   * Publish the deployment's agent-preset roster to the default-preset field.
+   * The roster is a runtime fact read outside this card (src/client/index.ts
+   * wires it once for both the board's pickers and this topic); it can arrive
+   * late or not at all, and until it does the field lists the inherit choice
+   * alone. This never blocks a save: a deployment that serves no roster still
+   * has a writable settings document.
+   * @param presets - the roster rows.
+   */
+  setPresetRoster(presets: readonly ExecutionPresetOption[]): void {
+    this.presets = presets
+    this.store.set(this.projection())
   }
 
   /**
@@ -303,6 +366,25 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
     resetLabel: t('settings.reset'),
     invalidLabel: t('settings.invalidNumber'),
     disabled,
+  }
+  // The new-card-defaults topic reads the SAME catalog the acceptance fields
+  // and the create dialog read (session/modelCatalog, served here through the
+  // verification payload), normalized once into the roster the reasoning
+  // helpers below consume, so the default level can only offer levels the
+  // chosen default model really declares.
+  const defaultModels = modelOptionsFromCatalog(catalog)
+  const defaultModel = state.cardDefaultModel.text
+  const defaultEffortChoices = reasoningEffortsFor(defaultModels, defaultModel)
+    .map(effort => ({ value: effort, label: effort }))
+  /**
+   * Drop a staged default level the newly picked default model cannot honour,
+   * exactly as the create dialog's own model picker does (one shared rule):
+   * the level belongs to the route it was chosen for.
+   */
+  const dropUnhonouredEffort = (nextModel: string): void => {
+    const current = state.cardDefaultReasoningEffort.text
+    const kept = reconcileReasoningEffort(defaultModels, nextModel, current)
+    if (kept !== current) props.edit('cardDefaultReasoningEffort', kept)
   }
   // Chrome state of the nested disclosure cards below: they stage into this
   // card's form and are written by its one save, so they carry no footer and no
@@ -509,6 +591,79 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           {stagedSettings.model.trim() !== '' && parseModelRoute(stagedSettings.model) === undefined && (
             <p className={settingsCss.note}>{t('settings.goalVerificationModelInvalid')}</p>
           )}
+        </PluginSettingsCard>
+
+        {/* New-card defaults: what the create dialog opens with, and what the
+            Host create path fills an omitted target from when the caller opts
+            in. Every field's blank choice is a real value — "apply no default"
+            — so a deployment that configures none of them creates cards
+            exactly as it did before this topic existed. */}
+        <PluginSettingsCard
+          t={t}
+          titleKey="settings.cardDefaultsTitle"
+          descriptionKey="settings.cardDefaultsCardHint"
+          defaultOpen={false}
+          hideFooter
+          state={nestedShell}
+          onSave={props.save}
+          onDiscard={props.discard}
+        >
+          <CardDefaultPresetField
+            id="settings-task-board-card-default-mode"
+            label={t('new.agentPreset')}
+            hint={t('settings.cardDefaultModeHint')}
+            presets={state.presets}
+            {...fieldProps}
+            {...state.cardDefaultMode}
+            onEdit={(text) => { props.edit('cardDefaultMode', text) }}
+            onReset={() => { props.resetField('cardDefaultMode') }}
+          />
+          <ChoiceField
+            id="settings-task-board-card-default-permission"
+            label={t('new.permission')}
+            hint={t('settings.cardDefaultPermissionHint')}
+            inheritLabel={t('exec.permission.default')}
+            choices={TASK_PERMISSIONS.map(id => ({ value: id, label: t(`exec.permission.${id}` as TaskBoardKey) }))}
+            {...fieldProps}
+            {...state.cardDefaultPermission}
+            onEdit={(text) => { props.edit('cardDefaultPermission', text) }}
+            onReset={() => { props.resetField('cardDefaultPermission') }}
+          />
+          <ChoiceField
+            id="settings-task-board-card-default-model"
+            label={t('new.model')}
+            hint={t('settings.cardDefaultModelHint')}
+            inheritLabel={t('exec.model.default')}
+            choices={modelChoiceRows(defaultModels)}
+            {...fieldProps}
+            {...state.cardDefaultModel}
+            onEdit={(text) => {
+              props.edit('cardDefaultModel', text)
+              dropUnhonouredEffort(text)
+            }}
+            onReset={() => {
+              props.resetField('cardDefaultModel')
+              // A blank default model carries no route for a level to bind to,
+              // so the staged default level goes with it.
+              dropUnhonouredEffort('')
+            }}
+          />
+          <ChoiceField
+            id="settings-task-board-card-default-effort"
+            label={t('exec.reasoning')}
+            hint={t(reasoningHintKey(defaultModels, defaultModel))}
+            inheritLabel={t('exec.reasoning.inherit')}
+            choices={defaultEffortChoices}
+            {...fieldProps}
+            {...state.cardDefaultReasoningEffort}
+            // The levels on offer are the declared ones of the picked default
+            // model, so without a model that declares any there is nothing to
+            // choose: the selector locks instead of offering a level no model
+            // would accept.
+            disabled={disabled || !reasoningPickerEnabled(defaultModels, defaultModel)}
+            onEdit={(text) => { props.edit('cardDefaultReasoningEffort', text) }}
+            onReset={() => { props.resetField('cardDefaultReasoningEffort') }}
+          />
         </PluginSettingsCard>
 
         {/* Provider sections: a family extension contributes its own nested

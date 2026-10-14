@@ -102,7 +102,7 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board
 
 ## 配置
 
-本插件的设置卡把选项组织成可折叠的分区——看板与运行行为、任务验收，以及提供方扩展（GitHub Issues 集成）贡献的分区。每个分区默认折叠，整张卡共用一次保存。
+本插件的设置卡把选项组织成可折叠的分区——看板与运行行为、任务验收、新建卡片默认值，以及提供方扩展（GitHub Issues 集成）贡献的分区。每个分区默认折叠，整张卡共用一次保存。
 
 | 键 | 默认值 | 行为 |
 | --- | --- | --- |
@@ -121,6 +121,12 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board
 | `goalVerificationCallTimeoutSeconds` | `150` | 单次裁判调用的上限（秒，范围 30–600）。一次验收要发六次裁判调用，上限过小会把「慢但健康」的路由变成一整排超时。 |
 | `goalVerificationBudgetSeconds` | `1200` | 单次验收的总时间上限（秒，范围 120–1800），覆盖证据渲染与全部裁判调用（含重试）。应不小于单次调用上限的六倍，否则一次验收永远跑不完；耗尽时记为一类「预算耗尽」结果，不产生任何判定，也不消耗任何额度。 |
 | `teamProvider` | `spawn` | Agent Teams 服务用来组成 teammate 的 continuable-subagent provider。仅团队执行模式使用，与 Agent Teams 工具插件的 `freshProvider` 默认值一致。 |
+| `cardDefaultMode` | `''`（无默认值） | 新建卡片起始的 agent 预设。留空不钉住任何值，卡片照旧跟随部署默认预设。 |
+| `cardDefaultPermission` | `''`（无默认值） | 新建卡片起始的权限。它可以高于会话权限基线：它只是预填，高于基线的绑定仍需人工确认后才能运行。 |
+| `cardDefaultModel` | `''`（无默认值） | 新建卡片起始的执行模型（`provider/model`）。留空不钉住任何值，并使 `cardDefaultReasoningEffort` 失效。 |
+| `cardDefaultReasoningEffort` | `''`（无默认值） | 新建卡片起始的思考档位，仅在卡片最终模型就是配置的 `cardDefaultModel` 时生效；自己选了模型的调用方不借用任何默认档位。 |
+
+四个新建卡片默认值都默认空，且都是 volatile：改动即时生效、作用于之后新建的卡片，无需重启；留空不钉住任何值，因此完全不配置它们的部署创建卡片的行为与今天一致。新卡片的每个执行目标按同一顺序取值——新建对话框里的显式选择优先于从源卡带过来的值（复制卡片沿用源卡已钉住的值，新建子任务沿用父卡的），后者优先于看板默认值——而父卡的权限永不参与。这四个默认值都不会放松权限确认门：高于会话基线的默认权限只是预填，卡片仍要等人工确认后才能运行。
 
 浏览器直接访问仍限制为 DSH loopback origin。若使用同机认证反向代理，应让 DSH Web 绑定 loopback，配置 `trustedProxyHosts`，在 `proxyTokenEnv` 指定的环境变量中放置高熵 token，并让代理在完成认证后替换（不能透传客户端提供的）`X-Dsh-Task-Board-Proxy-Token`。代理 Host 必须在白名单内，浏览器 `Origin` 必须与其 authority 相同。修改这些 composition 级代理设置后需重启 Host。
 

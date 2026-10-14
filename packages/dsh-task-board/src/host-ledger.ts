@@ -17,6 +17,7 @@ import {
 } from './core/subtask.ts'
 import { applyArchiveTask, applyRestoreTask } from './core/use-cases/task-archive.ts'
 import { applyCreateTask } from './core/use-cases/task-create.ts'
+import type { CardDefaults } from './core/card-defaults.ts'
 import { applyDeleteTask } from './core/use-cases/task-delete.ts'
 import { applySetSchedule, applyScheduleProgress, applyScheduleRefund, type ScheduleProgress } from './core/use-cases/task-schedule.ts'
 import { applySetParent } from './core/use-cases/task-parent.ts'
@@ -488,11 +489,15 @@ export class HostTaskLedger {
    */
   private depthLimit: number
 
-  constructor(dir: string = join(dshHome(), 'task-board'), private readonly now: () => number = Date.now, options: { sessionDefaultPermission?: TaskPermission | (() => TaskPermission); maxSubtaskDepth?: number } = {}) {
+  /** Live reader of the deployment's new-card defaults (a volatile config read). */
+  private readonly cardDefaults: () => CardDefaults
+
+  constructor(dir: string = join(dshHome(), 'task-board'), private readonly now: () => number = Date.now, options: { sessionDefaultPermission?: TaskPermission | (() => TaskPermission); maxSubtaskDepth?: number; cardDefaults?: () => CardDefaults } = {}) {
     // Resolved before the load/repair passes below: they can evaluate the gate.
     const baseline = options.sessionDefaultPermission
     this.sessionDefault = typeof baseline === 'function' ? baseline : () => baseline ?? DEFAULT_SESSION_PERMISSION
     this.depthLimit = normalizeSubtaskDepth(options.maxSubtaskDepth ?? DEFAULT_SUBTASK_DEPTH)
+    this.cardDefaults = options.cardDefaults ?? (() => ({}))
     mkdirSync(dir, { recursive: true })
     this.file = join(dir, 'ledger-v2.json')
     this.lockFile = join(dir, 'ledger-v2.lock')
@@ -974,7 +979,7 @@ export class HostTaskLedger {
         const input = action.input.freeze === undefined || initiator === undefined || initiator === ''
           ? action.input
           : { ...action.input, freeze: { ...action.input.freeze, frozenBy: initiator } }
-        const result = applyCreateTask(this.document.tasks, input, now, action.id, this.maxSubtaskDepth, timeZone())
+        const result = applyCreateTask(this.document.tasks, input, now, action.id, this.maxSubtaskDepth, timeZone(), this.cardDefaults())
         if (result.task === undefined) throw new Error(result.error ?? 'invalid task')
         this.document.tasks = [...result.tasks]
         break

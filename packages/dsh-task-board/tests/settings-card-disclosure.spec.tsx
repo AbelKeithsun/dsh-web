@@ -61,6 +61,10 @@ function cardState(): TaskBoardSettingsCardState {
     goalVerification: { ...field, text: 'true' },
     goalVerificationModel: field,
     goalVerificationReasoningEffort: field,
+    cardDefaultMode: field,
+    cardDefaultPermission: field,
+    cardDefaultModel: field,
+    cardDefaultReasoningEffort: field,
   }
 }
 
@@ -153,13 +157,14 @@ describe('task-board settings card disclosure', () => {
     act(() => { header(container, zh['settings.title']).click() })
 
     // Then the topics stand collapsed under it in the order board, run behavior,
-    // acceptance, provider card, and nothing is expanded yet
+    // acceptance, new-card defaults, provider card, and nothing is expanded yet
     const topics = headers(container)
-    expect(topics).toHaveLength(5)
+    expect(topics).toHaveLength(6)
     expect(topics[1]?.textContent).toContain(zh['settings.enabled'])
     expect(topics[2]?.textContent).toContain(zh['settings.runBehaviorTitle'])
     expect(topics[3]?.textContent).toContain(zh['settings.goalVerificationTitle'])
-    expect(topics[4]?.textContent).toContain(PROVIDER_CARD_LABEL)
+    expect(topics[4]?.textContent).toContain(zh['settings.cardDefaultsTitle'])
+    expect(topics[5]?.textContent).toContain(PROVIDER_CARD_LABEL)
     expect(topics[0]?.getAttribute('aria-expanded')).toBe('true')
     for (const topic of topics.slice(1)) expect(topic.getAttribute('aria-expanded')).toBe('false')
   })
@@ -218,8 +223,28 @@ describe('task-board settings card disclosure', () => {
     expect(header(container, zh['settings.enabled']).getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('operator sees the provider seat rendered inside the same topic list as the board topics', () => {
-    // Given a settings card whose provider seat contributes one entry
+  it('operator expanding the new-card-defaults topic reaches the four prefill fields', () => {
+    // Given the expanded settings card with the defaults topic still closed
+    const container = render(cardProps())
+    act(() => { header(container, zh['settings.title']).click() })
+    expect(container.querySelector('#settings-task-board-card-default-mode')).toBeNull()
+
+    // When the operator opens the new-card-defaults topic
+    act(() => { header(container, zh['settings.cardDefaultsTitle']).click() })
+
+    // Then the four prefills are there, each resting on the choice that applies
+    // no default at all, and the sibling topics stayed closed
+    const mode = container.querySelector<HTMLSelectElement>('#settings-task-board-card-default-mode')
+    expect(mode?.tagName).toBe('SELECT')
+    expect([...(mode?.options ?? [])].map(option => option.value)).toEqual([''])
+    expect(mode?.options[0]?.textContent).toBe(zh['exec.mode.inherit'])
+    expect(container.querySelector('#settings-task-board-card-default-permission')?.textContent).toBe(zh['exec.permission.default'])
+    expect(container.querySelector('#settings-task-board-card-default-model')?.textContent).toBe(zh['exec.model.default'])
+    expect(container.querySelector('#settings-task-board-card-default-effort')?.textContent).toBe(zh['exec.reasoning.inherit'])
+    expect(header(container, zh['settings.goalVerificationTitle']).getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('operator sees the provider seat rendered inside the same topic list as the board topics', () => {    // Given a settings card whose provider seat contributes one entry
     // When the operator expands the settings card
     const container = render(cardProps(true))
     act(() => { header(container, zh['settings.title']).click() })
@@ -228,6 +253,6 @@ describe('task-board settings card disclosure', () => {
     const seats = container.querySelectorAll('[data-testid="provider-seat"]')
     expect(seats).toHaveLength(1)
     expect(seats[0]?.parentElement?.tagName).toBe('UL')
-    expect(seats[0]?.parentElement?.children).toHaveLength(4)
+    expect(seats[0]?.parentElement?.children).toHaveLength(5)
   })
 })

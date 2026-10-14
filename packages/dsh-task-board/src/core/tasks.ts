@@ -546,6 +546,14 @@ export interface NewTaskInput {
   model?: string
   /** Optional reasoning effort for that model route; empty/absent = the model's own default. */
   reasoningEffort?: string
+  /**
+   * Opt in to the deployment's new-card defaults: a target this input leaves
+   * out is filled from the configured default (agent preset, permission, model
+   * and the level bound to that model). Absent means the create stores exactly
+   * what it was given, which is what the extension provider's own create path
+   * and the legacy import rely on.
+   */
+  applyCardDefaults?: boolean
   /** Reuse the previous execution's session for later runs (issue #1419). */
   reuseSession?: boolean
   /** Run the subtree as an Agent Team (Team Lead session plus one teammate per direct subtask). */

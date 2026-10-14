@@ -597,10 +597,10 @@ function buildCreateTool(host: TaskBoardToolHost): ToolDefinition {
       prompt: { type: 'string', description: 'The instruction sent to the execution agent; the title is used when blank.' },
       parentId: { type: 'string', description: 'Parent task id, making this a subtask. Omit for a root task.' },
       workspaceId: { type: 'string', description: 'Workspace id the execution must run in; omit to inherit the workspace this session is in (root task) or the parent value (subtask).' },
-      mode: { type: 'string', description: 'Agent preset id the execution session is composed from; omit for the deployment default or the parent value.' },
-      permission: { type: 'string', enum: [...TASK_PERMISSIONS], description: 'Permission preset for the execution session. Omit to inherit the parent binding; a value above the session default needs a human confirmation in the board UI before the card can run.' },
-      model: { type: 'string', description: 'Pinned model as provider/model (or a model id); omit for the host default or the parent value.' },
-      reasoningEffort: { type: 'string', description: 'Reasoning effort id for that model (an adapter-owned level such as "high"); omit to run at the model own default. Only an effort the target model declares is sent; an empty string clears it back to the default.' },
+      mode: { type: 'string', description: 'Agent preset id the execution session is composed from; omit to adopt the board new-card default, and the deployment default when none is configured.' },
+      permission: { type: 'string', enum: [...TASK_PERMISSIONS], description: 'Permission preset for the execution session; omit to adopt the board new-card default. An omitted permission is never taken from a parent: the launch resolves the parent binding instead. A value above the session default needs a human confirmation in the board UI before the card can run.' },
+      model: { type: 'string', description: 'Pinned model as provider/model (or a model id); omit to adopt the board new-card default, and the host default when none is configured.' },
+      reasoningEffort: { type: 'string', description: 'Reasoning effort id for that model (an adapter-owned level such as "high"); omit to adopt the board new-card default for that model, and the model own default when none applies. Only an effort the target model declares is sent; an empty string clears it back to the default.' },
       reuseSession: { type: 'boolean', description: 'Continue later runs in the previous execution session instead of a fresh conversation.' },
       teamRun: { type: 'boolean', description: 'Run this task as an Agent Team: running it starts one Team Lead session and the Host spawns a teammate per subtask inside it. Omit or false for one independent session per member. Refused when the deployment serves no Agent Teams service.' },
       goalRun: { type: 'boolean', description: 'Start each run with dsh built-in /goal so the session keeps working continuation rounds until the goal completes. Off by default: omit (or pass false) for a single plain turn, and pass true to opt this card in. It only takes effect while the deployment global native /goal switch is on.' },
@@ -648,6 +648,11 @@ function buildCreateTool(host: TaskBoardToolHost): ToolDefinition {
         ...(args.permission === undefined ? {} : { permission: args.permission }),
         ...(args.model === undefined || args.model === '' ? {} : { model: args.model }),
         ...(args.reasoningEffort === undefined || args.reasoningEffort === '' ? {} : { reasoningEffort: args.reasoningEffort }),
+        // This tool creates cards on behalf of a deployment that configured its
+        // new-card defaults once: an omitted target adopts them instead of
+        // leaving the card to resolve the host default at run time. Only the
+        // targets the caller omitted are filled.
+        applyCardDefaults: true,
         ...(args.reuseSession === true ? { reuseSession: true } : {}),
         ...(args.teamRun === true ? { teamRun: true } : {}),
         ...(args.goalRun === true ? { goalRun: true } : {}),

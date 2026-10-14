@@ -4,6 +4,8 @@ Status: implemented
 
 Extended by [family settings cards carry an identity mark and one-line copy](./2026-10-01-family-settings-cards-identity-marks-and-copy.md): the two topic descriptions and the card's copy line are shortened, and the power-status lines become quiet small print; the disclosure layout itself is unchanged.
 
+Extended by [new-card defaults](./2026-10-14-task-board-new-card-defaults.md): the board's own options are three topic cards, the third carrying the four new-card default keys; the disclosure layout itself is unchanged.
+
 ## Problem
 
 The board's own settings card rendered every option in one flat body: the master
@@ -23,16 +25,17 @@ The settings card is a list of collapsed topic cards, the layout the task form
 already uses ([task form regions](./2026-09-27-task-board-create-dialog-regions.md))
 applied to the settings surface.
 
-- The card's own options are two nested `PluginSettingsCard` disclosures — the
+- The card's own options are three nested `PluginSettingsCard` disclosures — the
   board and its runtime behavior (master switch, agent announcement, idle-sleep
-  protection, subtask depth), then task acceptance (switch, judge model,
-  reasoning level, resolved preview) — rendered into the same list
-  (`board-settings.module.css` `.nestedCards`) that already hosts the provider seat.
-  The acceptance block's heading and divider are gone: the card's own header
-  names the topic.
-- Every one of the three starts collapsed (`defaultOpen={false}`), on the board card
-  and on the GitHub Issues section alike, so the settings page opens as a short
-  topic list.
+  protection, subtask depth), task acceptance (switch, judge model, reasoning
+  level, resolved preview) and the new-card defaults the third card of that list
+  carries ([new-card defaults](./2026-10-14-task-board-new-card-defaults.md)) —
+  rendered into the same list (`board-settings.module.css` `.nestedCards`) that
+  already hosts the provider seat. The acceptance block's heading and divider are
+  gone: the card's own header names the topic.
+- Every one of the four starts collapsed (`defaultOpen={false}`), on the board
+  card's three topics and on the GitHub Issues section alike, so the settings page
+  opens as a short topic list.
 - The nested cards carry `hideFooter`: they stage into the board card's one form
   and are written by its single save row, which stays the only save affordance.
   Their chrome state therefore reports `dirty: false` — the outer header owns the
@@ -54,9 +57,9 @@ one line of description.
 master switch is what the user opens the board card for, and a page whose first
 row is a wall of hint text is what the report was about.
 
-**Give each nested card its own save footer.** Rejected: the three topics write
-one settings namespace through one atomic mutation; two or three save buttons for
-one document invite a partial save and a second confirmation step with no effect.
+**Give each nested card its own save footer.** Rejected: the card's topics write
+one settings namespace through one atomic mutation; a save button per topic for one
+document invites a partial save and a second confirmation step with no effect.
 
 **Move the remaining board fields (announcement, idle sleep, subtask depth) out
 of the first topic.** Rejected: they are the board's own runtime behavior and are
@@ -70,7 +73,7 @@ from it.
 
 ## Consequences
 
-- The board card opens as three topic rows plus the power-status lines; each topic
+- The board card opens as four topic rows plus the power-status lines; each topic
   is one click away and keeps its own fields and hints.
 - The GitHub Issues section starts collapsed, so its repository and credential
   summary needs one click to read; it keeps its own save row for its own namespace.
@@ -84,10 +87,10 @@ from it.
   sharing it (`setupRepositoryHead` / `setupRepositoryTags`). The toggle carries
   `aria-expanded`/`aria-controls` and names the repository count in its accessible
   label, and the rows leave the DOM while it is closed.
-- No stored value, wire field, ledger schema or settings key changes: only
-  presentation and copy keys.
+- The disclosure changed no stored value, wire field or ledger schema and added no
+  settings key of its own: only presentation and copy keys.
 - Coverage: `packages/dsh-task-board/tests/settings-card-disclosure.spec.tsx` drives
-  the whole disclosure in jsdom (one header while collapsed, three collapsed
+  the whole disclosure in jsdom (one header while collapsed, four collapsed
   topics after expanding, each topic's controls and the provider seat inside one
   list) and `packages/dsh-task-board-github/tests/github-ui.spec.tsx` covers the
   contributed card's collapsed default.

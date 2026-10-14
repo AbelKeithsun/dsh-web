@@ -44,7 +44,7 @@ zh and en dictionaries live in the package; ru mirrors them in `packages/dsh-i18
 
 **A static list of the four built-in presets as the picker's whole content.** Rejected: the runtime roster is the authority and already includes user presets; restricting the picker to built-ins would make a user preset unpinnable.
 
-**A board-level default-preset setting.** Rejected: the deployment default is already the inherit target, and a board-level pin would silently override it for every card. The per-card choice stays where the judgement is made.
+**A board-level default-preset setting.** Rejected: the deployment default is already the inherit target, and a board-level pin would silently override it for every card. The per-card choice stays where the judgement is made. The [new-card defaults](./2026-10-14-task-board-new-card-defaults.md) decision later adopted a board-level default in the PREFILL shape — a value the dialog offers, with an unset default that changes nothing — so this rejection, which is about a pin, does not extend to that shape.
 
 **Renaming the field in the create dialog only.** Rejected: the create dialog and the detail view pin the same thing; two names for one choice is the confusion the rename removes.
 

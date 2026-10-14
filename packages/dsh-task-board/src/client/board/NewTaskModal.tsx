@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { BoardController } from '../../core/controller.ts'
+import { resolveCardTargets, type CardTargetSource } from '../../core/card-defaults.ts'
 import { isValidCron, nextRunAtMs } from '../../core/schedule.ts'
 import { parseFreezeRequest } from '../../core/freeze-snapshot.ts'
 import { effectiveTaskPermission } from '../../core/subtask.ts'
@@ -15,7 +16,7 @@ import { CollapsibleSection, ModalShell, TaskContentFields, TaskTagFields, clean
 import type { OverlayPhase } from './overlay.tsx'
 import { formatHostTimestamp } from './TaskCard.tsx'
 import { readParseModelPreference, writeParseModelPreference } from './parse-model-pref.ts'
-import { inheritPresetLabel, isBuiltinPreset, presetLabel } from './preset-label.ts'
+import { inheritPresetLabel, presetChoiceRows, presetLabel } from './preset-label.ts'
 import { ReasoningEffortField } from './ReasoningEffortField.tsx'
 import { reconcileReasoningEffort } from './model-options.ts'
 import { parentAwaitsTeamRunPromotion, promoteParentForTeamRun } from './team-run-promotion.ts'
@@ -49,18 +50,32 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
   const [title, setTitle] = useState(initialTask?.title ?? '')
   const [description, setDescription] = useState(initialTask?.description ?? '')
   const [prompt, setPrompt] = useState(initialTask?.prompt ?? '')
+  // The four execution targets this dialog opens on, resolved by the one rule
+  // the Host create path also uses (core/card-defaults.ts): what the card is
+  // created from (a duplicate's source, a subtask's parent) first, the board's
+  // new-card defaults second, blank when neither supplies a value. Resolving it
+  // from the SAME function the ledger uses is what keeps the dialog from
+  // drifting from what a create without an explicit choice stores.
+  const [seed] = useState(() => {
+    const source: CardTargetSource | undefined = parentTask !== undefined
+      ? { kind: 'parent', task: parentTask }
+      : initialTask !== undefined ? { kind: 'duplicate', task: initialTask } : undefined
+    return resolveCardTargets(controller.getSnapshot().host?.cardDefaults, source)
+  })
   // A subtask starts from its parent's execution contract (issue: subtask
   // inheritance); each picker below still overrides it for this card. The
-  // permission stays UNSET by default: leaving it empty is what makes the Host
-  // inherit the parent's binding together with its human confirmation, while
-  // picking a value pins this card's own binding and re-arms the gate.
+  // permission stays UNSET unless a default supplies one: leaving it empty is
+  // what makes the Host inherit the parent's binding together with its human
+  // confirmation, while picking a value pins this card's own binding and
+  // re-arms the gate. A parent's permission never travels here at all.
   const [workspaceId, setWorkspaceId] = useState(initialTask?.workspaceId ?? parentTask?.workspaceId ?? defaultWorkspaceId ?? '')
-  const [mode, setMode] = useState(initialTask?.mode ?? parentTask?.mode ?? '')
-  const [permission, setPermission] = useState(initialTask?.permission ?? '')
-  const [model, setModel] = useState(initialTask?.model ?? parentTask?.model ?? '')
-  // The effort belongs to the model pin, so a duplicate or subtask starts from
-  // the same pair the source card carries; '' follows the model/Host default.
-  const [reasoningEffort, setReasoningEffort] = useState(initialTask?.reasoningEffort ?? parentTask?.reasoningEffort ?? '')
+  const [mode, setMode] = useState(seed.mode)
+  const [permission, setPermission] = useState(seed.permission)
+  const [model, setModel] = useState(seed.model)
+  // The effort belongs to the model pin: the resolved seed carries the source
+  // card's pair and applies the configured default level only while the final
+  // model IS the configured default model; '' follows the model/Host default.
+  const [reasoningEffort, setReasoningEffort] = useState(seed.reasoningEffort)
   const inheritedPermission = parentTask === undefined ? undefined : effectiveTaskPermission(parentTask)
   const [reuseSession, setReuseSession] = useState(initialTask?.reuseSession ?? false)
   // Unchecked by default: a new task runs one plain turn unless the user opts
@@ -221,10 +236,14 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
       ...(parentTask === undefined ? {} : { parentId: parentTask.id }),
       freeze,
       handover,
-      workspaceId: workspaceId === '' ? undefined : workspaceId,
-      mode: mode === '' ? undefined : mode,
-      permission: permission === '' ? undefined : permission as TaskPermission,
-      model: model === '' ? undefined : model,
+      // A cleared picker is OMITTED, never sent as an empty value: absence is
+      // how "no pin, resolved at run time" is stored, so blanking a field the
+      // dialog opened prefilled really unpins it. This dialog never sends
+      // `applyCardDefaults` — the prefill above is the whole feature here.
+      ...(workspaceId === '' ? {} : { workspaceId }),
+      ...(mode === '' ? {} : { mode }),
+      ...(permission === '' ? {} : { permission: permission as TaskPermission }),
+      ...(model === '' ? {} : { model }),
       ...(reasoningEffort === '' ? {} : { reasoningEffort }),
       ...(reuseSession ? { reuseSession: true } : {}),
       ...(goalRun ? { goalRun: true } : {}),
@@ -295,10 +314,11 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
     : isDuplicate ? t('new.duplicateTitle') : t('board.new')
 
   // Agent-preset picker rows: the four built-in presets first, then every other
-  // roster row (user presets). The inherit option names the preset a run
-  // actually lands on when the card pins nothing.
-  const builtinPresets = options.presets.filter(preset => isBuiltinPreset(preset.id))
-  const customPresets = options.presets.filter(preset => !isBuiltinPreset(preset.id))
+  // roster row (user presets), each labelled with its default/unavailable
+  // suffixes by the one row builder the settings card's default-preset field
+  // also renders through. The inherit option names the preset a run actually
+  // lands on when the card pins nothing.
+  const presetRows = presetChoiceRows(options.presets)
   const inheritLabel = inheritPresetLabel(options.presets)
   const selectedPreset = options.presets.find(preset => preset.id === mode)
   const modeLabel = mode === '' ? inheritLabel : selectedPreset === undefined ? mode : presetLabel(selectedPreset)
@@ -480,25 +500,17 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
           >
             <option value="">{inheritLabel}</option>
             {!modeKnown && <option value={mode}>{mode}{t('exec.mode.removed')}</option>}
-            {builtinPresets.length > 0 && (
+            {presetRows.builtin.length > 0 && (
               <optgroup label={t('exec.mode.builtinGroup')}>
-                {builtinPresets.map(preset => (
-                  <option key={preset.id} value={preset.id} disabled={preset.broken !== undefined}>
-                    {presetLabel(preset)}
-                    {preset.isDefault ? t('exec.mode.defaultSuffix') : ''}
-                    {preset.broken !== undefined ? t('exec.mode.brokenSuffix') : ''}
-                  </option>
+                {presetRows.builtin.map(row => (
+                  <option key={row.id} value={row.id} disabled={row.disabled}>{row.label}</option>
                 ))}
               </optgroup>
             )}
-            {customPresets.length > 0 && (
+            {presetRows.custom.length > 0 && (
               <optgroup label={t('exec.mode.customGroup')}>
-                {customPresets.map(preset => (
-                  <option key={preset.id} value={preset.id} disabled={preset.broken !== undefined}>
-                    {presetLabel(preset)}
-                    {preset.isDefault ? t('exec.mode.defaultSuffix') : ''}
-                    {preset.broken !== undefined ? t('exec.mode.brokenSuffix') : ''}
-                  </option>
+                {presetRows.custom.map(row => (
+                  <option key={row.id} value={row.id} disabled={row.disabled}>{row.label}</option>
                 ))}
               </optgroup>
             )}

@@ -15,6 +15,8 @@ dsh Web GUI 的 Host 权威多列任务看板。任务通过真实 DSH 会话执
 - 重启恢复时，有 session id 的 running execution 继续观察；无 session id 的启动中断标为 cancelled，禁止自动重发。启动恢复与每次会话轮询都会先折叠已可裁决的运行：团队执行按 Lead 判定收口，成员全部结算的父子链一并终结（幂等，已折叠的运行不再写入）。会话历史读不到的 execution 不再等同「仍在进行」：名册已判定该会话空闲后仍连续读不到历史达到上限（24 次轮询，约 2 分钟）即带原因判失败，避免无限 pending 把卡片永久留在运行列。
 - 子任务层级由 Host 唯一裁定：`TaskRecord.parentId` 的深度上限是配置项 `maxSubtaskDepth`（1..3，默认 1），创建、`set-parent` 关联与导入修复共用 `src/core/subtask.ts` 的存在性/环/深度判定，浏览器只据此启停控件。执行一个任务会在同一 run group 内并发开启整棵子树的 execution；父任务在自己的回合与全部直接子任务都结算后才结算，任一成员失败则父任务失败，已在运行的任务不进入新的 run group（cron 同样），且运行中的参与者不能被 `set-parent` 改挂或解除关联——它的链接可能仍是该 run group 的父指针。子任务未单独设置的权限/模型在启动时按祖先链解析继承，继承来的权限连同提供它的祖先的人工确认戳一起生效；权限绝不在创建时复制到子任务卡片上（否则解除关联后会残留一张已确认的高权限根任务），workspace/模式/模型按用户看到的预填值存卡。
 
+- 新建卡片的执行目标默认值由看板设置卡的「新建卡片默认值」专题给出，四个键 `cardDefaultMode` / `cardDefaultPermission` / `cardDefaultModel` / `cardDefaultReasoningEffort` 都默认空 = 不设置，且都是 volatile：改动即时生效、只作用于之后新建的卡片，留空时创建行为与未配置一致。它们只是预填，不改变任何既有语义——取值优先级为「新建对话框的显式选择 > 复制卡片的源卡或新建子任务的父卡已钉住的值 > 看板默认值」，父卡权限永不参与（权限不在创建时复制到卡片上，见上一条）；思考档位默认值只在卡片最终钉住的模型就是 `cardDefaultModel` 时才生效，未配置默认模型时失效；高于会话权限基线的默认权限仍只是预填，执行前的人工确认门照旧。Host 创建路径按 opt-in 补齐：创建动作带 `applyCardDefaults: true` 时只填调用方没有给的值，目前由 `task_board_create` agent 工具设置；扩展提供方的 `tasks.create` 与旧数据导入不传该标志，行为不变。契约见[新建卡片默认值决策](../../.agents/notes/implemented/feature/2026-10-14-task-board-new-card-defaults.md)。
+
 - 思考档位的模型绑定、清空与继承以[思考强度决策](../../.agents/notes/implemented/feature/2026-10-11-task-board-reasoning-effort.md)为准。
 
 ## Agent Team 执行

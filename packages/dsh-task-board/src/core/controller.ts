@@ -152,7 +152,7 @@ export interface ExecutionOptionsSnapshot {
  * (revision/scheduler/power); a full snapshot also carries the deployment
  * constants the UI reads (session default permission, subtask depth).
  */
-export type HostMirror = Pick<TaskBoardSnapshot, 'revision' | 'scheduler' | 'power' | 'sessionDefaultPermission' | 'maxSubtaskDepth' | 'teamRunAvailable' | 'goalRunEnabled' | 'extensions'>
+export type HostMirror = Pick<TaskBoardSnapshot, 'revision' | 'scheduler' | 'power' | 'sessionDefaultPermission' | 'maxSubtaskDepth' | 'teamRunAvailable' | 'goalRunEnabled' | 'cardDefaults' | 'extensions'>
 
 /** Immutable controller snapshot for UI subscriptions. */
 export interface ControllerSnapshot {
@@ -418,7 +418,7 @@ export class BoardController {
 
   createTask(input: NewTaskInput): TaskRecord | undefined {
     const id = this.uuid()
-    const { task, tasks } = applyCreateTask(this.tasks, input, this.now(), id, this.mirrorDepth())
+    const { task, tasks } = applyCreateTask(this.tasks, input, this.now(), id, this.mirrorDepth(), undefined, this.hostState?.cardDefaults)
     if (task === undefined) return undefined
     this.tasks = [...tasks]
     this.persistAndNotify()
@@ -432,7 +432,7 @@ export class BoardController {
     // The preview must obey the SAME lineage gate the Host will: a browser-side
     // default of one level would reject a legal subtask-of-subtask before the
     // request is ever sent.
-    const preview = applyCreateTask(this.tasks, input, this.now(), id, this.mirrorDepth()).task
+    const preview = applyCreateTask(this.tasks, input, this.now(), id, this.mirrorDepth(), undefined, this.hostState?.cardDefaults).task
     if (preview === undefined) return undefined
     return await this.commitRemote({ kind: 'create', id, input }, id)
       ? this.tasks.find(task => task.id === id)
@@ -818,15 +818,16 @@ export class BoardController {
    * Project a Host snapshot onto the browser's mirror. SSE frames and partial
    * snapshots carry only the volatile subset (revision/scheduler/power), so the
    * deployment constants the UI reads — the session-default permission the
-   * confirmation banner compares against and the subtask depth limit — are
-   * carried over from the last full snapshot instead of being dropped by a
-   * heartbeat frame.
+   * confirmation banner compares against, the subtask depth limit, and the
+   * new-card defaults the create dialog prefills from — are carried over from
+   * the last full snapshot instead of being dropped by a heartbeat frame.
    */
   private mirrorOf(snapshot: TaskBoardSnapshot): HostMirror {
     const sessionDefaultPermission = snapshot.sessionDefaultPermission ?? this.hostState?.sessionDefaultPermission
     const maxSubtaskDepth = snapshot.maxSubtaskDepth ?? this.hostState?.maxSubtaskDepth
     const teamRunAvailable = snapshot.teamRunAvailable ?? this.hostState?.teamRunAvailable
     const goalRunEnabled = snapshot.goalRunEnabled ?? this.hostState?.goalRunEnabled
+    const cardDefaults = snapshot.cardDefaults ?? this.hostState?.cardDefaults
     const extensions = snapshot.extensions ?? this.hostState?.extensions
     return {
       revision: snapshot.revision,
@@ -836,6 +837,7 @@ export class BoardController {
       ...(maxSubtaskDepth === undefined ? {} : { maxSubtaskDepth }),
       ...(teamRunAvailable === undefined ? {} : { teamRunAvailable }),
       ...(goalRunEnabled === undefined ? {} : { goalRunEnabled }),
+      ...(cardDefaults === undefined ? {} : { cardDefaults }),
       ...(extensions === undefined ? {} : { extensions }),
     }
   }

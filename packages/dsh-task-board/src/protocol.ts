@@ -94,6 +94,14 @@ export interface TaskBoardSnapshot {
    */
   goalRunEnabled?: boolean
   /**
+   * New-card defaults this deployment configures: what the create dialog opens
+   * with, and what the create path fills an omitted target from when the caller
+   * opts in (`applyCardDefaults`). A target the board configures nothing for is
+   * omitted rather than published blank, so the browser can tell "no default
+   * model" from "a blank one".
+   */
+  cardDefaults?: { mode?: string; permission?: TaskPermission; model?: string; reasoningEffort?: string }
+  /**
    * Read-only summaries published by running extensions, keyed by extension id.
    * The board forwards them verbatim; it never interprets their shape.
    */
@@ -383,7 +391,7 @@ function handoverPayload(value: unknown): TaskHandoverInput | undefined {
 
 function createInput(value: unknown): value is NewTaskInput {
   const input = record(value)
-  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'parentId', 'workspaceId', 'mode', 'permission', 'schedule', 'freeze', 'handover', 'model', 'reasoningEffort', 'reuseSession', 'teamRun', 'goalRun', 'skipVerification', 'tags', 'integrations'])) return false
+  if (input === undefined || !exactKeys(input, ['title', 'description', 'prompt', 'parentId', 'workspaceId', 'mode', 'permission', 'schedule', 'freeze', 'handover', 'model', 'reasoningEffort', 'applyCardDefaults', 'reuseSession', 'teamRun', 'goalRun', 'skipVerification', 'tags', 'integrations'])) return false
   if (input.parentId !== undefined && (typeof input.parentId !== 'string' || input.parentId.trim() === '')) return false
   if (typeof input.title !== 'string' || typeof input.description !== 'string' || typeof input.prompt !== 'string') return false
   // The reasoning effort is an adapter-owned id the Host resolves against the
@@ -391,6 +399,7 @@ function createInput(value: unknown): value is NewTaskInput {
   // object, null) off the ledger; blank text means "inherit" like every other
   // pinned target.
   if (!optionalString(input.workspaceId) || !optionalString(input.mode) || !optionalString(input.model) || !optionalString(input.reasoningEffort)) return false
+  if (input.applyCardDefaults !== undefined && typeof input.applyCardDefaults !== 'boolean') return false
   if (input.reuseSession !== undefined && typeof input.reuseSession !== 'boolean') return false
   if (input.teamRun !== undefined && typeof input.teamRun !== 'boolean') return false
   if (input.goalRun !== undefined && typeof input.goalRun !== 'boolean') return false

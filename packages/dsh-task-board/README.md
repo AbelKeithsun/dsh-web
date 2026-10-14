@@ -102,7 +102,7 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board
 
 ## Configuration
 
-This plugin's settings card groups its options into collapsible sections — the board and its runtime behavior, task acceptance, and the section a provider extension contributes (the GitHub Issues integration). Every section starts collapsed, and one save writes them all.
+This plugin's settings card groups its options into collapsible sections — the board and its runtime behavior, task acceptance, new-card defaults, and the section a provider extension contributes (the GitHub Issues integration). Every section starts collapsed, and one save writes them all.
 
 | Key | Default | Behavior |
 | --- | --- | --- |
@@ -121,6 +121,12 @@ This plugin's settings card groups its options into collapsible sections — the
 | `goalVerificationCallTimeoutSeconds` | `150` | Ceiling of ONE judge request of an acceptance, in seconds (range 30 to 600). One acceptance issues six judge requests, so a ceiling too small for the judge model turns a slow but healthy route into a wall of timeouts. |
 | `goalVerificationBudgetSeconds` | `1200` | Total ceiling of ONE acceptance attempt, in seconds (range 120 to 1800), covering evidence rendering and every judge call including retries. Keep it at or above the per-call ceiling times six or the acceptance can never finish; an attempt that runs out is recorded as a budget stop that judges nothing and spends no budget. |
 | `teamProvider` | `spawn` | Continuable-subagent provider the Agent Teams service composes a teammate from. Only team-mode runs use it; it matches the Agent Teams tool plugin's `freshProvider` default. |
+| `cardDefaultMode` | `''` (no default) | Agent preset a newly created card starts from. Blank pins nothing, so the card follows the deployment default as before. |
+| `cardDefaultPermission` | `''` (no default) | Permission a newly created card starts from. It may sit above the session permission baseline: it is a prefill, so an above-baseline binding still needs a human confirmation before the card runs. |
+| `cardDefaultModel` | `''` (no default) | Execution model (`provider/model`) a newly created card starts from. Blank pins nothing and makes `cardDefaultReasoningEffort` inert. |
+| `cardDefaultReasoningEffort` | `''` (no default) | Reasoning level a newly created card starts from, applied only while the card's final model is the configured `cardDefaultModel`; a caller that picks a model of its own borrows no default level. |
+
+All four new-card defaults are blank by default and volatile: an edit applies to the cards created afterwards without a restart, and a blank value pins nothing, so a deployment that configures none of them creates cards exactly as it does today. A new card takes each of its execution targets in one order — the explicit choice made in the new-task dialog wins over the values carried over from the card it was created from (a duplicate keeps its source's pins, a subtask keeps its parent's), which win over the board defaults — and the parent's permission is never carried over. None of the four lifts the permission gate: a default permission above the session baseline is only a prefill, and the card still waits for a human confirmation before it may run.
 
 Direct browser access remains limited to the DSH loopback origin. For a same-host authenticated reverse proxy, bind DSH Web to loopback, set `trustedProxyHosts`, place a high-entropy token in the environment variable selected by `proxyTokenEnv`, and configure the proxy to replace (not forward from the client) `X-Dsh-Task-Board-Proxy-Token` after it authenticates the request. The proxy Host must be allowlisted, and the browser `Origin` must have that same authority. Restart the Host after changing these composition-level proxy settings.
 
