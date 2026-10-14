@@ -2,10 +2,10 @@
 
 [中文](README.md) | English
 
-dsh-web is an all-in-one modular plugin ecosystem and AI agent workbench for DeepSeek Harness (DSH) Web GUI and the official desktop client. It equips developers and power users with autonomous task automation boards (cron scheduling), mobile and cross-device remote control, SSH terminal operations and cluster management, visual Git commit graphs with multi-agent worktree isolation, full session archive management, token usage and cost monitoring, and a unified workshop for themes, skins, and desktop pets. Users can install the complete plugin bundle into an existing `dsh web` instance via the official profile mechanism, or install and run it directly in the official DeepSeek Harness desktop client.
+dsh-web is an all-in-one modular plugin ecosystem and AI agent workbench for DeepSeek Harness (DSH) Web GUI, DeepSeek Web UI, and the official DeepSeek Desktop client. Built for DeepSeek-V3 and DeepSeek-R1 reasoning models, it equips developers and power users with autonomous task automation boards (cron background scheduling), mobile and cross-device remote access control, web-based SSH terminal operations and Linux cluster management, visual Git commit graphs with multi-agent worktree workspace isolation, full session search and archive management, token usage and API cost monitoring (including Token Bank), and a unified workshop for themes, skins, and desktop pets. Users can install the complete plugin bundle into an existing `dsh web` instance via the official profile mechanism, or install and run it directly in the official DeepSeek Harness desktop client.
 
 <p align="center">
-  <img src="docs/dsh-web-banner.png" alt="dsh-web — Modular Plugin Ecosystem & Themes for DeepSeek Harness (DSH) Web GUI" width="100%">
+  <img src="docs/dsh-web-banner.png" alt="dsh-web — Modular Plugin Ecosystem & Themes for DeepSeek Harness (DSH) Web GUI (Task Board, Mobile Remote, Web SSH, Git Worktree, Token Tracker, Themes & Skins)" width="100%">
 </p>
 
 <p align="center">
@@ -29,8 +29,8 @@ dsh-web is an all-in-one modular plugin ecosystem and AI agent workbench for Dee
 </p>
 
 <p align="center">
-  <strong>DeepSeek Harness (DSH) Web Plugin Ecosystem · Modular Agent Workspace</strong><br>
-  <em>Workshop · Task Board · Mobile Remote · SSH Ops · Git Graph · Usage Statistics · Session Archive</em>
+  <strong>DeepSeek Harness (DSH) Web Plugin Ecosystem · Modular AI Agent Workspace</strong><br>
+  <em>All-in-One Web GUI · Task Automation Board · Mobile Remote Access · Web SSH DevOps · Git Graph & Worktree · Token Cost Tracker · Themes & Skins Workshop</em>
 </p>
 
 <div align="center">
@@ -48,34 +48,34 @@ dsh-web mounts directly into `dsh web` via official profiles without modifying D
 - **Decoupled Visual Themes & Assets**: Functional plugins and visual assets remain strictly separated. The skin loader handles stylesheet and dynamic effect rendering, while themes and animated desktop pets can be installed on demand from the [DSH Workshop](#workshop-dsh-marketcom);
 - **Bundled or Pick-and-Choose**: Install everything with one command via `@linxin666/dsh-web-all`, or install individual plugins independently. The aggregate pre-integrates every family plugin - see the [plugin bundle installation and configuration guide](packages/dsh-web-all/README.md).
 
-![DeepSeek Harness Web GUI workspace powered by the dsh-web modular plugin ecosystem](docs/screenshots/13-hero-main.png)
+![DeepSeek Harness Web GUI workspace powered by dsh-web modular plugin ecosystem (supporting DeepSeek-V3 and DeepSeek-R1)](docs/screenshots/13-hero-main.png)
 
 | Core Capability | Stock dsh web | dsh-web Modular Ecosystem Advantage |
 | --- | --- | --- |
 | Agent Presets | Stock presets only (Standard / Minimal, etc.) | Stock presets + instant activation of community presets from Workshop |
-| Custom Model Capabilities | No visual configuration for model attributes | Visual declarations for vision image inputs and reasoning effort tiers |
-| Autonomous Task Board | None | 5-column lifecycle board + real agent execution + cron-scheduled background runs |
-| Mobile & Remote Control | Localhost browser only | QR code pairing, cross-device PC access, WebSocket token streaming & touch gestures |
+| Custom Model Capabilities | No visual configuration for model attributes | Visual declarations for multimodal vision image inputs and DeepSeek-R1 reasoning effort tiers, with instant provider toggles |
+| Autonomous Task Board | None | 5-column lifecycle board + real autonomous agent execution + cron background scheduling + judge verification |
+| Mobile & Remote Control | Localhost browser only | Instant QR pairing for iOS / Android mobile browsers, cross-device PC access, WebSocket token streaming & touch gestures |
 | Remote Server Operations | None | Web-based SSH terminal (xterm.js), SFTP file transfer, tunnels & cluster commands |
-| Token Usage & Cost Monitor | None | Daily token metrics, provider balance queries, plan quota tracking & Token Bank |
-| Git Visualization & Worktrees | Command line only | Visual branch & commit graph + automated Git worktree directory isolation |
-| Session Lifecycle & Archive | Basic session list | Full-text & faceted search, batch archiving, cascade deletion & retention rules |
-| Themes & Visual Skins | Default theme only | Bundled Blue Fantasy dark theme + marketplace for skins, pets & live wallpapers |
+| Token Usage & Cost Monitor | None | Daily token consumption breakdowns, multi-provider balance tracking, plan quota reset monitoring & Token Bank |
+| Git Graph & Multi-Task Isolation | Terminal git commands only | Visual branch and commit graph + automated Git Worktree directories preventing concurrent agent code collisions |
+| Session Search & Archive Lifecycle | Flat list accumulation | Full-text session search with multi-filter queries, batch archiving, cascade pruning & automated retention policies |
+| Themes, Skins & Visuals | Single default theme | Built-in Blue Fantasy immersive dark eye-care theme, plus Wallpaper Engine live backgrounds & desktop pets on Workshop |
 
 ### Quick Index by Use Case
 
 | User Goal & Scenario | Recommended Solution & Capability | Entry Point |
 | --- | --- | --- |
-| Run autonomous unattended AI tasks, daily code audits, health checks, or automated reports | Task Board: 5-column tracking, cron scheduling, power management, session reuse | [Task board and cron execution](packages/dsh-task-board/README.md) |
-| Access DeepSeek from an iPhone, Android device, iPad, or another remote computer | Mobile Remote: instant QR pairing, WebSocket real-time streaming, touch gestures & security gate | [Mobile and PC browser remote control](packages/dsh-remote-web-ui/README.md) |
-| Perform Linux server administration, SFTP configuration sync, or remote troubleshooting | SSH Remote Ops: web terminal, visual SFTP, port forwarding tunnels, cluster commands | [SSH terminal, file transfer, and tunnels](packages/dsh-ssh/README.md) |
-| Monitor multi-provider token consumption, check API balances, or track subscription quotas | Usage Statistics: daily token breakdown, balance queries, bill estimation & Token Bank | [Usage statistics and Token Bank](packages/dsh-usage/README.md) |
-| Prevent Git merge conflicts and dirty working trees during multi-agent concurrent coding | Git Graph & Worktree: visual commit swimlanes, automated session worktree branches | [Git visualization and worktree isolation](packages/dsh-git-graph/README.md) |
-| Clean up and manage large numbers of historical sessions without losing valuable context | Session Archive Manager: faceted filtering, batch archive/delete, automated retention | [Full session archive management](packages/dsh-session-archive/README.md) |
-| Declare multimodal vision support or adjust reasoning effort tiers for custom models | Model Capabilities: per-model visual vision declaration and reasoning effort profiles | [Model capabilities declarations](packages/dsh-model-capabilities/README.md) |
-| Customize the interface with dark mode, immersive aesthetic skins, dynamic backgrounds, or pets | Workshop & Skin Center: built-in Blue Fantasy theme + rich marketplace catalog | [Explore the DSH Workshop](https://dsh-market.com) |
-| Run plugins directly inside the official DeepSeek Harness Desktop application | Official Desktop Client: install the bundle directly via in-app plugin settings | [Official desktop client guide](#official-desktop-client) |
-| Add the modular extension suite to an existing DeepSeek Harness CLI setup | Quick Start: one-command installation via npm or GitHub repository URL | [Quick start installation](#quick-start) |
+| Autonomous 24/7 background AI agent tasks, or scheduled daily code reviews, health checks and automated reports via Cron | Task Board: 5-column tracking, cron scheduling, power management, session reuse | [Task board and cron execution](packages/dsh-task-board/README.md) |
+| Remote access and control of DeepSeek Web UI from iPhone, Android phones, iPads, or remote PCs | Mobile Remote: instant QR pairing, WebSocket real-time token streaming, touch gestures & auth gates | [Mobile and PC browser remote control](packages/dsh-remote-web-ui/README.md) |
+| Delegate Linux server DevOps, SFTP file transfers, SSH terminal interactions, or incident response to AI agents | SSH Remote Ops: web terminal (xterm.js), visual SFTP transfers, port forwarding tunnels, cluster commands | [SSH terminal, file transfer, and tunnels](packages/dsh-ssh/README.md) |
+| Monitor DeepSeek API and LLM token usage metrics, query provider account balances, and track subscription quotas | Usage Statistics: daily token breakdown, balance queries, bill estimation & Token Bank | [Usage statistics and Token Bank](packages/dsh-usage/README.md) |
+| Multi-agent concurrent coding produces file collisions, requiring isolated Git branches and filesystem worktrees | Git Graph & Worktree: visual commit history, automatic dedicated worktree branches & directories | [Git visualization and worktree isolation](packages/dsh-git-graph/README.md) |
+| Accumulated chat history is hard to search, requiring full-text multi-filter queries, batch archiving, and lifecycle pruning | Session Archive Manager: multi-filter search, batch archiving, cascade pruning & automated lifecycle policies | [Full session archive management](packages/dsh-session-archive/README.md) |
+| Visually configure multimodal vision image inputs and DeepSeek-R1 reasoning effort tiers for custom providers | Model Capabilities: visual declarations for image inputs and reasoning effort profiles without service restarts | [Model capabilities declarations](packages/dsh-model-capabilities/README.md) |
+| Customize interface aesthetics with dark eye-care themes, Wallpaper Engine live backgrounds, and desktop pets | Workshop & Skin Center: built-in Blue Fantasy dark theme, plus vast skins, live wallpapers & pets | [Explore the DSH Workshop](https://dsh-market.com) |
+| Use the complete plugin and theme ecosystem directly inside the official DeepSeek Harness Desktop client | Official Desktop Client: install the full aggregate bundle directly via in-app plugin manager | [Official desktop client guide](#official-desktop-client) |
+| Install the all-in-one plugin bundle into an existing DeepSeek Harness CLI or Web GUI environment with one command | Quick Start: one-command installation via npm or direct GitHub repository URL | [Quick start installation](#quick-start) |
 
 ## Official Desktop Client
 
@@ -104,6 +104,8 @@ The Workshop provides an open, transparent space for community creators to share
 Open from the "Task Board" icon in the sidebar. Tasks are organized into five columns: Backlog, Todo, In Progress, Done, and Failed. Clicking "Run" on any card dispatches the task to an autonomous DSH agent session; status updates automatically write back to the card upon completion, and you can jump straight into the execution session to review the conversation log.
 
 Tasks also support persistent host scheduling: configure cron expressions in task details (such as running daily upgrades at 23:00 or generating weekly reports on Mondays at 09:00). Scheduled tasks execute reliably even when browser tabs are closed. An optional power-management setting prevents system idle sleep while allowing screens to power down on macOS, Windows, and Linux with systemd-logind (disabled by default).
+
+Tasks optionally support task acceptance: before an agent marks a goal complete, the board invokes a judge model (inheriting the host model by default, or configured under "Settings > Web Plugins > Task Board > Task Acceptance" with custom models and reasoning effort tiers). Acceptance follows three coding criteria, a 0.65 threshold, and two rounds per criterion with swapped A/B positions; an execution allows at most two verification attempts, where a first failure returns scores and diagnosed issues for agent self-repair, and a second failure marks the execution failed. Acceptance configuration freezes at run start, and each verification actively consumes judge model quota; regular conversations and tasks opting out of goal mode remain unaffected.
 
 Tasks can optionally reuse sessions: when enabled, subsequent runs continue in the previous session if it remains idle in memory (retaining conversation context while re-applying designated permissions and models); if the session has exited, a fresh session is spawned automatically.
 
@@ -385,8 +387,6 @@ Mobile access is secured by one-time pairing tokens. If your mobile device and t
 <details>
 <summary><strong>Will scheduled tasks continue to execute after closing the browser or when the computer enters sleep mode?</strong></summary>
 
-Task acceptance is on by default for goal-form tasks: before the agent may mark a goal complete, the board calls the judge model itself (inheriting the host model by default, or a model and reasoning level chosen under Settings, Web plugins, Task board, Task acceptance). It uses the three coding criteria, a 0.65 threshold, and two rounds per criterion with the A/B slots swapped; one execution may accept at most twice, so a first failure sends its scores and findings back to the fixing agent and a second failure fails that execution. The acceptance configuration is frozen when each execution starts, so a later settings change only affects new runs; plain chat and tasks that opt out of goal mode are untouched. Every acceptance really spends the judge model's quota.
-
 Task scheduling runs directly within the `dsh web` host daemon on the server machine, so closing browser tabs will not interrupt pending or running tasks. However, if the machine enters deep sleep or is powered down, the host process pauses and missed scheduled triggers will follow the skip policy rather than backfilling. To ensure unattended 24/7 background execution, enable the optional "Power Management" setting in the Task Board configuration to keep the system awake while allowing screens to power off.
 
 </details>
@@ -425,7 +425,7 @@ You can also join our [Discord community](https://discord.gg/6v4gm9u4S), or subm
 
 ### Keywords and Topics Index
 
-`DeepSeek` · `DeepSeek Harness` · `DSH` · `DeepSeek Web GUI` · `DeepSeek Desktop Client` · `DeepSeek Plugins` · `DeepSeek Extensions` · `DeepSeek Task Board` · `DeepSeek Cron Scheduling` · `DeepSeek Automation` · `DeepSeek Mobile Remote` · `DeepSeek Phone Access` · `DeepSeek SSH Terminal` · `DeepSeek Server DevOps` · `DeepSeek Token Tracker` · `DeepSeek API Cost Monitor` · `DeepSeek Themes` · `DeepSeek Skins` · `DeepSeek Live Wallpapers` · `DeepSeek Desktop Pet` · `DeepSeek Git Graph` · `DeepSeek Worktree Isolation` · `DeepSeek Session Archive` · `AI Agent Workspace` · `AI Coding Assistant`
+`DeepSeek` · `DeepSeek Harness` · `DSH` · `DeepSeek Web` · `DeepSeek Web UI` · `DeepSeek Web GUI` · `DeepSeek Desktop Client` · `DeepSeek Desktop` · `DeepSeek-V3` · `DeepSeek-R1` · `DeepSeek Plugins` · `DeepSeek Extensions` · `DeepSeek Task Board` · `DeepSeek Cron Scheduling` · `DeepSeek Autonomous Automation` · `DeepSeek Mobile Remote` · `DeepSeek Phone Access` · `DeepSeek Mobile Touch UI` · `DeepSeek SSH Terminal` · `DeepSeek Server DevOps` · `DeepSeek Token Tracker` · `DeepSeek API Cost Monitor` · `Token Bank` · `DeepSeek Themes` · `DeepSeek Skins` · `DeepSeek Live Wallpapers` · `Wallpaper Engine` · `DeepSeek Desktop Pet` · `DeepSeek Git Graph` · `DeepSeek Worktree Isolation` · `DeepSeek Session Archive` · `Multi-Agent Collaboration` · `AI Agent Workspace` · `AI Coding Assistant` · `Open Source AI Agent`
 
 ### Friendly Links
 

@@ -2,10 +2,10 @@
 
 中文 | [English](README.en.md)
 
-dsh-web 是面向 DeepSeek Harness（DSH）Web GUI 与官方桌面客户端的模块化插件生态与 AI 智能体开发工作台。它为深度用户与开发者提供任务自动化看板（Cron 定时调度）、手机与跨设备远程控制、SSH 远程终端与集群运维、Git 提交历史图谱与多 Agent Worktree 隔离、全量会话归档管理、Token 用量与成本统计，以及一站式主题皮肤与桌面宠物工坊。用户既可以通过官方 profile 机制将插件全家桶一键挂载至已有的 `dsh web` 实例，也可以直接在官方 DeepSeek Harness 桌面客户端中开箱即用。
+dsh-web 是面向 DeepSeek Harness（DSH）Web GUI、DeepSeek 网页版与官方桌面客户端（DeepSeek Desktop）的模块化插件生态与 AI 智能体开发工作台。全面支持 DeepSeek-V3 与 DeepSeek-R1 等前沿推理模型，为开发者与重度用户提供自主任务自动化看板（Cron 定时后台执行）、手机与跨设备远程访问控制、Web SSH 终端与 Linux 集群运维、Git 可视化提交图谱与多 Agent Worktree 隔离开发、全量会话检索与归档管理、Token 用量与成本监控（含 Token 银行），以及一站式主题皮肤与桌面宠物工坊。用户既可以通过官方 profile 机制将插件全家桶一键挂载至已有的 `dsh web` 实例，也可以直接在官方 DeepSeek Harness 桌面客户端中开箱即用。
 
 <p align="center">
-  <img src="docs/dsh-web-banner.zh.jpg" alt="dsh-web — DeepSeek Harness (DSH) Web GUI 插件生态与模块化智能体工作台架构图" width="100%">
+  <img src="docs/dsh-web-banner.zh.jpg" alt="dsh-web — DeepSeek Harness (DSH) Web GUI 插件全家桶与 AI 智能体工作台架构图（任务看板、手机远程、SSH 运维、Git Worktree、Token 统计、主题皮肤）" width="100%">
 </p>
 
 <p align="center">
@@ -30,7 +30,7 @@ dsh-web 是面向 DeepSeek Harness（DSH）Web GUI 与官方桌面客户端的�
 
 <p align="center">
   <strong>DeepSeek Harness（DSH）Web 插件生态 · 模块化智能体工作台</strong><br>
-  <em>创意工坊 · 任务看板 · 移动端远程 · SSH 运维 · Git 图谱 · 使用统计 · 会话归档</em>
+  <em>全功能 Web UI · 任务自动化看板 · 移动端远程控制 · Web SSH 运维 · Git 图谱与 Worktree · Token 成本统计 · 视觉工坊</em>
 </p>
 
 <div align="center">
@@ -48,34 +48,34 @@ dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方�
 - **视觉主题与资产解耦**：功能插件与样式资产完全分离。皮肤插件负责底层渲染，多样化的主题皮肤（含样式、贴图与动态特效）以及桌面宠物可通过 [DSH 创意工坊](#创意工坊dsh-marketcom)自由安装；
 - **全家桶聚合与按需组合**：既支持通过 `@linxin666/dsh-web-all` 聚合包一键安装完整功能，也支持按需单独安装特定插件。聚合包预集成家族全部功能插件，详见[插件全家桶使用指南](packages/dsh-web-all/README.zh.md)。
 
-![DeepSeek Harness Web GUI 配合 dsh-web 插件全家桶的工作台主界面展示](docs/screenshots/13-hero-main.png)
+![DeepSeek Harness Web GUI 配合 dsh-web 插件全家桶的工作台主界面展示（支持 DeepSeek-V3 与 DeepSeek-R1 模型）](docs/screenshots/13-hero-main.png)
 
 | 核心能力与场景 | 原生 dsh web | dsh-web 全家桶优势 |
 | --- | --- | --- |
 | Agent 预设管理 | 仅官方预设（Standard / Minimal 等） | 官方预设 + 创意工坊社区海量预设一键启用 |
-| 自定义模型能力 | 无法可视化修改模型属性 | 逐模型可视化声明 Vision 图片多模态与推理思考档位，支持供应商快速启闭 |
-| 自动化任务看板 | 无 | 5 列看板工作流 + 真实智能体会话执行 + Cron 表达式后台定时调度 |
-| 移动端与跨设备控制 | 仅限本机浏览器 | 手机扫码直连、跨设备 PC 浏览器访问、WebSocket 实时流式响应与专属移动触控手势 |
+| 自定义模型能力 | 无法可视化修改模型属性 | 逐模型可视化声明 Vision 图片多模态支持与 DeepSeek-R1 推理思考强度档位，支持供应商快速启闭 |
+| 自动化任务看板 | 无 | 5 列看板状态流转 + 真实智能体会话执行 + Cron 表达式后台自动化定时调度 + 任务验收门控 |
+| 移动端与跨设备控制 | 仅限本机浏览器 | 手机扫码直连（iOS / Android）、跨设备 PC 浏览器访问、WebSocket 实时流式响应与专属移动端触控优化 |
 | 远程服务器运维 | 无 | 网页版 SSH 终端 (xterm.js)、SFTP 文件传输、端口转发隧道与集群批量命令 |
-| Token 用量与成本监控 | 无 | 每日 Token 消耗明细、多供应商余额查询、套餐使用进度与 Token 银行 |
-| Git 可视化与多任务开发 | 仅终端 git 命令 | 可视化分支与提交图谱 + Git Worktree 自动创建专属隔离目录防代码冲突 |
-| 会话检索与生命周期归档 | 会话列表简单堆积 | 全量会话全文与多维筛选、批量归档、级联物理删除与自动清理策略 |
-| 主题皮肤与个性化视觉 | 仅单一默认主题 | 内置经典 Blue Fantasy 暗黑沉浸皮肤，创意工坊提供海量壁纸与桌面挂件 |
+| Token 用量与成本监控 | 无 | 每日 Token 消耗明细、多供应商余额查询预警、套餐使用进度与 Token 银行鲸元券 |
+| Git 可视化与多任务开发 | 仅终端 git 命令 | 可视化分支与提交图谱 + Git Worktree 自动创建独立隔离物理工作区防止多 Agent 代码冲突 |
+| 会话检索与生命周期归档 | 会话列表简单堆积 | 全量会话多维检索与过滤、批量归档导出、级联物理删除与自动化生命周期清理策略 |
+| 主题皮肤与个性化视觉 | 仅单一默认主题 | 内置经典 Blue Fantasy 暗黑护眼沉浸皮肤，创意工坊提供 Wallpaper Engine 动态壁纸与互动桌面宠物 |
 
 ### 按使用场景快速选择扩展方案
 
 | 核心使用场景与用户需求 | 推荐解决方案与能力 | 快速入口 |
 | --- | --- | --- |
-| 后台无人值守运行 AI 任务，或定时执行每日代码巡检、健康检查与自动报告 | 任务看板：5 列状态流转、Cron 表达式后台调度、系统防休眠电源保护、会话复用 | [任务看板与 cron 定时执行](packages/dsh-task-board/README.zh.md) |
-| 在 iPhone / Android 手机、iPad 或另一台电脑上远程使用 DeepSeek | 移动端远程控制：扫码即连、WebSocket 实时流式响应、移动端触控优化与安全配对门控 | [手机与 PC 浏览器远程控制](packages/dsh-remote-web-ui/README.zh.md) |
-| 让 AI 智能体执行远程 Linux 服务器运维、传输配置或排查线上服务 | SSH 运维面板：Web 终端、可视化 SFTP 传输、端口转发隧道、集群批量命令 | [SSH 终端、文件传输与隧道](packages/dsh-ssh/README.zh.md) |
-| 监控各家模型 API 的 Token 消耗明细、查询供应商账户余额或套餐进度 | 使用统计：每日消耗明细、余额查询、账单估算、套餐追踪与 Token 银行鲸元券 | [用量统计与 Token 银行](packages/dsh-usage/README.zh.md) |
-| 多 Agent 并行编码容易产生代码覆盖冲突，需要隔离工作区 | Git 图谱与 Worktree：可视化提交图谱、自动为会话创建专属 worktree 分支 | [Git 可视化与 Worktree 隔离](packages/dsh-git-graph/README.zh.md) |
-| 历史对话堆积难以检索，需要批量归档、清理或导出备份 | 会话归档管理器：多维搜索过滤、批量归档与级联清理、自动化生命周期策略 | [全量会话归档管理](packages/dsh-session-archive/README.zh.md) |
-| 自定义第三方模型缺少图片多模态声明或思考强度无法调节 | 模型能力声明：逐模型可视化声明图片输入支持与思考档位，避免配置失效 | [模型能力与多模态声明](packages/dsh-model-capabilities/README.zh.md) |
-| 打造个性化界面外观，更换深色护眼主题、动态壁纸或桌面宠物 | 创意工坊与皮肤中心：Blue Fantasy 经典暗色内置，海量皮肤、动态壁纸与桌宠 | [浏览 DSH 创意工坊](https://dsh-market.com) |
-| 在官方桌面客户端（DeepSeek Harness Desktop）中使用本扩展生态 | 官方桌面客户端：支持直接通过客户端内置插件管理一键安装本全家桶 | [官方桌面客户端安装说明](#官方桌面客户端) |
-| 为已有的 DeepSeek Harness 命令行环境安装插件全家桶 | 快速上手：一行命令通过 npm 或 GitHub 仓库地址直接安装 | [插件安装快速上手](#快速上手) |
+| 后台无人值守运行 AI 智能体任务，或通过 Cron 定时执行每日代码巡检、健康检查与自动化报告 | 任务看板：5 列状态流转、Cron 表达式后台调度、系统防休眠电源保护、会话复用 | [任务看板与 cron 定时执行](packages/dsh-task-board/README.zh.md) |
+| 在 iPhone / Android 手机、iPad 或异地电脑上远程访问与控制 DeepSeek Web UI | 移动端远程控制：扫码即连、WebSocket 实时流式响应、移动端触控优化与安全配对门控 | [手机与 PC 浏览器远程控制](packages/dsh-remote-web-ui/README.zh.md) |
+| 委派 AI 智能体执行远程 Linux 服务器运维、SFTP 文件传输、SSH 终端交互或排查线上服务 | SSH 运维面板：Web 终端 (xterm.js)、可视化 SFTP 传输、端口转发隧道、集群批量命令 | [SSH 终端、文件传输与隧道](packages/dsh-ssh/README.zh.md) |
+| 监控 DeepSeek API 及主流大模型 Token 消耗明细、查询供应商账户余额预警或套餐进度 | 使用统计：每日消耗明细、余额查询、账单估算、套餐追踪与 Token 银行鲸元券 | [用量统计与 Token 银行](packages/dsh-usage/README.zh.md) |
+| 多 AI Agent 并行编码容易产生代码覆盖冲突，需要分支与物理工作区彻底隔离 | Git 图谱与 Worktree：可视化提交图谱、自动为会话创建专属 worktree 分支与物理目录 | [Git 可视化与 Worktree 隔离](packages/dsh-git-graph/README.zh.md) |
+| 历史会话堆积难以快速定位，需要全量多维搜索过滤、批量归档、级联清理或数据备份 | 会话归档管理器：多维搜索过滤、批量归档与级联清理、自动化生命周期策略 | [全量会话归档管理](packages/dsh-session-archive/README.zh.md) |
+| 为第三方模型或本地模型可视化配置图片多模态输入（Vision）与 DeepSeek-R1 推理思考强度档位 | 模型能力声明：逐模型可视化声明图片输入支持与思考档位，避免配置失效 | [模型能力与多模态声明](packages/dsh-model-capabilities/README.zh.md) |
+| 打造个性化界面外观，更换深色护眼主题、Wallpaper Engine 动态壁纸或互动桌面宠物 | 创意工坊与皮肤中心：Blue Fantasy 经典暗色内置，海量皮肤、动态壁纸与桌宠 | [浏览 DSH 创意工坊](https://dsh-market.com) |
+| 在官方桌面客户端（DeepSeek Harness Desktop）中开箱即用本扩展生态 | 官方桌面客户端：支持直接通过客户端内置插件管理一键安装本全家桶 | [官方桌面客户端安装说明](#官方桌面客户端) |
+| 为已有的 DeepSeek Harness CLI / Web 环境一键安装插件全家桶 | 快速上手：一行命令通过 npm 或 GitHub 仓库地址直接安装 | [插件安装快速上手](#快速上手) |
 
 ## 官方桌面客户端
 
@@ -425,7 +425,7 @@ dsh-web 针对主流操作系统、现代化浏览器及网络拓扑进行了深
 
 ### 关键词索引（Keywords & Topics）
 
-`DeepSeek` · `DeepSeek Harness` · `DSH` · `DeepSeek Web` · `DeepSeek 网页版` · `DeepSeek 桌面客户端` · `DeepSeek 插件` · `DeepSeek 任务看板` · `DeepSeek 定时任务` · `DeepSeek 自动化` · `DeepSeek 手机版` · `DeepSeek 远程控制` · `DeepSeek 移动端` · `DeepSeek SSH 终端` · `DeepSeek 服务器运维` · `DeepSeek Token 统计` · `DeepSeek 余额查询` · `DeepSeek API 费用` · `DeepSeek 主题` · `DeepSeek 皮肤` · `DeepSeek 动态壁纸` · `DeepSeek 桌面宠物` · `DeepSeek Git 图谱` · `DeepSeek Worktree 隔离` · `DeepSeek 会话归档` · `AI Agent 工作台` · `AI 编程助手`
+`DeepSeek` · `DeepSeek Harness` · `DSH` · `DeepSeek Web` · `DeepSeek Web UI` · `DeepSeek 网页版` · `DeepSeek 桌面客户端` · `DeepSeek Desktop` · `DeepSeek-V3` · `DeepSeek-R1` · `DeepSeek 插件` · `DeepSeek 扩展` · `DeepSeek 任务看板` · `DeepSeek 定时任务` · `DeepSeek Cron 自动化` · `DeepSeek 手机版` · `DeepSeek 远程控制` · `DeepSeek 移动端触控` · `DeepSeek SSH 终端` · `DeepSeek 服务器运维` · `DeepSeek Token 统计` · `DeepSeek 余额查询` · `DeepSeek API 费用` · `Token 银行` · `DeepSeek 主题` · `DeepSeek 皮肤` · `DeepSeek 动态壁纸` · `Wallpaper Engine` · `DeepSeek 桌面宠物` · `DeepSeek Git 图谱` · `DeepSeek Worktree 隔离` · `DeepSeek 会话归档` · `多智能体协作` · `AI Agent 工作台` · `AI 编程助手` · `开源智能体`
 
 ### 友情链接
 
