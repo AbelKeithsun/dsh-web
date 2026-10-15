@@ -18,8 +18,6 @@ The store card gains a leading 编辑推荐 tab backed by a new published manife
 
 - dsh-market.com renders the same category from the same manifest: `market/src/index.html` gains a leading `data-kind="picks"` nav button, and `market/src/app.js` resolves `manifest/editor-picks.json` into real catalog entries, so the existing card, detail dialog, likes and `#kind:id` deep links work for curated items with no second rendering path. The category keeps the fixed manifest order (its sort select is disabled), shows no chip row, and the header search narrows within the curated set, which means it can never display anything the list does not name.
 
-First-release content: skin `orca-link` (the maintainer's active skin), pet `jyn` (the active pet), and the four catalog community plugins installed in the maintainer's running profile — `dsh-annotation`, `dsh-chatgpt-subscription`, `dsh-free-search`, `dsh-llm-verifier`.
-
 Locale keys `tab.picks` and `picks.empty` were added to the card dictionary (zh is the key source, en mirrors it) and mirrored into the central ru pack in `dsh-i18n`.
 
 ## Alternatives considered
@@ -42,6 +40,6 @@ Locale keys `tab.picks` and `picks.empty` were added to the card dictionary (zh 
 
 - `pnpm --filter @linxin666/dsh-client-ui-market typecheck` and `test` — 82 vitest tests, including three new MarketCard cases: fixed mixed-kind order with no search box or chips, dismissal of duplicate / unsupported-kind / unresolvable references, and the empty state.
 - `node scripts/market-build` emits `manifest/editor-picks.json`; `node --test scripts/market-layout.test.mjs scripts/market-build-clean.test.mjs` passes 16/16, including two new clean-checkout rejections (a pick naming a missing asset, a pick outside the skin / pet / plugin kinds) and a layout assertion that the committed manifest mirrors the hand-authored order.
-- The rebuilt `market/dist` was served by a local static server and driven in headless Chrome: the nav reads 编辑推荐 / 探索 / 皮肤 / 宠物 / 插件 / 预设, the category header shows 6 件作品, the six cards render in manifest order (虎鲸链路, 女仆鲸鱼娘, 选中批注, 子代理管理, 免费搜索, LLM 裁判复核), the sort select is disabled, the chip row is empty, and typing 鲸 narrows the frozen set to 2.
+- The rebuilt `market/dist` was served by a local static server and driven in headless Chrome: the nav reads 编辑推荐 / 探索 / 皮肤 / 宠物 / 插件 / 预设, the category header shows the resolved pick count, the curated cards render in manifest order, the sort select is disabled, the chip row is empty, and typing 鲸 narrows the frozen set to 2.
 - `node --test scripts/market-layout.test.mjs` pins the site contract too: the `data-kind="picks"` nav button, the `picks: '编辑推荐'` label, the `manifest/editor-picks.json` fetch and the resolver.
 - `pnpm docs:check` and `pnpm i18n:check` (1407 zh keys mirrored in ru).

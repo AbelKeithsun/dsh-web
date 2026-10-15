@@ -18,8 +18,6 @@ Status: implemented
 
 - dsh-market.com 用同一份清单渲染同一类别：`market/src/index.html` 新增位于最前的 `data-kind="picks"` 导航按钮，`market/src/app.js` 把 `manifest/editor-picks.json` 解析成真实的目录条目，因此既有的卡片、详情弹层、点赞与 `#kind:id` 深链对推荐条目直接可用，不需要第二套渲染路径。该分区保持清单固定顺序（排序下拉被禁用）、不显示筛选胶囊行，页头搜索只在推荐集合内部收窄——因此它永远不会展示清单之外的任何内容。
 
-初版内容：皮肤 `orca-link`（负责人当前启用的皮肤）、宠物 `jyn`（当前启用的宠物），以及负责人运行中 profile 里已从工坊目录安装的四个社区插件——`dsh-annotation`、`dsh-chatgpt-subscription`、`dsh-free-search`、`dsh-llm-verifier`。
-
 卡片字典新增 `tab.picks` 与 `picks.empty` 两个键（zh 为 key 源，en 完整对照），并同步镜像进 `dsh-i18n` 的集中式 ru 语言包。
 
 ## Alternatives considered
@@ -42,6 +40,6 @@ Status: implemented
 
 - `pnpm --filter @linxin666/dsh-client-ui-market typecheck` 与 `test`：82 个 vitest 用例通过，其中三个新增 MarketCard 用例覆盖固定混合顺序（无搜索框与筛选行）、重复 / 类别不受支持 / 解析不到的引用被丢弃，以及空状态。
 - `node scripts/market-build` 产出 `manifest/editor-picks.json`；`node --test scripts/market-layout.test.mjs scripts/market-build-clean.test.mjs` 16/16 通过，其中两个新增的干净检出拒绝用例（引用不存在的资产、类别不在 skin / pet / plugin 之内），以及一条断言提交的清单与手写清单顺序一致的结构用例。
-- 重建后的 `market/dist` 由本地静态服务器托管并在无头 Chrome 中实测：导航为 编辑推荐 / 探索 / 皮肤 / 宠物 / 插件 / 预设，分区标题显示 6 件作品，六张卡片按清单顺序渲染（虎鲸链路、女仆鲸鱼娘、选中批注、子代理管理、免费搜索、LLM 裁判复核），排序下拉禁用、筛选胶囊行为空，输入「鲸」把固定集合收窄到 2 条。
+- 重建后的 `market/dist` 由本地静态服务器托管并在无头 Chrome 中实测：导航为 编辑推荐 / 探索 / 皮肤 / 宠物 / 插件 / 预设，分区标题显示解析出的推荐条数，推荐卡片按清单顺序渲染，排序下拉禁用、筛选胶囊行为空，输入「鲸」把固定集合收窄到 2 条。
 - `node --test scripts/market-layout.test.mjs` 同时固定站点契约：`data-kind="picks"` 导航按钮、`picks: '编辑推荐'` 标签、`manifest/editor-picks.json` 拉取与解析函数。
 - `pnpm docs:check` 与 `pnpm i18n:check`（1407 个 zh 键在 ru 中完整镜像）。

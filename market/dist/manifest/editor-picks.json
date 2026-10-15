@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-12",
+  "generated": "2026-10-15",
   "items": [
     {
       "kind": "skin",
@@ -8,10 +8,6 @@
     {
       "kind": "pet",
       "id": "jyn"
-    },
-    {
-      "kind": "plugin",
-      "id": "dsh-annotation"
     },
     {
       "kind": "plugin",
