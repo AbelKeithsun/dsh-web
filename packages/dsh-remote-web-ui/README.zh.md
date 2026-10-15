@@ -165,7 +165,7 @@ pnpm run build
 
 1. 启动隔离实例：`DSH_HOME=/tmp/dsh-qa dsh --profile web --no-open --port 3191`，并打开局域网绑定开关（或使用绑定块固定 0.0.0.0 的 profile）。
 2. 浏览器打开**回环** URL（`http://127.0.0.1:3191`）：手机图标位于侧栏底部；面板立即铸造二维码，链接形如 `<lan-url>/pair-accept?pair=<token>`。
-3. 在第二个标签（390x844 触控模拟）打开该链接：链路 `/pair-accept → /pair-app?grant=<一次性> → /` 设置设备 cookie、消费一次性授权、交付打过补丁的官方应用壳并启动 UI——`document.body.classList` 带 `dsh-remote-portrait`、适配样式表与小鲸鱼按钮存在、`__DSH_TRANSPORT__.ownsHost` 为 `true`。设置面渲染 host 数据（host 模式），而非 memory 镜像。https 部署下应用壳还会注册重开 service worker（`/pair-app.sw.js`）；在该标签刷新 `/` 会直接进入应用而不是 harness 401。
+3. 在第二个标签（390x844 触控模拟）打开该链接：链路在 https 源上是 `/pair-accept → /pair-app?grant=<一次性> → /`，在纯 HTTP 局域网上则停在 `/pair-app`；它设置设备 cookie、消费一次性授权、交付打过补丁的官方应用壳并启动 UI——`document.body.classList` 带 `dsh-remote-portrait`、适配样式表与小鲸鱼按钮存在、`__DSH_TRANSPORT__.ownsHost` 为 `true`。设置面渲染 host 数据（host 模式），而非 memory 镜像。https 部署下应用壳还会注册重开 service worker（`/pair-app.sw.js`）；在该标签刷新 `/` 会直接进入应用而不是 harness 401。纯 HTTP 局域网下同一个标签刷新 `/pair-app`，同样凭配对 cookie 进入应用。
 4. 桌面徽标实时切换为已连接；局域网源的桌面页面则显示配对面板仅限本机使用横幅且不开状态流。
 5. 桌面点停止切断设备：下一次请求 403 且 `unpaired`（栅栏页提供手动配对令牌输入）。
 
@@ -181,7 +181,7 @@ pnpm run build
 - **后台文件上传同样走通道。** 官方上传服务优先使用 Web Worker 载体，其独立全局对象不受主线程补丁影响；因此引导补丁（以及作为兜底的浏览器补丁）会发布官方启动前钩子 `__DSH_FILE_UPLOAD__`，并把打过补丁的 `fetch` 交给它：原始 `/api/session/uploadFileBinary` POST 会被改写到 `/remote`，并像其他受门控调用一样携带设备凭据。没有该钩子时，配对浏览器的上传会绕过通道，被 harness 浏览器认证围栏拒为 401（issue #1580）。该钩子仅在非回环源、且通道安装期间发布，且永不覆盖页面已有的钩子。
 - **落地页 URL 只携带一次性授权，绝不携带设备 ID。** `/pair-accept` 签发 256 位、一次性消费、TTL 60 秒的授权并 303 到 `/pair-app?grant=<g>`；落地页消费它——无论成功、过期还是重放都先删除记录，因此重放或过期的授权解析不出任何设备——再由自己的响应把设备 ID 交给应用壳。设备 ID 是活的会话凭据，因此永不进入 URL、地址栏或重定向路径上的任何日志。请求经 TLS 到达时（`x-forwarded-proto: https`）配对 cookie 带 `Secure`，局域网明文 HTTP 下不带——在那里 Secure cookie 会被浏览器直接丢弃。
 - **应用落地页不依赖 cookie。** 配对后二维码把设备带到 `/pair-app`——由本插件直接交付官方应用壳，不经过 harness 索引认证门；设备凭据经 `x-dsh-remote-device` 请求头（fetch）与 `device` 查询参数（WebSocket 升级）由引导补丁从 sessionStorage 挂载。因此手机浏览器完全禁用 cookie 时链路依然成立；有 cookie 时配对 cookie 仍是主凭据，手机路径不再需要 harness 浏览器认证 cookie。
-- **重开由 service worker 接管（仅 https 源）。** 配对过的手机从历史、书签或标签恢复回来时导航到裸 `/`——插件不拥有的路径，harness 兜底座会用浏览器认证 401 应答（不依赖 cookie 的流程永远拿不到那份凭据）。应用壳因此注册 `/pair-app.sw.js`（与 `/pair-app` 同一栅栏；脚本是不含任何秘密的惰性逻辑）：只拦截对 `/` 的导航，经 `/pair-app` 网络优先地重发应用壳——同时校验设备 cookie 并刷新其活跃时间，每次重开也在为会话续期——离线时回退缓存的壳，插件不再应答时把导航原样放行（被撤销的设备随后看到 harness 应答或双语重扫页）。纯 HTTP 的局域网源不是安全上下文，永远不会注册该 worker；那里的重开意味着重新扫码。
+- **重开由 service worker 接管（仅 https 源）。** 配对过的手机从历史、书签或标签恢复回来时导航到裸 `/`——插件不拥有的路径，harness 兜底座会用浏览器认证 401 应答（不依赖 cookie 的流程永远拿不到那份凭据）。应用壳因此注册 `/pair-app.sw.js`（与 `/pair-app` 同一栅栏；脚本是不含任何秘密的惰性逻辑）：只拦截对 `/` 的导航，经 `/pair-app` 网络优先地重发应用壳——同时校验设备 cookie 并刷新其活跃时间，每次重开也在为会话续期——离线时回退缓存的壳，插件不再应答时把导航原样放行（被撤销的设备随后看到 harness 应答或双语重扫页）。纯 HTTP 的局域网源永远不是安全上下文，因此也不会注册该 worker；那里的应用壳把 `/pair-app` 留在地址栏，刷新、书签或标签恢复都会经同一个设备门控落地页重新校验设备 cookie（配对失效后则落到双语重新配对页）。
 - **撤销按请求生效**：停止落地时已在途的请求会完成；下一个请求 403。
 - **配对设备会话默认持久化**：设备会话（非限时 QR 令牌）写入 `$DSH_HOME/remote-web-ui-devices.json`（0600，临时文件 + 原子改名）。`dsh web` 重启后配对 cookie 依然有效。刷新二维码铸造新令牌；重启不会恢复当前二维码。空闲超过 `idleExpireMs`（默认 30 天；重开 service worker 每次接管导航都会刷新该窗口）的会话被删除并须重新配对。设备 id 即会话凭据。需要时可用 `devicesFile` 指定其他绝对路径。更换 `cookieName` 会使现有设备失效（预期行为）。无法落盘的撤销（DSH_HOME 只读、磁盘写满）会删除过期设备库，而不是把被撤销的会话留在磁盘上，因此下次启动不会恢复它。
 - **局域网绑定块拥有 webserver 行**：开关翻过后受管块固定绑定；插件每次启动重断言，显式 `--host`/`--port` 旗标通过重写块获胜。手工编辑该块会被检测并在卡片展示（`blockHost` 显示字面量）。
@@ -193,7 +193,7 @@ pnpm run build
 ## 已知限制与后续工作
 
 - **绑定变化需要重启**：补丁热重载监视器无法重绑监听中的套接字，且热重载行为依赖 profile 形态。卡片以 `pendingRestart` 提示局域网访问将在下次 `dsh web` 启动时生效。
-- **纯 HTTP 局域网的重开需要重扫**：重开 service worker 只在安全上下文（https 隧道、localhost）注册；经纯 HTTP 局域网 URL 配对的手机导航回 `/` 时会撞上 harness 401，需要重新扫码。局域网内重配对成本很低，配对后一切恢复。
+- **worker 注册被拒绝时会退回 harness 栅栏**：重开 service worker 只在存在 service worker 的源上注册。当一个本已安全的源拒绝注册（部署策略、浏览器加固配置）时，地址栏此时已经改到 `/`，重开需要重新扫码；纯 HTTP 局域网路径没有这个缺口——它的应用壳停在 `/pair-app`。
 - **适配选择器跟随官方构建**：语义后缀策略可在 hash 变化中存活，但语义改名不行；每次官方 GUI 升级需要一轮视觉 QA（参考 dsh-LAN，这些后缀在多次官方发布中保持稳定）。
 - **开发 HMR**：`dsh web --dev` 按路径轮询每个 roster bundle，重建本包（自身 `tsdown --watch`）即热重载客户端 bundle；host 半区需要重启。
 - **profile 里挂了 `@deepseek-ai/dsh-hmr` 行会让所有设置保存失败**：只要 `hmr` 服务存在，官方配置编辑器就会把写入包进 `hmr.runExclusive`，而在本 cohort 上这种写入会被判为嵌套事务——Host 返回 `HMR transactions cannot be nested`，本插件的各设置卡片（以及官方设置页）都显示保存失败。该行由用户自行添加（没有任何 bundle 自带），桌面版 profile 用它为本地插件的 host 半区做热重载。从 profile 补丁里删掉 `- id: hmr` 这一行即可恢复保存；只在需要热重载该插件时再加回。观察于 2026-09-30，桌面版客户端 0.2.0-rc.2。
