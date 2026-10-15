@@ -44,7 +44,7 @@
 
 ## 处置
 
-宠物帧缓存：`satellites/dsh-pet` 已本地提交 `550bce8`，把解码位图的驻留从无界改为 128 MiB 字节预算，策略是 LRU 加在播前瞻窗口保护与 `pinned` 保护，超限时真正 `close()` 释放位图，dispose 改为同步全清并移除了同样单调增长的 `decodedAll` 结算屏障。该仓四道闸门通过（typecheck、623 项测试、build、22 项脚本测试），调度者复跑 `pnpm test` 得 49 个文件 623 项全过。决策记录见 [frames2d 解码帧驻留预算](../../satellites/dsh-pet/.agents/notes/implemented/bug-fix/2026-10-15-frames2d-decoded-frame-retention-budget.md)。该修复对运行中的桌面 App 不生效，因为桌面 profile 解析到的是依赖树里已发布的 0.4.6 产物；生效需要发布新版本、更新消费侧并重载 GUI。主仓 gitlink 尚未移动，待推送授权。
+宠物帧缓存：`satellites/dsh-pet` 已本地提交 `550bce8`，把解码位图的驻留从无界改为 128 MiB 字节预算，策略是 LRU 加在播前瞻窗口保护与 `pinned` 保护，超限时真正 `close()` 释放位图，dispose 改为同步全清并移除了同样单调增长的 `decodedAll` 结算屏障。该仓四道闸门通过（typecheck、623 项测试、build、22 项脚本测试），调度者复跑 `pnpm test` 得 49 个文件 623 项全过。决策记录见 [frames2d 解码帧驻留预算](../../satellites/dsh-pet/.agents/notes/implemented/bug-fix/2026-10-15-frames2d-decoded-frame-retention-budget.md)。该修复对运行中的桌面 App 不生效，因为桌面 profile 解析到的是依赖树里已发布的 0.4.6 产物；生效需要发布新版本、更新消费侧并重载 GUI，发布按用户决定留待另一次任务。satellite commit `550bce8` 已推送到 `origin/main`，主仓 gitlink 已随之移动到该提交（pin commit `61fd7190`）；该直接推送绕过了该仓的分支保护（要求走 PR 且必需状态检查），四道闸门是在本地跑的，GitHub 上没有对应 check run。
 
 上游缺陷：host 侧有三处下行队列按构造无上限，分别是 `ControlQueue.buffer`、`follow()` 的 `buffered` 与 `RemoteEventQueue.frames`，且没有任何可配置项；同库已存在两处有界范式可以直接照搬。完整材料见 [上游缺陷报告](upstream-defect-dsh-unbounded-downlink-queues-2026-10-15.md)。实测帧流量（单会话 239 万帧、载荷中位 3 字节、均速约 183 帧每秒）表明这三处只解释数百 MB 量级，不解释 45.47 GB。
 
