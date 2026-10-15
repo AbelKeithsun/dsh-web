@@ -13,7 +13,7 @@
   类别时交给 `defaultRoute` 兜底；Wallpaper Engine / WebGL / 渲染器代码在
   [dsh-skins](https://github.com/zhu1090093659/dsh-skins) 仓，本仓只保留其
   Issue 类别。路由规则见 [PR_TRIAGE.md](PR_TRIAGE.md)。
-- 合并门禁：`dev` / `main` 要求 3 个必需检查全绿，**不要求人工审批**；
+- 合并门禁：`dev` / `main` 要求 4 个必需检查全绿（`CI checks`、`plugin-mount`、`Validate PR contribution evidence`、`guard-agent-notes`），**不要求人工审批**；
   具有 write 权限的协作者检查通过后即可自行合并（含自己的 PR），无需等待
   维护者审批。
 - `main` 是稳定分支：只接收从 `dev` 合入且测试通过的代码。
@@ -74,7 +74,7 @@ pnpm -r build
 pnpm typecheck && pnpm test && pnpm docs:check   # 提交前必过
 ```
 
-三个卫星仓（`dsh-skins` / `dsh-pet` / `dsh-community-plugins`）以 git submodule 挂在 `satellites/`，市场构建按各自的 gitlink 固定提交拉取内容。默认不需要检出：要就地改卫星仓内容时才 `git submodule update --init satellites/<仓名>`。该命令把工作树停在 gitlink 固定的提交上（detached HEAD），要提交改动先切到该仓的默认分支：`git -C satellites/<仓名> checkout main`。检出停在该固定提交时 `pnpm market:fetch` 直接复制该工作树；检出离开固定提交（切了分支，或提交了自己的改动）时，默认运行会明确提示并仍按固定提交构建，`pnpm market:fetch --local` 才读取该工作树——这样构建出的 `market/dist` 来自未固定内容，不得提交。
+四个卫星仓（`dsh-skins` / `dsh-pet` / `dsh-community-plugins` / `dsh-presets`）以 git submodule 挂在 `satellites/`，市场构建按各自的 gitlink 固定提交拉取内容。默认不需要检出：要就地改卫星仓内容时才 `git submodule update --init satellites/<仓名>`。该命令把工作树停在 gitlink 固定的提交上（detached HEAD），要提交改动先切到该仓的默认分支：`git -C satellites/<仓名> checkout main`。检出停在该固定提交时 `pnpm market:fetch` 直接复制该工作树；检出离开固定提交（切了分支，或提交了自己的改动）时，默认运行会明确提示并仍按固定提交构建，`pnpm market:fetch --local` 才读取该工作树——这样构建出的 `market/dist` 来自未固定内容，不得提交。
 
 **卫星仓的改动必须在卫星仓提交。** `satellites/<仓名>` 是独立的 git 仓库，
 在本仓写下的文件改动不会被本仓的 `git add` 收走：只 `git add` 本仓会把它们的
@@ -95,7 +95,7 @@ pnpm typecheck && pnpm test && pnpm docs:check   # 提交前必过
 **卫星仓的 `main` 受分支规则集保护**：只有仓库所有者与拥有 write 权限的协作者可以直接 push，其他贡献者必须对该仓的 `main` 开 PR，由该仓 CI 作业转绿后合入。规则集始终要求 PR、禁止强推与删除，且不要求人工审批；豁免名单与决策见 [卫星分支推送策略 Note](.agents/notes/implemented/process/2026-10-04-satellite-main-branch-push-policy.md)。
 
 **桌面宿主读到的是哪份卫星副本**：全家桶聚合包按 semver 声明这四个卫星包
-（`^0.4.3`），`pnpm install` 因此把聚合包 `node_modules/@linxin666` 下的符号链接指到
+（`^0.4.6`），`pnpm install` 因此把聚合包 `node_modules/@linxin666` 下的符号链接指到
 pnpm store 的已发布 tarball。桌面宿主解析聚合 patch 行贡献的外部行时从聚合包自身的
 node_modules 出发——仅提交卫星仓并重启，GUI 加载的仍是发布版旧代码。在本地检出开发
 卫星内容后重跑 `node scripts/link-profile.mjs`：它会把这些 store 链接改指到本地卫星

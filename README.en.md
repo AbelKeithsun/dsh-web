@@ -189,6 +189,11 @@ Permanent deletions cannot be undone, and all operational routes bind strictly t
 
 - **Skill Explorer** (`dsh-client-ui-skill-explorer`): Inspect and manage loaded agent skills grouped by origin, featuring keyword filtering across names and descriptions, workspace scoping, and activation toggling.
 - **Plugin Manager** (`dsh-client-ui-plugin-manager`): Install plugins from npm or git repositories via official host interfaces, inspect statuses, and adjust configuration settings.
+- **LiangShen Mode** (`dsh-liangshen`): Minimal system prompts, programmatic tool calling (PTC), and dispatcher interview discipline to reduce context overhead, with a slot-machine toggle lever for new sessions.
+- **Plugin Self-Update** (`dsh-update`): Automatically detects new releases on npm and provides release notes with one-click in-place upgrades right from the sidebar footer.
+- **Task Board GitHub Sync** (`dsh-client-ui-task-board-github`): Seamlessly connects GitHub Issues with task board cards, enabling autonomous AI Agent bug triage and automated PR delivery.
+- **Session ID Helper** (`dsh-client-ui-session-id`): Quick sidebar-footer access to copy full session IDs and search across active/archived sessions with zero host overhead.
+- **Internationalization Pack** (`dsh-i18n`): Registers Russian (Русский) localization and centrally carries multilingual dictionaries for all family plugin namespaces.
 
 ### Skins
 
@@ -262,6 +267,11 @@ dsh plugin --profile web add @linxin666/dsh-usage@latest                        
 dsh plugin --profile web add @linxin666/dsh-client-ui-model-capabilities@latest    # Model Capabilities
 dsh plugin --profile web add @linxin666/dsh-pet@latest                             # Desktop Pet
 dsh plugin --profile web add @linxin666/dsh-session-archive@latest                 # Session Archive Manager
+dsh plugin --profile web add @linxin666/dsh-liangshen@latest                       # LiangShen Mode
+dsh plugin --profile web add @linxin666/dsh-update@latest                          # Plugin Self-Update
+dsh plugin --profile web add @linxin666/dsh-client-ui-session-id@latest            # Session ID Helper
+dsh plugin --profile web add @linxin666/dsh-client-ui-skill-explorer@latest        # Skill Explorer
+dsh plugin --profile web add @linxin666/dsh-i18n@latest                            # Internationalization Pack
 ```
 
 <details>
@@ -288,6 +298,10 @@ All plugins are published under the `@linxin666/dsh-*` npm scope:
 | [@linxin666/dsh-session-archive](https://www.npmjs.com/package/@linxin666/dsh-session-archive) | Session archive: search, batch restore, and cascade pruning |
 | [@linxin666/dsh-client-ui-community-plugins](https://www.npmjs.com/package/@linxin666/dsh-client-ui-community-plugins) | Community plugin source: authoritative index powering the Workshop |
 | [@linxin666/dsh-client-ui-web-ui-settings](https://www.npmjs.com/package/@linxin666/dsh-client-ui-web-ui-settings) | Preferences panel: global settings and UI configurations |
+| [@linxin666/dsh-liangshen](https://www.npmjs.com/package/@linxin666/dsh-liangshen) | LiangShen Mode: Minimal system prompt, PTC tool dispatch, and dispatcher interview discipline |
+| [@linxin666/dsh-update](https://www.npmjs.com/package/@linxin666/dsh-update) | Plugin Self-Update: Release detection, changelog panel, and one-click in-place upgrades |
+| [@linxin666/dsh-client-ui-session-id](https://www.npmjs.com/package/@linxin666/dsh-client-ui-session-id) | Session ID Helper: Sidebar panel for quick full session ID viewing and copy |
+| [@linxin666/dsh-i18n](https://www.npmjs.com/package/@linxin666/dsh-i18n) | Internationalization Pack: Russian localization and multilingual dictionary provider |
 
 </details>
 
@@ -454,9 +468,9 @@ Licensed under [Apache-2.0](LICENSE). Imported third-party code must retain orig
 
 **Plugins**
 
-- **dsh-task-board / dsh-task-board-github / dsh-git-graph / dsh-pet / dsh-remote-web-ui / dsh-web-settings / dsh-ssh / dsh-skill-explorer / dsh-market / dsh-plugin-manager / dsh-community-plugins / dsh-web-all** — authored by zhu1090093659, Apache-2.0 (zhu1090093659)
+- **dsh-task-board / dsh-task-board-github / dsh-git-graph / dsh-pet / dsh-remote-web-ui / dsh-web-settings / dsh-ssh / dsh-skill-explorer / dsh-market / dsh-plugin-manager / dsh-community-plugins / dsh-web-all / dsh-liangshen / dsh-update / dsh-session-id / dsh-usage / dsh-session-archive / dsh-model-capabilities / dsh-i18n** — authored by zhu1090093659, Apache-2.0 (zhu1090093659)
 - **dsh-ssh** — implemented against the capability list of [badseal/ssh-skill](https://github.com/badseal/ssh-skill); code is this repository's Apache-2.0 (zhu1090093659), the upstream capability list belongs to badseal/ssh-skill
-- **Community plugin index** — 37 external plugins with sources and licenses declared by their authors, registered in [community.json](https://github.com/zhu1090093659/dsh-community-plugins/blob/main/community.json), browsable in Settings → Community Plugins and on dsh-market.com
+- **Community plugin index** — 130+ external plugins with sources and licenses declared by their authors, registered in [community.json](https://github.com/zhu1090093659/dsh-community-plugins/blob/main/community.json), browsable in Settings → Community Plugins and on dsh-market.com
 
 **Skins (third-party authors or artwork)**
 

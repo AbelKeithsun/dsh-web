@@ -21,7 +21,7 @@
     "packages/dsh-liangshen/tests/benchmark-report.test.ts": {"bdd-title":11,"given-when-then":11},
     "packages/dsh-liangshen/tests/lever-control.spec.ts": {"no-arbitrary-sleep":1,"bdd-title":16,"given-when-then":16},
     "packages/dsh-liangshen/tests/lever-ui.spec.tsx": {"bdd-title":12,"given-when-then":12,"tautological-assertion":7},
-    "packages/dsh-liangshen/tests/minimal-prompt.test.ts": {"bdd-title":59,"given-when-then":59,"tautological-assertion":3},
+    "packages/dsh-liangshen/tests/minimal-prompt.test.ts": {"bdd-title":59,"given-when-then":56,"tautological-assertion":3},
     "packages/dsh-liangshen/tests/platform-guard.test.ts": {"bdd-title":6,"given-when-then":6},
     "packages/dsh-liangshen/tests/preset-composition.test.ts": {"bdd-title":11,"given-when-then":11},
     "packages/dsh-liangshen/tests/settings-card.spec.tsx": {"bdd-title":7,"given-when-then":7,"tautological-assertion":4},

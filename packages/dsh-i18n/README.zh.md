@@ -31,15 +31,20 @@ dsh Web GUI 的语言包插件：向 Web GUI 语言目录注册 Русский�
 | 命名空间 | 来源包 |
 | --- | --- |
 | `git-graph` | dsh-git-graph |
+| `liangshen` | dsh-liangshen |
 | `dsh-web-ui-market` | dsh-market |
+| `model-caps` | dsh-model-capabilities |
 | `pet` | dsh-pet |
 | `settings.pluginManager` | dsh-plugin-manager |
 | `dsh-web-ui-preset-center` | dsh-preset-center |
 | `remote` | dsh-remote-web-ui |
 | `session-id` | dsh-session-id |
+| `dsh-web-ui-session-archive` | dsh-session-archive |
 | `dsh-skill-explorer` | dsh-skill-explorer |
 | `dsh-ssh` | dsh-ssh |
 | `task-board` | dsh-task-board |
+| `task-board-github` | dsh-task-board-github |
+| `update` | dsh-update |
 | `dsh-web-ui-usage` | dsh-usage |
 | `web-ui-plugins` | dsh-web-settings |
 

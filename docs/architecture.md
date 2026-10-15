@@ -78,7 +78,7 @@ flowchart LR
 flowchart LR
     A["aggregate.yml：patchFrom、deps、rows、inactive"] -- "node scripts/aggregate.mjs 生成" --> B["dsh-web-all：cordis.patch.yml + package.json"]
     B -- "dsh plugin --profile web add link" --> C["web profile（hoisted 布局）"]
-    C -- "web-ui-* 行逐条挂载" --> D["14 个仓内家族子包 + 4 个卫星仓外部行"]
+    C -- "web-ui-* 行逐条挂载" --> D["15 个仓内家族子包 + 4 个卫星仓外部行"]
     E["mount-once 防重：双源只注册一次"] -.-> D
     F["inactive：ssh、skill-explorer 出厂默认关闭"] -.-> D
 ```
@@ -101,11 +101,11 @@ flowchart TB
 
 ## 皮肤系统
 
-皮肤是纯资产目录：事实源在独立仓 [dsh-skins](https://github.com/zhu1090093659/dsh-skins) 的 `skins/`（47 个内置皮肤，本仓以 submodule `satellites/dsh-skins` 的 gitlink 固定要读的提交），npm 包 `files` 白名单只随发默认皮肤 blue-fantasy，其余由创意工坊按需安装到 `$DSH_HOME/skins/<id>/`（同 id 遮蔽内置）。skin-repo 双源发现并做 v2 manifest fail-closed 校验；样式经 `transformSkinCss` 安全管线强制作用域到 `html[data-dsh-skin]` 并按白名单过滤；启用互斥由 `dsh-skin use` 客户端原子切换管理，不改 `cordis.patch.yml`。插件输出语义属性（`data-dsh-plugin` / `data-dsh-part`）才承诺完整换肤覆盖，契约见 [semantic-attrs-v1.md](https://github.com/zhu1090093659/dsh-skins/blob/main/contracts/semantic-attrs-v1.md)。
+皮肤是纯资产目录：事实源在独立仓 [dsh-skins](https://github.com/zhu1090093659/dsh-skins) 的 `skins/`（60 个内置皮肤，本仓以 submodule `satellites/dsh-skins` 的 gitlink 固定要读的提交），npm 包 `files` 白名单只随发默认皮肤 blue-fantasy，其余由创意工坊按需安装到 `$DSH_HOME/skins/<id>/`（同 id 遮蔽内置）。skin-repo 双源发现并做 v2 manifest fail-closed 校验；样式经 `transformSkinCss` 安全管线强制作用域到 `html[data-dsh-skin]` 并按白名单过滤；启用互斥由 `dsh-skin use` 客户端原子切换管理，不改 `cordis.patch.yml`。插件输出语义属性（`data-dsh-plugin` / `data-dsh-part`）才承诺完整换肤覆盖，契约见 [semantic-attrs-v1.md](https://github.com/zhu1090093659/dsh-skins/blob/main/contracts/semantic-attrs-v1.md)。
 
 ```mermaid
 flowchart LR
-    B["内置：独立仓 dsh-skins 的 skins/ 下 47 个皮肤目录（按 gitlink 固定提交）"] --> R["skin-repo 双源发现：v2 manifest fail-closed 校验"]
+    B["内置：独立仓 dsh-skins 的 skins/ 下 60 个皮肤目录（按 gitlink 固定提交）"] --> R["skin-repo 双源发现：v2 manifest fail-closed 校验"]
     U["$DSH_HOME/skins/：工坊按需安装，同 id 遮蔽内置"] --> R
     R -- "transformSkinCss：作用域 + 白名单" --> CSS["html data-dsh-skin 作用域样式"]
     CSS --> SW["运行时无刷新原子切换（dsh-skin use 互斥）"]

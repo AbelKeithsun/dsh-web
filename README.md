@@ -189,6 +189,11 @@ dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方�
 
 - **Skill 中心**（`dsh-client-ui-skill-explorer`）：按来源集中查看与管理已加载的 agent skills，支持按名称与功能描述实时搜索过滤，多工作区独立呈现，支持一键启停与删除。
 - **插件管理器**（`dsh-client-ui-plugin-manager`）：基于官方 host 接口从 npm 或 git 仓库直接安装插件，可视化管理插件运行状态与自定义配置。
+- **梁神模式**（`dsh-liangshen`）：提供极简系统提示词、程序化工具调用（PTC）与调度者访谈纪律，降低上下文开销并在新建会话中提供拨杆开关。
+- **插件自更新**（`dsh-update`）：自动检测 npm 官方更新并在 Web GUI 侧边栏/设置中提供更新日志与一键平滑升级。
+- **任务看板 GitHub 同步**（`dsh-client-ui-task-board-github`）：为任务看板无缝接入 GitHub Issues 与 PR 状态双向同步，自动化驱动 AI Agent 修复与提 PR。
+- **会话 ID 辅助**（`dsh-client-ui-session-id`）：侧边栏底部提供当前会话全量 ID 的一键复制与快速检索定位。
+- **国际化语言包**（`dsh-i18n`）：提供俄语本地化定义与全家族插件命名空间统一多语言字典支持。
 
 ### 皮肤
 
@@ -262,6 +267,11 @@ dsh plugin --profile web add @linxin666/dsh-usage@latest                        
 dsh plugin --profile web add @linxin666/dsh-client-ui-model-capabilities@latest    # 模型能力声明
 dsh plugin --profile web add @linxin666/dsh-pet@latest                             # 桌面悬浮宠物
 dsh plugin --profile web add @linxin666/dsh-session-archive@latest                 # 会话归档管理
+dsh plugin --profile web add @linxin666/dsh-liangshen@latest                       # 梁神模式
+dsh plugin --profile web add @linxin666/dsh-update@latest                          # 插件自更新
+dsh plugin --profile web add @linxin666/dsh-client-ui-session-id@latest            # 会话 ID 复制
+dsh plugin --profile web add @linxin666/dsh-client-ui-skill-explorer@latest        # Skill 中心
+dsh plugin --profile web add @linxin666/dsh-i18n@latest                            # 国际化语言包
 ```
 
 <details>
@@ -288,6 +298,10 @@ dsh plugin --profile web add @linxin666/dsh-session-archive@latest              
 | [@linxin666/dsh-session-archive](https://www.npmjs.com/package/@linxin666/dsh-session-archive) | 会话归档：全量会话检索、批量恢复与级联清理 |
 | [@linxin666/dsh-client-ui-community-plugins](https://www.npmjs.com/package/@linxin666/dsh-client-ui-community-plugins) | 社区数据源：创意工坊插件目录权威清单 |
 | [@linxin666/dsh-client-ui-web-ui-settings](https://www.npmjs.com/package/@linxin666/dsh-client-ui-web-ui-settings) | 综合设置面板：dsh-web 全局偏好与样式配置 |
+| [@linxin666/dsh-liangshen](https://www.npmjs.com/package/@linxin666/dsh-liangshen) | 梁神模式：极简系统提示词、PTC 工具调用与调度者访谈纪律 |
+| [@linxin666/dsh-update](https://www.npmjs.com/package/@linxin666/dsh-update) | 插件自更新：版本检测、更新日志面板与一键原地升级 |
+| [@linxin666/dsh-client-ui-session-id](https://www.npmjs.com/package/@linxin666/dsh-client-ui-session-id) | 会话 ID 复制：侧边栏快速查看与一键复制会话全量 ID |
+| [@linxin666/dsh-i18n](https://www.npmjs.com/package/@linxin666/dsh-i18n) | 国际化语言包：俄语本地化及家族插件多语言字典 |
 
 </details>
 
@@ -454,9 +468,9 @@ dsh-web 针对主流操作系统、现代化浏览器及网络拓扑进行了深
 
 **插件**
 
-- **dsh-task-board / dsh-task-board-github / dsh-git-graph / dsh-pet / dsh-remote-web-ui / dsh-web-settings / dsh-ssh / dsh-skill-explorer / dsh-market / dsh-plugin-manager / dsh-community-plugins / dsh-web-all** — 本仓库原创（zhu1090093659），Apache-2.0（zhu1090093659）
+- **dsh-task-board / dsh-task-board-github / dsh-git-graph / dsh-pet / dsh-remote-web-ui / dsh-web-settings / dsh-ssh / dsh-skill-explorer / dsh-market / dsh-plugin-manager / dsh-community-plugins / dsh-web-all / dsh-liangshen / dsh-update / dsh-session-id / dsh-usage / dsh-session-archive / dsh-model-capabilities / dsh-i18n** — 本仓库原创（zhu1090093659），Apache-2.0（zhu1090093659）
 - **dsh-ssh** — 依据 [badseal/ssh-skill](https://github.com/badseal/ssh-skill) 的能力清单实现；代码为本仓库 Apache-2.0（zhu1090093659），上游能力清单归属 badseal/ssh-skill
-- **社区插件索引** — 37 项外部插件，来源与版权由各作者声明，登记于 [community.json](https://github.com/zhu1090093659/dsh-community-plugins/blob/main/community.json)，可在「设置 → 社区插件」与 dsh-market.com 查看
+- **社区插件索引** — 130+ 项外部插件，来源与版权由各作者声明，登记于 [community.json](https://github.com/zhu1090093659/dsh-community-plugins/blob/main/community.json)，可在「设置 → 社区插件」与 dsh-market.com 查看
 
 **皮肤（第三方作者或第三方素材）**
 
