@@ -293,19 +293,27 @@ const COOKIE_MAX_AGE_SEC = 365 * 24 * 60 * 60
  * The cookieless device credential: pass the device id from the /pair-app
  * URL into sessionStorage (and localStorage for tab reloads) before any app
  * script runs - same key the boot patch and the channel gate read. The
- * replaceState to '/' hides the credential URL from the address bar and
- * leaves the SPA at its canonical root path. The reopen service worker is
- * registered in the same breath: later navigations to '/' (history,
- * bookmark, tab restore) must not fall through to the harness index gate,
- * which the cookieless flow can never satisfy.
+ * replaceState drops the one-time grant from the address bar and leaves the
+ * SPA on a path this plugin answers again; which path depends on the origin.
+ *
+ * A secure context registers the reopen service worker in the same breath,
+ * and that worker owns navigations to '/', so the SPA keeps its canonical
+ * root. A plain-HTTP LAN origin is never a secure context, so the worker
+ * cannot exist there and '/' falls through to the harness index gate the
+ * cookieless flow can never satisfy (issue #1867). The address bar therefore
+ * keeps the plugin-owned landing path, which re-validates the device
+ * credential on every reload and serves the bilingual re-pair page once the
+ * pairing is gone. Both targets are bare paths: the one-time grant never
+ * survives the rewrite, and no credential is ever left in the URL.
  */
 export const APP_DEVICE_STORAGE_KEY = 'dsh-remote-device'
 
 export function appShellCaptureScript(deviceId: string): string {
   const safeId = JSON.stringify(deviceId)
   const grantGlobal = JSON.stringify(REMOTE_HOST_GRANT_GLOBAL)
+  const reopenPath = JSON.stringify(PAIR_PATHS.appPage)
   const register = `try{if('serviceWorker' in navigator){navigator.serviceWorker.register(${JSON.stringify(PAIR_PATHS.appServiceWorker)},{scope:'/'}).catch(function(e){})}}catch(e){}`
-  return `<script>(function(){try{sessionStorage.setItem(${JSON.stringify(APP_DEVICE_STORAGE_KEY)},${safeId});}catch(e){}try{history.replaceState(null,'','/')}catch(e){}try{window[${grantGlobal}]=true}catch(e){}${register}})()</script>`
+  return `<script>(function(){try{sessionStorage.setItem(${JSON.stringify(APP_DEVICE_STORAGE_KEY)},${safeId});}catch(e){}try{history.replaceState(null,'',window.isSecureContext?'/':${reopenPath})}catch(e){}try{window[${grantGlobal}]=true}catch(e){}${register}})()</script>`
 }
 
 /**
@@ -332,9 +340,10 @@ export function patchAppShell(html: string, deviceId: string): string {
  * worker owns navigations to `/` instead: network-first through /pair-app
  * (which validates the device cookie and refreshes its presence), the
  * cached shell for offline opens, and a pass-through of the original
- * request when the plugin no longer answers. Plain-HTTP LAN origins are not
- * secure contexts, so the worker never registers there — the LAN reopen
- * path stays "scan a fresh QR", which is cheap in-network.
+ * request when the plugin no longer answers. A plain-HTTP LAN origin is
+ * never a secure context, so the worker cannot exist there; the capture
+ * script keeps the plugin-owned landing path in the address bar instead,
+ * and that landing re-validates the device credential on every reload.
  *
  * Kept as a plain string (same pattern as the capture script): it must load
  * with no build step, run on every JS engine that ships service workers,
