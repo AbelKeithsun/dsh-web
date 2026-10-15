@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { PairingService } from '../src/pairing.ts'
-import { MAX_DYNAMIC_TRUSTED_HOSTS, acceptLimitKey, addBounded, isTrustedHost, makeRoutes, patchAppShell, PAIR_PATHS } from '../src/routes.ts'
+import { APP_DEVICE_STORAGE_KEY, MAX_DYNAMIC_TRUSTED_HOSTS, acceptLimitKey, addBounded, isTrustedHost, makeRoutes, patchAppShell, PAIR_PATHS } from '../src/routes.ts'
 import { createPairGrantStore, type PairGrantStore } from '../src/pair-grant.ts'
 import { REMOTE_HOST_GRANT_GLOBAL } from '../src/remote-channel-rules.ts'
 
@@ -376,6 +376,30 @@ describe('/api/pair routes', () => {
       // A foreign authority is refused like any phone-facing surface.
       const foreign = await call(port, 'GET', PAIR_PATHS.appServiceWorker, { host: 'evil.example.com' })
       expect(foreign.status).toBe(403)
+    } finally {
+      await close()
+    }
+  })
+
+  it('operator: the reopen landing refuses a device without a live pairing', async () => {
+    // Given the device-gated landing a plain-HTTP phone now reopens through,
+    // and a caller carrying no pairing cookie (a cleared browser, or a
+    // device whose pairing was revoked).
+    const service = makeService()
+    const { port, close } = await serve(makeRoutes({
+      service,
+      indexDocument: async () => '<html><head><title>shell</title></head><body>official</body></html>',
+      grants: makeGrants(),
+    }))
+    try {
+      // When it reopens the landing with no pairing cookie.
+      const stranger = await call(port, 'GET', PAIR_PATHS.appPage, { host: '192.168.1.5:3080' })
+      // Then the landing answers the bilingual re-pair page and hands out
+      // neither the official shell nor the device-capture script: the reopen
+      // path is a credential gate, not an open door onto the app.
+      expect(stranger.raw).toContain('This pairing has expired or the link is no longer valid.')
+      expect(stranger.raw).not.toContain(APP_DEVICE_STORAGE_KEY)
+      expect(stranger.raw).not.toContain('<body>official</body>')
     } finally {
       await close()
     }

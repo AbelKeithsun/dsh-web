@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TypertGateway } from '@deepseek-ai/dsh-api-gateway'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { Config, apply, resolveHostDefaultPermission } from '../src/index.ts'
+import { Config, apply, resolveExecutionAgent, resolveHostDefaultPermission, resolveSessionController } from '../src/index.ts'
 
 /** The write protocol a volatile reference shares across cosmokit copies. */
 const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
@@ -361,3 +361,78 @@ describe('host permission baseline', () => {
   })
 })
 
+describe('cold session reuse resolution (issue #1861)', () => {
+  it('operator reusing a live session resolves its Agent without waking persistence', async () => {
+    // Given a session whose Agent is already present in the live registry
+    const liveAgent = { id: 'session-live' }
+    let resumeCalls = 0
+    const ctx = {
+      agents: { get: (id: string) => id === 'session-live' ? liveAgent : undefined },
+      get: (name: string) => name === 'sessionController'
+        ? {
+            resolveAgent: async () => {
+              resumeCalls += 1
+              return { agent: { id: 'unexpected' } }
+            },
+          }
+        : undefined,
+    }
+
+    // When the execution Agent is resolved for a slash command
+    const resolved = await resolveExecutionAgent(ctx as never, 'session-live' as never)
+
+    // Then the live Agent is returned directly and sessionController is not consulted
+    expect(resolved).toBe(liveAgent)
+    expect(resumeCalls).toBe(0)
+  })
+
+  it('operator reusing a cold session on schedule wakes its Agent through sessionController before running /permission', async () => {
+    // Given a persisted session that is idle in the roster but not yet in ctx.agents
+    const resumedAgent = { id: 'session-cold' }
+    const liveAgents = new Map<string, unknown>()
+    const resolvedIds: string[] = []
+    const ctx = {
+      agents: { get: (id: string) => liveAgents.get(id) },
+      get: (name: string) => name === 'sessionController'
+        ? {
+            resolveAgent: async (id: string) => {
+              resolvedIds.push(id)
+              liveAgents.set(id, resumedAgent)
+              return { agent: resumedAgent }
+            },
+          }
+        : undefined,
+    }
+
+    // When the command dispatcher resolves the session for `/permission` ahead of `session/prompt`
+    const resolved = await resolveExecutionAgent(ctx as never, 'session-cold' as never)
+
+    // Then sessionController resumes the cold session and returns the live Agent
+    expect(resolvedIds).toEqual(['session-cold'])
+    expect(resolved).toBe(resumedAgent)
+  })
+
+  it('operator sees the underlying sessionController error when a cold session cannot be resumed', async () => {
+    // Given a cold session whose resume fails in sessionController (for example a missing or locked log)
+    const ctx = {
+      agents: { get: () => undefined },
+      get: (name: string) => name === 'sessionController'
+        ? {
+            resolveAgent: async () => ({
+              error: { message: 'session "session-missing" not found' },
+            }),
+          }
+        : undefined,
+    }
+
+    // When the execution Agent is resolved
+    // Then the error names both the unavailable session and the controller's reason
+    await expect(resolveExecutionAgent(ctx as never, 'session-missing' as never)).rejects.toThrow(
+      'execution session session-missing is not available: session "session-missing" not found',
+    )
+    expect(resolveSessionController({ get: () => { throw new Error('no controller') } } as never)).toBeUndefined()
+    await expect(
+      resolveExecutionAgent({ agents: { get: () => undefined }, get: () => undefined } as never, 'session-detached' as never),
+    ).rejects.toThrow('execution session session-detached is not available')
+  })
+})

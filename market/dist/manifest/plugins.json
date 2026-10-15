@@ -630,8 +630,8 @@
       "rank": 50,
       "nameEn": "Archive Management",
       "author": "Ultronen",
-      "description": "本地优先的归档聊天管理插件：按工作区浏览和全文搜索，原生只读预览对话、工具活动与图片，支持标签备注、ZIP 备份恢复、可撤销回收站、空间分账、保留策略和来源分支视图。",
-      "descriptionEn": "Local-first archived chat management with workspace browsing and full-text search, native read-only previews of conversations, tool activity and images, tags and notes, ZIP backup restore, an undoable Recycle Bin, storage accounting, retention policies, and lineage views.",
+      "description": "管理已归档与未归档会话，支持搜索、预览、标签备注、工作区归档、ZIP 备份、选择操作、回收站恢复、空间与保留策略、来源分支和自动残留会话检查。",
+      "descriptionEn": "Manage archived and unarchived chats with search, previews, tags and notes, workspace archiving, ZIP backups, selected actions, a Recycle Bin, storage and retention, origins and branches, and automatic residual chat checks.",
       "repo": "https://github.com/Ultronen/dsh-archived-chats",
       "npm": "dsh-archived-chats",
       "category": "ui",
@@ -1742,6 +1742,18 @@
       "repo": "https://github.com/FuSheng-cs/dsh-trae-relay",
       "category": "integration",
       "subcategory": "external-ai"
+    },
+    {
+      "id": "dsh-web-start-ui",
+      "name": "dsh web start ui · 启动动画",
+      "rank": 137,
+      "nameEn": "dsh web start ui (Launch Video)",
+      "author": "stushansusu",
+      "description": "打开 DSH 时的全屏启动动画（视频皮肤）：宿主半区在界面首绘之前就把视频起播，浏览器半区接管同一个 <video>（不重播），视频播完才落帘。包内自带一段皮肤（青花瓷 · 水墨，12.3s），设置页可选皮肤、上传与删除自定义皮肤（存 $DSH_HOME/launch-animations）、即时预览、播放频率与点击跳过；资产路由带 ETag 与 Range，二次启动走 304 不再重下。独立插件，不并入全家桶。",
+      "descriptionEn": "A full-screen launch video for DSH: the host half starts the video before the shell paints, the browser half adopts that very <video> element instead of restarting it, and the curtain lifts when the video ends. One skin ships in the package (Blue-and-White · Ink, 12.3s); the settings page selects skins, uploads and deletes custom ones (kept in $DSH_HOME/launch-animations), previews on the spot, and controls replay policy and click-to-skip. Asset responses carry an ETag (a cached install revalidates with a 304) and support Range requests. Standalone plugin, not enrolled in the all-in-one bundle.",
+      "repo": "https://github.com/stushansusu/dsh-web-start-ui",
+      "category": "ui",
+      "subcategory": "render"
     }
   ]
 }
