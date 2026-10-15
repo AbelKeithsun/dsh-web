@@ -32,7 +32,21 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v5
+      # Same elastic checkout as static-checks: 3-minute first attempt, one 5-minute retry.
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        timeout-minutes: 3
+
+      - name: Drop a partial clone
+        if: steps.checkout.outcome == 'failure'
+        run: rm -rf "$GITHUB_WORKSPACE/.git"
+
+      - name: Checkout (retry)
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v5
+        timeout-minutes: 5
 
       - uses: pnpm/action-setup@v5
 
@@ -63,7 +77,21 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - uses: actions/checkout@v5
+      # Same elastic checkout as static-checks: 3-minute first attempt, one 5-minute retry.
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v5
+        continue-on-error: true
+        timeout-minutes: 3
+
+      - name: Drop a partial clone
+        if: steps.checkout.outcome == 'failure'
+        run: rm -rf "$GITHUB_WORKSPACE/.git"
+
+      - name: Checkout (retry)
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v5
+        timeout-minutes: 5
 
       - uses: pnpm/action-setup@v5
 
