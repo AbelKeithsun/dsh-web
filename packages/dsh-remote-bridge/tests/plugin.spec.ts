@@ -194,6 +194,23 @@ describe('the mounted plugin', () => {
     expect(written.startsWith('HTTP/1.1 400')).toBe(true)
   })
 
+  it('user upgrading a malformed handshake never lets that refusal reach the host as an uncaught error', async () => {
+    // Given the mounted plugin and a refusal whose transport then fails while the
+    // answer is on its way - the shape Linux produced when the write was torn down
+    // mid-flight, where the abort escaped as the process's own uncaught exception.
+    const host = mountPlugin()
+    const pair = socketPair()
+    const plain = { url: WS_PATH, method: 'GET', socket: { remoteAddress: '127.0.0.1' }, headers: { host: '127.0.0.1:3080' } } as unknown as IncomingMessage
+    // When the handler refuses and the socket reports the failure
+    await upgradeHandlerOf(host)(plain, pair.socket, Buffer.alloc(0))
+    await nextTurn()
+    // Then the failure stayed on the socket: an 'error' with no listener would have
+    // been thrown straight out of this emit and out of the refusal path.
+    expect(() => { pair.socket.emit('error', new Error('aborted')) }).not.toThrow()
+    expect(pair.serverBytes().toString('latin1').startsWith('HTTP/1.1 400')).toBe(true)
+    expect(pair.socket.listenerCount('error')).toBeGreaterThan(0)
+  })
+
   it('operator unmounts the plugin and both routes are gone', () => {
     // Given a mounted plugin with its two routes registered
     const host = mountPlugin()

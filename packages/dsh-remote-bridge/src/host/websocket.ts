@@ -89,10 +89,20 @@ export function presentedTokenOf(req: IncomingMessage): string | undefined {
   return bearerTokenOf(req) ?? queryTokenOf(req.url)
 }
 
-/** Answer an upgrade this endpoint will not take, and close the socket. */
+/**
+ * Answer an upgrade this endpoint will not take, and close the write side.
+ *
+ * The refusal rides `end()`, which flushes the response before the FIN. Writing
+ * and then destroying in the same tick aborts the in-flight write on Linux, and
+ * that abort surfaces as the socket's own `error` event - which nothing on a
+ * refused socket listens for, because the carrier's subscriptions only exist
+ * once an upgrade is accepted. One malformed upgrade therefore reached the host
+ * as an uncaught exception. The listener absorbs the transport's own failures: a
+ * peer that vanished mid-refusal is the client's problem, never the host's.
+ */
 export function refuseUpgrade(socket: Duplex, status: number, reason: string): void {
-  socket.write(`HTTP/1.1 ${status} ${reason}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`)
-  socket.destroy()
+  socket.on('error', () => {})
+  socket.end(`HTTP/1.1 ${status} ${reason}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`)
 }
 
 /**
