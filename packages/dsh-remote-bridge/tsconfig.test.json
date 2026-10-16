@@ -4,5 +4,5 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.cache/tsconfig.test.tsbuildinfo"
   },
-  "include": ["src/**/*.ts", "tests/**/*.spec.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.spec.ts", "tests/**/*.spec.tsx"]
 }

@@ -16,13 +16,14 @@ Protocol v1 is deliberately a second, independent surface: the browser path (the
 
 ## What it does
 
-The package is the host half only: it declares no `dsh.client`, ships no `src/client/`, registers no locale and carries no UI copy. What it publishes is a protocol:
+The package publishes one protocol and, beside it, one small browser surface. What the host half publishes is a protocol:
 
 - **One surface.** A WebSocket at `/ios/v1`, registered as an exact upgrade route on the host webserver; frames are text, one JSON object each, at most 256 KB.
 - **A session surface.** `session.list`, `session.snapshot`, `session.prompt` and `session.interrupt` cover the roster, a full baseline plus a live subscription, a queued prompt with an idempotency key, and turn cancellation.
 - **A subscription, not a poll.** `session.snapshot` opens the harness follow stream and keeps it, so the baseline and every later increment arrive over the same socket.
 - **Approvals reach the client.** A tool that asks for permission arrives as an `approval.request` event and is answered with `approval.resolve`; a request nobody answers is rejected.
 - **Pairing.** A one-time bootstrap token plus a P-256 challenge-response mint a revocable device token; an unpaired connection reaches three methods only.
+- **A pairing panel.** The same plugin row declares a `dsh.client` browser half: a sidebar-foot panel that shows the operator the live one-time code as a QR symbol and in plaintext, with its 30 s countdown and a mint-again action.
 - **No relay change.** The protocol rides whatever origin the instance already publishes, and the relay hop forwards it exactly as it forwards everything else.
 
 ## Transport
@@ -97,7 +98,7 @@ The device token rides the WebSocket upgrade as `Authorization: Bearer <deviceTo
 
 ### Bootstrap token
 
-`GET /remote-bridge/pair/token` is an exact host route behind a two-condition loopback gate: the socket address must be `127.0.0.1`, `::1` or `::ffff:127.0.0.1`, and the `Host` header must name `127.0.0.1`, `localhost` or `[::1]` (its port is ignored). A tunneled request fails the second condition even though its tunnel client connects from this same machine, so the endpoint stays unreachable from the public origin; anything else gets 403. The token is held in memory, expires after 30 s, is spent by the first `pair.begin`, and the same link is printed to the host log so a desktop user can reach it.
+`GET /remote-bridge/pair/token` is an exact host route behind a two-condition loopback gate: the socket address must be `127.0.0.1`, `::1` or `::ffff:127.0.0.1`, and the `Host` header must name `127.0.0.1`, `localhost` or `[::1]` (its port is ignored). A tunneled request fails the second condition even though its tunnel client connects from this same machine, so the endpoint stays unreachable from the public origin; anything else gets 403. The token is held in memory, expires after 30 s, is spent by the first `pair.begin`, and the same link is printed to the host log while the code itself is rendered in the pairing panel, so a desktop operator can reach it either way.
 
 ```sh
 curl -s http://127.0.0.1:3080/remote-bridge/pair/token
@@ -136,6 +137,20 @@ The relay that publishes a private instance on the public internet is a full rev
 
 Two consequences follow from that hop. It sees the request URL, so a `?token=` connection hands the device token to the relay, the Cloudflare edge and the origin access log — prefer the header. And `GET /remote-bridge/pair/token` is forwarded like any other path, but its loopback gate rejects the forwarded request, so pairing can only be started from the machine itself.
 
+## Web GUI pairing panel
+
+The browser half exists so that an operator who never opens a terminal still has a way to start pairing. It follows the family's sidebar-foot convention: the trigger registers into the official `sidebar.footer.action` list slot (declared by ui-sidebar — the seat `dsh-remote-web-ui`'s phone trigger and `dsh-update`'s updater already share) and opens a centered modal. It is delivered by the same plugin row: `exports["./client"]` is the artifact and `dsh.client` declares the client modules that must be live first.
+
+The panel has one job — put the live one-time code in front of the operator:
+
+- **The QR symbol encodes the bare token**: 43 base64url characters and nothing else. A URL or a JSON document would let the phone's own parser rewrite its origin onto this machine's loopback address, which is precisely the address a phone cannot reach.
+- **The same token is printed in plaintext** beside the symbol, so an operator can check it by eye, and a copy action puts it on the clipboard.
+- **A 30 s countdown runs** next to a **New code** action; every press mints a fresh token and voids the previous one, and an expired code says so instead of still looking scannable.
+- **The origin warning is stated outright.** This page is served from `127.0.0.1:<port>`, which only this machine can reach, so the phone app's connection address has to be the public relay — such as `wss://<id>.dsh-market.com`.
+- **A refusal is never silent.** The read is the same loopback-only route an operator would curl: a `403` renders as "this page is not open on this machine", and a request that never arrives renders as its own unreachable state.
+
+The panel is display-only for the native path. It never spends the token (`pair.begin` stays the phone's call), it never touches the roster, and it adds no wire surface — the envelope, the method names, the topic names and the events are unchanged. `dsh-remote-web-ui`'s pairing service, roster and browser credential are not involved either, so the two remote surfaces keep their own access controls.
+
 ## Client script
 
 `scripts/client.mjs` is a dependency-free protocol v1 client — Node 22 globals only, no package dependency — used to check a live bridge and to pair a test machine that has no Secure Enclave. It runs the fixed sequence once, prints every frame with its direction and numbers the events in arrival order, so a transcript can be pasted into a report; it never calls a model itself.
@@ -165,7 +180,7 @@ pnpm install && pnpm -r build
 dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
 ```
 
-The family aggregate package `@linxin666/dsh-web-all` installs this plugin together with the rest of the family. Restart `dsh web` after installing or updating, because the bridge registers an upgrade route on the host webserver; the route is served by the running host only.
+The family aggregate package `@linxin666/dsh-web-all` installs this plugin together with the rest of the family. Restart `dsh web` after installing or updating — the host half registers its routes when the plugin row mounts, so the running host is what serves them — then reload the Web GUI page, which is when the browser half's sidebar-foot trigger appears.
 
 ## Configuration
 
@@ -175,6 +190,7 @@ The bridge is mounted like any other host plugin row. It carries no user-facing 
 
 - **Pairing is a full-control credential.** A paired device reaches the harness in-process: sessions, prompts, approvals. Only pair devices you control, and revoke by removing the roster row and restarting the host.
 - **The token endpoint is loopback-only, on two conditions.** The socket address must be loopback and the `Host` header must name this machine. A tunneled request is terminated by the tunnel client on this same host, so the socket address alone reads `127.0.0.1` for a request the whole internet can reach, while the relay and a plain tunnel rewrite `Host` to the public name; failing either condition is a 403. The token is memory-only, expires in 30 s, is spent by one `pair.begin`, and the same link is written to the host log — treat that log line as a live secret.
+- **The pairing panel renders a live secret and nothing more.** It reads the same loopback-gated route over a same-origin request, so it is reachable exactly where the `curl` form is, and nowhere else. It cannot mint a device token, spend one, list the roster or revoke a device: `pair.begin` stays the phone's call, and revocation stays a roster edit plus a host restart. The QR carries the bare token, so the page's own `127.0.0.1` origin is never handed to the phone.
 - **An unpaired connection has a three-method whitelist.** `hello`, `pair.begin` and `pair.finish`; every other method answers `unpaired` before dispatch, so no session, approval or roster surface is reachable without a device token.
 - **Device tokens are stored as hashes only.** The roster keeps the public key and its SHA-256 fingerprint, never the token, so the file is not a credential store. A lost, rotated or rejected token means pairing again — a routine flow, not an exception path (a fresh bootstrap link, or a re-scan of the desktop pairing flow), and it never requires editing the roster by hand.
 - **The token comparison does not leak length.** It is a fixed-length comparison rather than an early-exit one, so a wrong token cannot be narrowed byte by byte.
@@ -190,5 +206,6 @@ The bridge is mounted like any other host plugin row. It carries no user-facing 
 - **A subscription outlives an interrupt.** `session.interrupt` cancels the turn only; the subscription ends when the connection closes, and one connection aborts all of its follow streams together.
 - **`clientTimeZone` is host-side.** The bridge fills it from the host's IANA zone; a client cannot pin its own zone in v1.
 - **Roster edits apply on the next host start.** The roster is read once per process, so removing a device takes effect when `dsh web` restarts.
-- **The package is a transport, not a UI.** It has no browser half, no settings section and no locale; the Web GUI's own surfaces are untouched by it.
+- **The panel shows one code and nothing else.** It cannot list, name or revoke paired devices, and it never spends a code — pairing happens on the phone, and revocation stays a roster edit plus a host restart.
+- **The panel is only as fresh as its last read.** It reads a code when it opens and on every **New code** press; a code that expires while the panel stays open flips to the expiry state instead of silently renewing itself.
 - **`scripts/client.mjs` is a check harness, not a client SDK.** It runs the fixed sequence once, keeps no state and has no reconnect logic.

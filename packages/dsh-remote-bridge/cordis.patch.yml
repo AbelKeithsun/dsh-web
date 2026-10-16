@@ -2,13 +2,16 @@
 # roster. Install it into a dsh profile with
 # `dsh plugin --profile <name> add link:<repo>/packages/dsh-remote-bridge`.
 #
-# Host half only: this package declares no `dsh.client`, ships no
-# src/client/index.ts and therefore mounts no browser half. The single row id
-# below lives in the loader's global id space, so it must stay clear of every
-# official DSH bundle row and of the family's own rows — `remote-bridge` is
-# claimed by neither (the official roster carries no `remote-*` id at all,
-# and the aggregate's `web-ui-*` namespace is off limits to standalone
-# packages).
+# This single row carries both halves: the host half serves protocol v1 on
+# /ios/v1 and mints the one-shot bootstrap token on its loopback-only route;
+# the browser half (declared by `dsh.client` -> `exports["./client"]`) adds one
+# sidebar-foot panel that displays that same token as a QR symbol. The client
+# half is display-only — it neither spends the token nor reaches the browser
+# pairing path of dsh-remote-web-ui. The single row id below lives in the
+# loader's global id space, so it must stay clear of every official DSH bundle
+# row and of the family's own rows — `remote-bridge` is claimed by neither (the
+# official roster carries no `remote-*` id at all, and the aggregate's
+# `web-ui-*` namespace is off limits to standalone packages).
 - insert:
     - id: remote-bridge
       name: '@linxin666/dsh-remote-bridge'

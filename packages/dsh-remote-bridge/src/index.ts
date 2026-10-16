@@ -14,8 +14,11 @@
  *   and delegated (`next()`) in every other case, which the Host normalizes to
  *   the fail-closed `'unavailable'`.
  *
- * Host half only: no `dsh.client`, no `src/client/`, no locale, no browser
- * bundle.
+ * The browser half lives in `src/client/` and is declared by `dsh.client`: one
+ * sidebar-foot panel that reads the same loopback-gated token route over a
+ * same-origin request and renders the secret as a QR symbol beside its
+ * plaintext. It is display-only — it cannot mint, spend, list or revoke
+ * anything — and this module does not import it.
  * @module @linxin666/dsh-remote-bridge
  */
 
