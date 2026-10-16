@@ -47,18 +47,37 @@ import { resolveRuntime, type RuntimeReady, type HostPlatform } from './runtime.
 import { ShellRegistry } from './shell.ts'
 import { buildWinBashTool } from './tool.ts'
 
+export { BACKGROUND_JOB_KIND, startBackgroundJob } from './background.ts'
+export type {
+  BackgroundCommand,
+  JobHandleLike,
+  JobHooksLike,
+  JobOutcomeLike,
+  JobOutputSourceLike,
+  JobRegistryLike,
+  JobSourceReadLike,
+} from './background.ts'
+
 export { Config }
 export type { WinBashConfig, WinBashConfigInput }
 export {
   CONFIG_DEFAULTS,
   DEFAULT_DESCRIPTION,
+  DEFAULT_ENABLE_RUN_IN_BACKGROUND,
   DEFAULT_REPLACE_PWSH,
   DEFAULT_SYNC_WITH_LIANGSHEN,
   validateConfig,
 } from './config.ts'
 export { HOST_PWSH_TOOL, installPwshReplacement, type PwshReplacementOptions } from './pwsh-replacement.ts'
-export { WIN_BASH_TOOL } from './tool.ts'
-export { ShellRegistry, ShellUnavailableError } from './shell.ts'
+export { WIN_BASH_TOOL, renderResult, readJobRegistry, truncationNotice } from './tool.ts'
+export type { RenderFacts } from './tool.ts'
+export {
+  ShellRegistry,
+  ShellUnavailableError,
+  shellArgv,
+  shellEnvironment,
+  shellTempDir,
+} from './shell.ts'
 export { buildFrame, markerFor, parseFrame } from './protocol.ts'
 export {
   GATE_DECLARATION_WAIT_MS,

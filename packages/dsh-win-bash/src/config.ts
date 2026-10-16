@@ -58,8 +58,21 @@ export const DEFAULT_DESCRIPTION = [
   "pwsh stays the only other shell here: use it for Windows-native work (cmdlets, the registry, services) and as the fallback when a command is not bash; where this plugin replaces it, it is withdrawn from this session's tool surface while win_bash serves it, which hides it rather than forbidding it.",
   'The working directory, exported variables, functions and shell history persist across win_bash calls in this session;',
   'each call is a foreground command with bounded stdout and stderr and a real exit code.',
+  'Long output is kept as its TAIL and the result says it was truncated, naming the file holding the complete stream when one exists.',
+  'Set run_in_background to start the command in its own process and return a job id at once: collect that job with job_output and stop it with job_kill.',
   'Use this instead of PowerShell when the command is bash or Unix syntax (pipes, $VAR, globs, single quotes, here-documents).',
 ].join(' ')
+
+/**
+ * Whether win_bash may run a command as a background job, by default.
+ *
+ * The shipped setting is true, matching the host's own bash tool. The flag is
+ * one half of a pair: the background surface is only advertised when this is
+ * true AND the deployment composes a job registry, because a tool that
+ * advertises a capability its deployment cannot honour teaches the model
+ * something false about the session.
+ */
+export const DEFAULT_ENABLE_RUN_IN_BACKGROUND = true
 
 /**
  * Whether the host's pwsh tool is withdrawn from a session this plugin serves,
@@ -87,6 +100,8 @@ export interface WinBashConfigInput {
   syncWithLiangShen?: boolean
   /** Whether the host's pwsh tool is hidden while win_bash is registered. */
   replacePwsh?: boolean
+  /** Whether run_in_background is available (also requires a job registry). */
+  enableRunInBackground?: boolean
 }
 
 /** Config shape the plugin runs with; every field resolved. */
@@ -103,6 +118,8 @@ export interface WinBashConfig {
   syncWithLiangShen: boolean
   /** Whether the host's pwsh tool is hidden while win_bash is registered. */
   replacePwsh: boolean
+  /** Whether run_in_background is available (also requires a job registry). */
+  enableRunInBackground: boolean
 }
 
 /** Runtime configuration schema for the win_bash tool. */
@@ -113,6 +130,7 @@ export const Config: z<WinBashConfigInput, WinBashConfig> = z.object({
   description: z.string().default(DEFAULT_DESCRIPTION),
   syncWithLiangShen: z.boolean().default(DEFAULT_SYNC_WITH_LIANGSHEN),
   replacePwsh: z.boolean().default(DEFAULT_REPLACE_PWSH),
+  enableRunInBackground: z.boolean().default(DEFAULT_ENABLE_RUN_IN_BACKGROUND),
 })
 
 /** The values an omitted field takes. */
@@ -123,6 +141,7 @@ export const CONFIG_DEFAULTS: WinBashConfig = {
   description: DEFAULT_DESCRIPTION,
   syncWithLiangShen: DEFAULT_SYNC_WITH_LIANGSHEN,
   replacePwsh: DEFAULT_REPLACE_PWSH,
+  enableRunInBackground: DEFAULT_ENABLE_RUN_IN_BACKGROUND,
 }
 
 /** One rejected configuration field. */
@@ -181,6 +200,9 @@ export function validateConfig(config: WinBashConfig): ConfigViolation[] {
   }
   if (typeof config.replacePwsh !== 'boolean') {
     violations.push({ field: 'replacePwsh', message: 'must be a boolean' })
+  }
+  if (typeof config.enableRunInBackground !== 'boolean') {
+    violations.push({ field: 'enableRunInBackground', message: 'must be a boolean' })
   }
   return violations
 }

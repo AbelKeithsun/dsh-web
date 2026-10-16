@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CONFIG_DEFAULTS,
+  DEFAULT_ENABLE_RUN_IN_BACKGROUND,
   DEFAULT_REPLACE_PWSH,
   DEFAULT_SYNC_WITH_LIANGSHEN,
   DEFAULT_TIMEOUT_MS,
@@ -69,6 +70,25 @@ describe('configuration resolution', () => {
     // Then the opt-out survives resolution while the defaults hold elsewhere.
     expect(config.replacePwsh).toBe(false)
     expect(config.syncWithLiangShen).toBe(DEFAULT_SYNC_WITH_LIANGSHEN)
+  })
+
+  it('operator mounting the shipped default gets the background capability on', () => {
+    // Given a profile row that supplies no config,
+    const config = resolveConfig(undefined)
+    // When the config is resolved,
+    // Then the capability ships ON, matching the host's own bash tool; whether
+    // it is actually advertised still depends on a composed job registry.
+    expect(config.enableRunInBackground).toBe(DEFAULT_ENABLE_RUN_IN_BACKGROUND)
+    expect(config.enableRunInBackground).toBe(true)
+  })
+
+  it('operator turning the background capability off gets that value through to the running config', () => {
+    // Given a row that opts out of background execution,
+    const config = resolveConfig({ enableRunInBackground: false })
+    // When the config is resolved,
+    // Then the opt-out survives while every other field keeps its default.
+    expect(config.enableRunInBackground).toBe(false)
+    expect(config.timeoutMs).toBe(DEFAULT_TIMEOUT_MS)
   })
 
   it('operator turning the escape hatch off gets that value through to the running config', () => {
@@ -138,6 +158,14 @@ describe('configuration rejection', () => {
     const violations = validateConfig({ ...CONFIG_DEFAULTS, replacePwsh: 'no' as unknown as boolean })
     // Then the offending field is named, so an operator can fix the row.
     expect(violations).toEqual([{ field: 'replacePwsh', message: 'must be a boolean' }])
+  })
+
+  it('operator supplying a non-boolean background switch gets a rejection naming the field', () => {
+    // Given a row whose background switch is not a boolean,
+    // When the config is validated,
+    const violations = validateConfig({ ...CONFIG_DEFAULTS, enableRunInBackground: 'yes' as unknown as boolean })
+    // Then the offending field is named, so an operator can fix the row.
+    expect(violations).toEqual([{ field: 'enableRunInBackground', message: 'must be a boolean' }])
   })
 
   it('operator supplying a non-boolean sync switch gets a rejection naming the field', () => {

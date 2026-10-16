@@ -23,6 +23,10 @@ shell 必须持久，因为 shell 是有状态的：一条命令 `cd` 过、expo
 - 每个会话维持一个持久 `bash -s` 进程。当前目录、导出的变量、函数、别名和 shell
   历史在该会话的多次调用之间保留，且不与其它会话共享。
 - 每次调用都是前台命令：stdout 与 stderr 分离、各有字节上限、返回命令真实的退出码。
+  超出上限的输出会在模型读到的文本里被标记为截断，而不是被无声切掉。
+- 可选地把命令作为后台任务放进它自己的钉死 bash 进程，立即返回 job id，
+  于是长构建或 watch 既不占住这次调用，也不会随会话 shell 一起死。见
+  [后台命令](#后台命令)。
 - 工具注册之前先按 SHA256 清单校验随包载荷；摘要不匹配即拒绝挂载。
 - `win_bash` 注册期间，把宿主自带的 `pwsh` 工具从会话的模型可见面上替换掉，
   使命令工作落到 bash，而不是落到模型本来就更熟的那个 shell。见
@@ -100,8 +104,9 @@ bundle patch 把本包的行在非 Windows 宿主上标为 disabled，因此 POS
 | 字段 | 默认值 | 含义 |
 | --- | --- | --- |
 | `timeoutMs` | 300000 | 单次调用的墙钟上限（毫秒，1000..3600000）。超时会停掉该 shell，下一次调用起新 shell。 |
-| `maxStdoutBytes` | 131072 | stdout 可见字节上限（1024..1048576）。超出部分从前面丢弃，并在结果里标记被截断。 |
+| `maxStdoutBytes` | 131072 | stdout 可见字节上限（1024..1048576）。超出部分从前面丢弃，并在结果文本里写明。 |
 | `maxStderrBytes` | 32768 | stderr 可见字节上限（1024..524288）。 |
+| `enableRunInBackground` | true | 是否提供 `run_in_background`。只有该项为 true 且部署组合了 job registry 时该参数才会被声明；没有 registry 的部署不会声明它，此时仍然请求该参数的调用会被拒绝，而不是退化到前台执行。 |
 | `description` | 内置 | 面向模型的工具描述；部署可描述自己的环境。 |
 | `syncWithLiangShen` | true | 为 true 时仅在 `liangshen` agent preset 已声明时注册本工具；false 跳过该门控、总是注册。 |
 | `replacePwsh` | true | 本工具注册期间，把宿主的 `pwsh` 工具从每个会话的模型可见面上撤下。只管可见性：刻意发起的 `pwsh` 调用照常执行。false 则两个 shell 并列。 |
@@ -113,8 +118,42 @@ bundle patch 把本包的行在非 Windows 宿主上标为 disabled，因此 POS
 | `command` | 是 | 要执行的 bash 命令，可多行。 |
 | `workdir` | 否 | 本次命令的工作目录。省略则沿用 shell 当前目录。 |
 | `timeoutMs` | 否 | 单次上限，会被夹到配置的上限。 |
+| `run_in_background` | 否 | 在独立的钉死 bash 进程里执行，并立即返回 job id。仅在组合了 job registry 时提供（见[配置](#配置)）。 |
 
-结果包含 `stdout`、`stderr`、命令的 `exitCode`，以及本次调用的沙箱事实。
+结果包含 `stdout`、`stderr`、命令的 `exitCode`、两条流的截断事实
+（`stdoutTruncated`、`stderrTruncated`、`stdoutLostHead`、`stderrLostHead`、
+`frameOverflow`，以及保存完整流的 `stdoutSpillPath`/`stderrSpillPath`），
+以及本次调用的沙箱事实。
+
+某条流被截断时，模型可见文本末尾会多出一行，例如：
+
+```text
+[win_bash: stdout was truncated, only the last 131072 bytes are shown; the beginning was dropped; a middle window was dropped by the frame watch limit]
+```
+
+## 后台命令
+
+`run_in_background: true` 会在它**自己的**钉死 bash 进程里执行命令——同一条绝对
+载荷路径、同一份环境契约、同一套受限逻辑——并立即返回 job id，而不是等命令结束。
+用宿主的 `job_output` 收取该任务，用 `job_kill` 终止它。
+
+独立进程是要点，不是实现细节。会话的持久 shell 位于 subprocess provider 的托管进程
+范围内，销毁该范围会终止其中所有仍在运行的进程；因此用 shell 内 `&` 起的任务会随起
+它的 shell 一起死——下一次超时、下一次中止、或会话销毁时。所以后台命令拥有自己的进
+程，并比发起它的那次调用活得更久。
+
+- **自己的 shell。** 绝不用会话的持久 shell，因此后台命令不会扰乱前台 shell 的当前
+  目录、导出变量或历史。
+- **同一份环境契约。** `PATH` 以载荷的 `usr/bin` 打头，`MSYSTEM=MSYS`、
+  `TERM=dumb`、`--norc --noprofile`，且 `TMPDIR`/`TMP`/`TEMP` 指向该任务私有的
+  目录。
+- **同一套受限逻辑。** 受限模式下该进程与前台调用一样经 sandbox provider 的
+  `confine` 启动；没有可用 provider 的组合会以同一条 `SANDBOX_UNAVAILABLE` 错误被
+  拒绝，而不是不受限地跑起来。
+- **没有超时。** 任务注册完成即返回；命令的寿命由 `job_kill` 与会话结束界定。
+- **绝不静默退化。** 在没有组合 job registry 的部署上，该调用会以
+  `BACKGROUND_UNAVAILABLE` 被拒绝并说明原因；绝不会悄悄改成前台执行——那会让调用方
+  一直等到命令结束，然后随那个 shell 一起死。
 
 ## 权限
 
@@ -144,7 +183,10 @@ shell、其 userland 以及精确的 DLL 闭包。同一 release 的两份资产
   工具。
 - 每个会话一个 shell，并随会话结束而结束。shell 退出或卡死时下一次调用会换一个新的，
   且那次调用会明确说明。
-- 命令输出超过可见上限时会丢掉前面的一段。保留的是尾部，结果里也会写明被截断。
+- 命令输出超过可见上限时会丢掉前面的一段。保留的是尾部，结果里会写明被截断、显示了多少
+  字节，以及在 provider 留下 spill 文件时完整流在哪里。
+- 后台任务是「一个进程执行一条命令」：任务之间没有持久状态，也不能由正在跑的前台调用
+  「升级」而来（前台调用到达 `timeoutMs` 时仍然会停掉它的 shell）。
 
 ## 后续工作
 

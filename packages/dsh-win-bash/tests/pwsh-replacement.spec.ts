@@ -334,6 +334,11 @@ describe('the shipped description states the shell preference', () => {
     // And the full text still carries the persistence guarantee it shipped with.
     expect(description).toContain('persist across win_bash calls')
     expect(description).toContain('real exit code')
+    // And the background usage is stated in the same description, so a model
+    // that needs a job knows the parameter exists without a schema read.
+    expect(description).toContain('run_in_background')
+    expect(description).toContain('job_output')
+    expect(description).toContain('job_kill')
     expect(/^[\x20-\x7e]+$/u.test(description)).toBe(true)
   })
 })

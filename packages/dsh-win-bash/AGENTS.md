@@ -6,8 +6,8 @@ packages/AGENTS.md 的全局/包级规则。
 ## 本包要点
 
 - **host-only 包**：只有 `src/index.ts`（host 半区）与 `src/shell.ts`、`src/tool.ts`、
-  `src/protocol.ts`、`src/runtime.ts`、`src/config.ts`、`src/gate.ts`。没有 `src/client/`，
-  因此 `shared/tsdown.client.ts` 自动跳过浏览器 bundle；`dsh.client` 不声明。
+  `src/background.ts`、`src/protocol.ts`、`src/runtime.ts`、`src/config.ts`、`src/gate.ts`。
+  没有 `src/client/`，因此 `shared/tsdown.client.ts` 自动跳过浏览器 bundle；`dsh.client` 不声明。
 - **可用性门控跟随梁神预设声明**（`src/gate.ts`）：挂载时向 agent-preset 注册表
   查询是否声明了 id `liangshen` 的预设，未声明即不注册工具（绝不注册一个总会报错
   的工具），`syncWithLiangShen: false` 为逃生口。门控读的是注册表的公开 `list()`
@@ -36,6 +36,23 @@ packages/AGENTS.md 的全局/包级规则。
   卡死 shell」这一核心保证；`tests/protocol.spec.ts` 的 fixture 必须按 bash 实际写出的字节构造。
 - **恢复策略对外可见**：shell 退出、超时、中止都会销毁该 shell，且必须在下一次调用的结果或错误里
   说明状态已丢失；不得静默换壳。
+- **截断事实属于模型可见契约**：`src/shell.ts` 算出的 `stdoutTruncated`/`stderrTruncated`/
+  `stdoutLostHead`/`stderrLostHead`/`frameOverflow`/spill 路径必须在 `src/tool.ts` 的
+  `output.schema` 里声明，并由 `renderResult` 写进模型读到的文本。可见文本是流的**尾部**，
+  开头可能从一个半行开始；没有这条提示，模型无法把被截断的结果和本来就短的结果区分开。
+- **后台任务必须拥有自己的进程**（`src/background.ts`）：会话的持久 shell 位于 subprocess
+  provider 的托管进程范围内，销毁该范围会杀掉其中所有存活进程，所以壳内 `&` 起的任务会随壳
+  而死。后台一律走独立 pinned 进程 + `ctx.jobs` 注册，输出经 registry 的 pull 源（
+  `handle.collected.*.readFrom`），不得自行无界缓冲。
+- **`ctx.jobs` 只做结构化镜像**（同 `src/gate.ts` 的先例）：本包不依赖 `@deepseek-ai/dsh-jobs`，
+  只用 `src/background.ts` 头部抄录的公开签名。组合没有该服务时**诚实拒绝**
+  （`BACKGROUND_UNAVAILABLE`），绝不静默退化到前台执行——那会让调用方等到命令结束，
+  然后随那个 shell 一起死。`enableRunInBackground` 与「是否有 registry」共同决定该参数是否
+  被声明：声明一个部署无法兑现的能力，就是在教模型错的事实。
+- **受限模式对前台与后台一视同仁**：两条路径都必须经 `sandbox.confine()`，并且真正被派生
+  的必须是它返回的**受限 argv**（`ConfinedArgv.argv`，而不是载荷自己的 argv——只算不用，
+  等于命令仍在边界之外运行）；没有 provider 时两边都以 `SANDBOX_UNAVAILABLE` 拒绝。
+  这条契约由 `tests/confinement.spec.ts` 结构性地钉住。
 
 ## 提交前检查
 

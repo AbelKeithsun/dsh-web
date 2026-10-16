@@ -39,6 +39,9 @@ export const GRACE_MS = 5000
 /** Ceiling on the bytes buffered while looking for a frame's end marker. */
 export const FRAME_WATCH_BYTES = 4 * 1024 * 1024
 
+/** In-memory capture ceiling for one shell's stderr, in bytes. */
+export const SHELL_STDERR_CAPTURE_BYTES = 256 * 1024
+
 /** Poll cadence while waiting for a frame to complete. */
 const POLL_INTERVAL_MS = 15
 
@@ -50,6 +53,62 @@ export const TIMEOUT_EXIT_CODE = 124
 
 /** Environment variable names carrying the per-shell private temp directory. */
 export const TEMP_ENV_KEYS = ['TMPDIR', 'TMP', 'TEMP'] as const
+
+/**
+ * The argv of one pinned shell: the payload's own bash by absolute path, no rc
+ * file and no profile, reading its commands from stdin. This tool never
+ * consults PATH, and every shell it starts — the session's persistent one and
+ * every background job — is built from this one function so the two can never
+ * drift into different shells.
+ * @param runtime - the verified payload paths.
+ * @returns the argv to spawn, or to hand to the confinement provider.
+ */
+export function shellArgv(runtime: { bash: string }): string[] {
+  return [runtime.bash, '--norc', '--noprofile', '-s']
+}
+
+/**
+ * The environment contract every pinned shell starts with.
+ * @param runtime - the verified payload paths.
+ * @param temp - the private temp directory that shell owns.
+ * @param base - the ambient environment the PATH is appended to.
+ * @returns the entries this tool sets explicitly.
+ */
+export function shellEnvironment(
+  runtime: { bin: string },
+  temp: string,
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    // The vendored usr/bin goes FIRST on PATH: the payload's own userland
+    // is what commands resolve to, and no host Git for Windows, WSL or
+    // per-user shim later in the inherited PATH can shadow it.
+    PATH: runtime.bin + (process.platform === 'win32' ? ';' : ':') + (base.PATH ?? ''),
+    // The payload resolves /tmp from its own etc/fstab usertemp entry,
+    // which follows these three names. Pinning them keeps bash's whole
+    // mkstemp family inside one private directory per shell instead of
+    // the machine's shared temp root.
+    TMPDIR: temp,
+    TMP: temp,
+    TEMP: temp,
+    // The MSYS2 personality the payload was built from, which
+    // profile.d/msystem reads.
+    MSYSTEM: 'MSYS',
+    // No terminal is attached, so coreutils would otherwise colour output
+    // and pad it into columns based on an inherited TERM guess.
+    TERM: 'dumb',
+  }
+}
+
+/**
+ * Create one shell process's private temp directory.
+ * @returns the absolute directory, created if absent.
+ */
+export function shellTempDir(): string {
+  const temp = join(tmpdir(), 'dsh-win-bash-' + process.pid.toString() + '-' + randomUUID().slice(0, 8))
+  mkdirSync(temp, { recursive: true })
+  return temp
+}
 
 /** One command's complete result, as the tool consumes it. */
 export interface ShellResult {
@@ -120,6 +179,21 @@ interface ShellCursor {
   stdout: number
   /** Bytes of stderr already consumed by earlier calls. */
   stderr: number
+}
+
+/**
+ * How one {@link ShellRegistry.run} call starts a shell it does not have yet.
+ *
+ * `argv` is supplied by the caller because confinement is a per-call decision
+ * made outside this registry: under a restricted session mode the sandbox
+ * provider wraps the exact argv about to be spawned, and a registry that
+ * spawned the payload's own argv anyway would run every command outside the
+ * boundary the user selected. Omitted starts the payload's unconfined shell,
+ * which is the correct shape for danger-full-access.
+ */
+export interface ShellLaunch {
+  /** The executable and arguments to spawn; defaults to the payload's own bash. */
+  readonly argv?: readonly string[]
 }
 
 /** Budgets and deadline for one {@link ShellRegistry.run} call. */
@@ -274,6 +348,8 @@ export class ShellRegistry {
    * @param cwd - the session workspace a newly started shell begins in.
    * @param command - the command to run.
    * @param budget - output budgets and the call deadline.
+   * @param launch - the argv a shell started by this call must use (the
+   *   confined argv under a restricted mode).
    * @returns the command's complete result.
    */
   async run(
@@ -282,8 +358,9 @@ export class ShellRegistry {
     cwd: string,
     command: string,
     budget: RunBudget,
+    launch: ShellLaunch = {},
   ): Promise<ShellResult> {
-    const shell = await this.ensure(owner, runtime, cwd, budget.signal)
+    const shell = await this.ensure(owner, runtime, cwd, budget.signal, launch.argv)
     const marker = markerFor(randomUUID())
     const stdout = new StreamTail('stdout', shell.cursor.stdout)
     const stderr = new StreamTail('stderr', shell.cursor.stderr)
@@ -379,6 +456,7 @@ export class ShellRegistry {
    * @param runtime - absolute shell and payload paths.
    * @param cwd - the session workspace a new shell starts in.
    * @param signal - cancellation while the shell starts.
+   * @param argv - the argv to spawn; omitted uses the payload's own bash.
    * @returns the live shell record.
    */
   private async ensure(
@@ -386,40 +464,21 @@ export class ShellRegistry {
     runtime: { bash: string, bin: string },
     cwd: string,
     signal?: AbortSignal,
+    argv?: readonly string[],
   ): Promise<LiveShell> {
     const existing = this.shells.get(owner)
     if (existing !== undefined && !existing.exited) return existing
     if (existing !== undefined) this.shells.delete(owner)
-    const temp = join(tmpdir(), 'dsh-win-bash-' + process.pid.toString() + '-' + randomUUID().slice(0, 8))
-    mkdirSync(temp, { recursive: true })
     const handle = this.subprocess.spawn({
-      argv: [runtime.bash, '--norc', '--noprofile', '-s'],
+      argv: argv === undefined ? shellArgv(runtime) : [...argv],
       cwd,
       stdio: {
         stdin: 'pipe',
         stdout: { maxBytes: FRAME_WATCH_BYTES, spill: { maxBytes: DEFAULT_SPILL_BYTES } },
-        stderr: { maxBytes: 256 * 1024, spill: { maxBytes: DEFAULT_SPILL_BYTES } },
+        stderr: { maxBytes: SHELL_STDERR_CAPTURE_BYTES, spill: { maxBytes: DEFAULT_SPILL_BYTES } },
       },
       graceMs: GRACE_MS,
-      env: {
-        // The vendored usr/bin goes FIRST on PATH: the payload's own userland
-        // is what commands resolve to, and no host Git for Windows, WSL or
-        // per-user shim later in the inherited PATH can shadow it.
-        PATH: runtime.bin + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH ?? ''),
-        // The payload resolves /tmp from its own etc/fstab usertemp entry,
-        // which follows these three names. Pinning them keeps bash's whole
-        // mkstemp family inside one private directory per shell instead of
-        // the machine's shared temp root.
-        TMPDIR: temp,
-        TMP: temp,
-        TEMP: temp,
-        // The MSYS2 personality the payload was built from, which
-        // profile.d/msystem reads.
-        MSYSTEM: 'MSYS',
-        // No terminal is attached, so coreutils would otherwise colour output
-        // and pad it into columns based on an inherited TERM guess.
-        TERM: 'dumb',
-      },
+      env: shellEnvironment(runtime, shellTempDir()),
     })
     const shell: LiveShell = { handle, exited: false, cursor: { stdout: 0, stderr: 0 }, exitCode: null }
     const markExited = (outcome: { exitCode: number | null }): void => {
