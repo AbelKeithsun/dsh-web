@@ -29,6 +29,16 @@ export const TOPIC_APPROVAL_REQUEST = 'approval.request'
 export const CAP_SESSION_SNAPSHOT_TRIM = 'session.snapshot.trim.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to have
+ * `session.snapshot` answer with one bounded page instead of the whole opening
+ * window. Declaring it is what makes an opening screen cost one page rather
+ * than a whole session; a client that does not declare it — including every
+ * client written before this capability existed — receives byte for byte the
+ * snapshot protocol v1 always served.
+ */
+export const CAP_SESSION_SNAPSHOT_PAGE = 'session.snapshot.page.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.

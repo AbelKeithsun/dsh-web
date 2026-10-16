@@ -23,6 +23,7 @@ import { EventSequence, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFr
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import type { PairingService } from './pairing.ts'
 import {
+  CAP_SESSION_SNAPSHOT_PAGE,
   CAP_SESSION_SNAPSHOT_TRIM,
   CODE_APPROVAL_UNKNOWN,
   CODE_INTERNAL,
@@ -156,6 +157,25 @@ function optionalText(value: unknown): string | undefined {
 /** @returns a non-negative safe integer page argument, or undefined. */
 function pageNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+/**
+ * Read one request's page budget.
+ *
+ * An absent budget is {@link HISTORY_PAGE_BYTES}; a budget an encoded page
+ * could never be measured against — zero, fractional, negative or larger than
+ * one frame — is refused rather than clamped, so a caller never mistakes a
+ * silently reduced page for the one it asked for.
+ * @param value - the request's `maxBytes` member, or undefined.
+ * @param method - the method name the refusal names.
+ */
+function pageBudgetOf(value: unknown, method: string): { readonly ok: true; readonly maxBytes: number } | CallFailure {
+  if (value === undefined) return { ok: true, maxBytes: HISTORY_PAGE_BYTES }
+  const maxBytes = pageNumber(value)
+  if (maxBytes === undefined || maxBytes < 1 || maxBytes > MAX_FRAME_BYTES) {
+    return refusal(CODE_INVALID_ARGS, `${method} maxBytes must be between 1 and ${MAX_FRAME_BYTES}`)
+  }
+  return { ok: true, maxBytes }
 }
 
 /**
@@ -420,6 +440,20 @@ export class BridgeConnection {
     return { ok: true, r: { titles } }
   }
 
+  /**
+   * Answer `session.snapshot`: the opening window, or one page of it.
+   *
+   * A client that declared {@link CAP_SESSION_SNAPSHOT_PAGE} gets the newest
+   * page inside `maxBytes` (default {@link HISTORY_PAGE_BYTES}) instead of the
+   * whole window, so an opening screen costs one page. The page is cut by the
+   * same entry-level slice `session.history` uses, so the two can never
+   * disagree, an entry larger than the whole budget is a page of its own rather
+   * than a refusal, and `snapshot-too-large` cannot answer such a connection.
+   * The oldest entry's own `seq` is the `before` cursor for the next, older
+   * page; no second field restates it.
+   * @param payload - `{sessionId, maxBytes?}`.
+   * @param id - the request id the page budget is measured against.
+   */
   async #sessionSnapshot(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {
     const sessionId = stringArg(payload, 'sessionId')
     if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.snapshot requires sessionId')
@@ -427,10 +461,20 @@ export class BridgeConnection {
     if (!opening.ok) return refusal(opening.code, `session ${sessionId} produced no opening frame (${opening.msg})`)
     // A client that declared the trim capability chooses what it is sent, never
     // which turns it gets: the projection is trimmed inside each turn first, and
-    // only then does the frame budget start dropping whole turns.
-    const fitted = this.#fitTurns(this.#projectionOf(opening.baseline.records), opening.baseline.cursor, id)
-    if (fitted === undefined) return refusal(CODE_SNAPSHOT_TOO_LARGE, `session ${sessionId} does not fit one ${MAX_FRAME_BYTES} byte frame`)
-    return { ok: true, r: { turns: fitted.turns, lastSeq: fitted.lastSeq } }
+    // only then does any frame or page budget apply.
+    const projection = this.#projectionOf(opening.baseline.records)
+    if (!this.#capabilities.has(CAP_SESSION_SNAPSHOT_PAGE)) {
+      // Not declared: the whole window, shrunk by whole turns, unchanged.
+      const fitted = this.#fitTurns(projection, opening.baseline.cursor, id)
+      if (fitted === undefined) return refusal(CODE_SNAPSHOT_TOO_LARGE, `session ${sessionId} does not fit one ${MAX_FRAME_BYTES} byte frame`)
+      return { ok: true, r: { turns: fitted.turns, lastSeq: fitted.lastSeq } }
+    }
+    const budget = pageBudgetOf(payload.maxBytes, METHOD_SESSION_SNAPSHOT)
+    if (!budget.ok) return budget
+    const lastSeq = opening.baseline.cursor
+    const page = pageTurns(projection, undefined, budget.maxBytes, (turns, _nextBefore, hasMore) =>
+      Buffer.byteLength(JSON.stringify(responseFrame(id, { turns, lastSeq, hasMore })), 'utf8'))
+    return { ok: true, r: { turns: page.turns, lastSeq, hasMore: page.hasMore } }
   }
 
   /**
@@ -451,13 +495,11 @@ export class BridgeConnection {
     if (payload.before !== undefined && before === undefined) {
       return refusal(CODE_INVALID_ARGS, 'session.history before must be a non-negative integer')
     }
-    const maxBytes = payload.maxBytes === undefined ? HISTORY_PAGE_BYTES : pageNumber(payload.maxBytes)
-    if (maxBytes === undefined || maxBytes < 1 || maxBytes > MAX_FRAME_BYTES) {
-      return refusal(CODE_INVALID_ARGS, `session.history maxBytes must be between 1 and ${MAX_FRAME_BYTES}`)
-    }
+    const budget = pageBudgetOf(payload.maxBytes, METHOD_SESSION_HISTORY)
+    if (!budget.ok) return budget
     const opening = await this.#awaitOpening(this.#ensureSubscription(sessionId))
     if (!opening.ok) return refusal(opening.code, `session ${sessionId} produced no opening frame (${opening.msg})`)
-    const page = pageTurns(this.#projectionOf(opening.baseline.records), before, maxBytes, (turns, nextBefore, hasMore) =>
+    const page = pageTurns(this.#projectionOf(opening.baseline.records), before, budget.maxBytes, (turns, nextBefore, hasMore) =>
       Buffer.byteLength(JSON.stringify(responseFrame(id, { turns, ...(nextBefore === undefined ? {} : { nextBefore }), hasMore })), 'utf8'))
     return {
       ok: true,
