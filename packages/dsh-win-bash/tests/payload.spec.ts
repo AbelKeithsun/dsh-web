@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   bashPath,
+  binDir,
   parseChecksums,
   resolveRuntime,
   runtimeRoot,
@@ -59,6 +60,21 @@ describe('the vendored payload', () => {
     const unregistered = walked.filter(rel => rel !== 'checksums.sha256' && !registered.has(rel))
     // Then nothing ships unverified: the manifest names every payload file.
     expect(unregistered).toEqual([])
+  })
+
+  it('admin auditing the payload gets sleep and seq registered from the second source asset', () => {
+    // Given the shipped payload and its manifest,
+    const root = runtimeRoot()
+    const entries = parseChecksums(readFileSync(join(root, 'checksums.sha256'), 'utf8'))
+    // When the two files the MinGit archive does not ship are looked up,
+    const sleep = entries.find(entry => entry.path === 'usr/bin/sleep.exe')
+    const seq = entries.find(entry => entry.path === 'usr/bin/seq.exe')
+    // Then both are registered with the digests PROVENANCE.md records for the
+    // Git tarball they come from, and both are on disk at their pinned sizes.
+    expect(sleep?.sha256).toBe('3dfa2435317339e861121c1bd22e57b7b67c204705f00a88b5ac10a0cba87514')
+    expect(seq?.sha256).toBe('6e5c79fce1d50d888b38f5a0a02a314265e733f151e8b9d2c953b363a60d27d0')
+    expect(statSync(join(binDir(), 'sleep.exe')).size).toBe(36003)
+    expect(statSync(join(binDir(), 'seq.exe')).size).toBe(68488)
   })
 
   it('operator installing the package gets a payload verification pass with zero mismatches', () => {

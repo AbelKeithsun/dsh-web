@@ -153,13 +153,15 @@ This tool offers no per-call escalation argument.
 
 ## Payload
 
-The vendored runtime is Git for Windows MinGit `v2.56.0.windows.2` (the official
-upstream release, `MinGit-2.56.0.2-64-bit.zip`), reduced to the shell, its
-userland and its exact DLL closure. Every file is registered in
+The vendored runtime comes from Git for Windows `v2.56.0.windows.2` (the
+official upstream release), reduced to the shell, its userland and its exact
+DLL closure. Two assets of that release supply it: the MinGit archive
+`MinGit-2.56.0.2-64-bit.zip` carries everything except `usr/bin/sleep.exe` and
+`usr/bin/seq.exe`, which MinGit does not ship at all and which come from the
+same release's full `Git-2.56.0.2-64-bit.tar.bz2`. Every file is registered in
 `runtime/win32-x64/checksums.sha256` and every redistributed component's license
-text ships beside it. [PROVENANCE.md](PROVENANCE.md) records the upstream URL,
-the source zip digest, the curation rules, the payload inventory and the
-license mapping.
+text ships beside it. [PROVENANCE.md](PROVENANCE.md) records both source URLs and
+digests, the curation rules, the payload inventory and the license mapping.
 
 ## Known limitations
 
@@ -174,8 +176,8 @@ license mapping.
 
 ## Follow-up work
 
-- A packaging-time verification script that re-downloads the pinned MinGit
-  asset, rebuilds the payload and diffs the result against `checksums.sha256`,
+- A packaging-time verification script that re-downloads the pinned source
+  assets, rebuilds the payload and diffs the result against `checksums.sha256`,
   so a payload refresh is machine-checked rather than hand-reviewed.
 
 ## License

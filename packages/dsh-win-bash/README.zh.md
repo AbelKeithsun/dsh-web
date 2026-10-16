@@ -127,11 +127,14 @@ bundle patch 把本包的行在非 Windows 宿主上标为 disabled，因此 POS
 
 ## 载荷
 
-随包载荷是 Git for Windows MinGit `v2.56.0.windows.2`（官方上游 release，
-`MinGit-2.56.0.2-64-bit.zip`），裁剪为 shell、其 userland 以及精确的 DLL 闭包。每个
-文件都登记在 `runtime/win32-x64/checksums.sha256`，每个被再分发组件的许可证文本都
-随载荷保留。[PROVENANCE.md](PROVENANCE.md) 记录上游 URL、源 zip 摘要、裁剪规则、载荷
-清单与许可证对照表。
+随包载荷来自 Git for Windows `v2.56.0.windows.2`（官方上游 release），裁剪为
+shell、其 userland 以及精确的 DLL 闭包。同一 release 的两份资产共同构成它：MinGit
+资产 `MinGit-2.56.0.2-64-bit.zip` 提供除 `usr/bin/sleep.exe` 与
+`usr/bin/seq.exe` 之外的全部文件，这两个文件 MinGit 并不出货，取自同一 release 的
+完整包 `Git-2.56.0.2-64-bit.tar.bz2`。每个文件都登记在
+`runtime/win32-x64/checksums.sha256`，每个被再分发组件的许可证文本都随载荷保留。
+[PROVENANCE.md](PROVENANCE.md) 记录两份来源资产的 URL 与摘要、裁剪规则、载荷清单与
+许可证对照表。
 
 ## 已知限制
 
@@ -145,7 +148,7 @@ bundle patch 把本包的行在非 Windows 宿主上标为 disabled，因此 POS
 
 ## 后续工作
 
-- 打包期校验脚本：重新下载钉死的 MinGit 资产、重建载荷并与 `checksums.sha256` 对
+- 打包期校验脚本：重新下载钉死的来源资产、重建载荷并与 `checksums.sha256` 对
   比，使载荷刷新由机器校验而不是靠人工评审。
 
 ## 许可证
