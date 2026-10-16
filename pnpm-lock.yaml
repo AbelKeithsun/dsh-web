@@ -1484,7 +1484,7 @@ importers:
         version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
       '@deepseek-ai/dsh-tools':
         specifier: ^0.2.0-rc.2
-        version: 0.2.0-rc.2(e19f5537aff42d83d844de3e50acf2c4)
+        version: 0.2.0-rc.2(e281582c3655c6eddd873bc3a767de16)
       '@deepseek-ai/schemastery':
         specifier: ^3.18.4
         version: 3.18.4
