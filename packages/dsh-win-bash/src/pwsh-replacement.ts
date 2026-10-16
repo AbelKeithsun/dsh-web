@@ -200,12 +200,20 @@ function policyReader(ctx: Context, injected: SessionPolicyReader | undefined): 
  * a mode outside the closed vocabulary all answer 'unknown', which the caller
  * treats exactly like 'refuses' — see the module head for why the failure
  * direction is one-way.
+ *
+ * THE MODE IS NOT THE ONLY THING WIN_BASH REFUSES ON. `tool.ts` also refuses a
+ * session with no working directory, and `SessionHeader.cwd` is OPTIONAL in the
+ * SDK, so such a session reads as full access here while it cannot run a single
+ * command there. That is the same "no shell" state reached without any mode
+ * switch, so it is decided here too rather than left to the mode alone.
  * @param read - the policy authority, when one exists.
  * @param session - the session to ask about.
- * @returns what the policy says about this session.
+ * @returns what win_bash would do for this session.
  */
 function servingVerdict(read: SessionPolicyReader | undefined, session: unknown): ServingVerdict {
   if (read === undefined || session === undefined) return 'unknown'
+  const cwd = (session as { header?: { cwd?: unknown } }).header?.cwd
+  if (typeof cwd !== 'string' || cwd === '') return 'refuses'
   try {
     const mode = read.resolve({ session })?.mode
     if (!SANDBOX_MODES.includes(mode)) return 'unknown'

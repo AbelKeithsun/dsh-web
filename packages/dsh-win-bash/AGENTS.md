@@ -61,8 +61,12 @@ packages/AGENTS.md 的全局/包级规则。
 - **回退契约：win_bash 是首选 shell，不是唯一 shell**。凡是它服务不了的场合，都必须有一条
   通往该平台原生 shell 工具的可见退路，两层都要守：
   ① **能力层**——pwsh 的撤下必须跟随「win_bash 是否真能服务这个会话」，而不是「是否已
-  挂载」；受限会话必须**保留** pwsh（`src/pwsh-replacement.ts`），否则会话会既看不到 pwsh
-  又用不了 win_bash，一个 shell 都没有。
+  挂载」。`src/pwsh-replacement.ts` 的 `servingVerdict` 是唯一的判定点，它必须覆盖 win_bash
+  的**每一条**拒绝理由，目前两条：会话模式不是 `danger-full-access`；以及**会话没有工作
+  目录**（`SessionHeader.cwd` 在 SDK 里是可选的，而 `tool.ts` 会因此拒绝——只看模式会漏掉
+  这条，会话读作 full-access 却一条命令都跑不了）。判定为 `unknown`（读不到策略服务、
+  无会话、`resolve` 抛错、模式不在词表内）时与 `refuses` 同样处理，绝不撤下。
+  漏掉任一条 = 会话既看不到 pwsh 又用不了 win_bash，一个 shell 都没有。
   ② **消息层**——每一条模型可见的拒绝/失败（`SANDBOX_UNSUPPORTED`、
   `BACKGROUND_UNAVAILABLE`、无策略服务、`ShellUnavailableError` 的握手类）都必须指明退路
   （`src/shell.ts` 的 `NATIVE_FALLBACK_HINT`），否则模型会反复重试一个不会恢复的 shell。

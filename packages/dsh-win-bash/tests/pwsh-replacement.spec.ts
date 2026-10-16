@@ -41,7 +41,7 @@ interface Session {
   /** The session's own sandbox mode, as the policy service answers for it. */
   mode: SandboxMode
   /** The session object the module matches its log events against. */
-  readonly session: { readonly id: string }
+  readonly session: { readonly id: string, readonly header?: { readonly cwd?: string } }
 }
 
 /** Distinguishes the stand-in sessions of one suite, so none shares an identity. */
@@ -57,9 +57,12 @@ let sessionCounter = 0
 function session(
   names: readonly string[],
   mode: SandboxMode = 'danger-full-access',
-): { agent: { ctx: { tools: { restrict: any } }, session: { id: string } }, state: Session } {
+): { agent: { ctx: { tools: { restrict: any } }, session: { id: string, header: { cwd: string } } }, state: Session } {
   sessionCounter += 1
-  const sessionRef = { id: 'session-' + sessionCounter.toString() }
+  // A real Session always carries a header, and tool.ts refuses a session whose
+  // header has no working directory — so the stand-in carries one too rather
+  // than reading as the cwd-less case by accident.
+  const sessionRef = { id: 'session-' + sessionCounter.toString(), header: { cwd: 'C:/workspace' } }
   const state: Session = {
     names: [...names], restrictions: [], lifts: 0, handlers: new Map(), mode, session: sessionRef,
   }
@@ -279,11 +282,33 @@ describe('the host pwsh replacement on Windows', () => {
     expect(recorded.schemaReads).toBe(0)
   })
 
-  it('operator whose session exposes no scoped tools view keeps the host shell and gets a warning', () => {
-    // Given a full-access session that exposes no scoped view to restrict through,
+  it('operator whose session has no working directory keeps the host shell, because win_bash refuses it too', () => {
+    // Given a full-access session with no cwd — SessionHeader.cwd is optional in
+    // the SDK, and tool.ts refuses exactly this session for exactly this reason,
     const state: Session = {
       names: ['win_bash', 'pwsh'], restrictions: [], lifts: 0, handlers: new Map(),
-      mode: 'danger-full-access', session: { id: 'session-no-scope' },
+      mode: 'danger-full-access', session: { id: 'session-no-cwd' },
+    }
+    const agent = { ctx: { tools: { restrict: (filter: { deny: readonly string[] }) => {
+      state.restrictions.push([...filter.deny])
+      return () => {}
+    } } }, session: state.session }
+    const { ctx } = hostContext([{ agent, state }])
+    // When the replacement is installed,
+    installPwshReplacement(ctx, { platform: 'win32' })
+    // Then pwsh stays: the mode alone would have withdrawn it, and this session
+    // would have been left with neither shell.
+    expect(state.restrictions).toEqual([])
+    expect(state.names).toContain('pwsh')
+  })
+
+  it('operator whose session exposes no scoped tools view keeps the host shell and gets a warning', () => {
+    // Given a full-access session that exposes no scoped view to restrict through,
+    // built with a real header so it reaches the scoped-view check rather than
+    // being refused earlier for having no working directory.
+    const state: Session = {
+      names: ['win_bash', 'pwsh'], restrictions: [], lifts: 0, handlers: new Map(),
+      mode: 'danger-full-access', session: { id: 'session-no-scope', header: { cwd: 'C:/workspace' } },
     }
     const agent = { ctx: {}, session: state.session }
     const { ctx, recorded } = hostContext([{ agent, state }])
