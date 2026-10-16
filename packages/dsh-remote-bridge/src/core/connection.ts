@@ -18,7 +18,7 @@
 
 import type { ApprovalRegistry } from './approvals.ts'
 import type { DeviceRoster } from './devices.ts'
-import { deltaOfFollowFrame, readFollowBaseline, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
+import { deltaOfFollowFrame, pageTurns, readFollowBaseline, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
 import { EventSequence, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import type { PairingService } from './pairing.ts'
@@ -39,6 +39,7 @@ import {
   METHOD_HELLO,
   METHOD_PAIR_BEGIN,
   METHOD_PAIR_FINISH,
+  METHOD_SESSION_HISTORY,
   METHOD_SESSION_INTERRUPT,
   METHOD_SESSION_LIST,
   METHOD_SESSION_PROMPT,
@@ -53,7 +54,7 @@ import {
 import { base64UrlDecode, verifyEs256 } from './crypto.ts'
 import { TITLES_MAX_IDS, type SessionMeta } from './session-meta.ts'
 import type { BridgeGateway } from './wire.ts'
-import { wireArgs } from './wire.ts'
+import { CODE_SUBAGENT_ADDRESS_REQUIRED, sessionAddress, subagentAddress, wireArgs, type SessionAddress } from './wire.ts'
 
 /** Protocol-level heartbeat period: a frame is sent after this long without one. */
 export const IDLE_PING_MS = 20_000
@@ -61,6 +62,8 @@ export const IDLE_PING_MS = 20_000
 export const SNAPSHOT_OPEN_TIMEOUT_MS = 10_000
 /** Largest turn window one snapshot asks DSH for. */
 export const SNAPSHOT_MAX_MESSAGES = 200
+/** Default byte budget of one `session.history` page: 512 KiB. */
+export const HISTORY_PAGE_BYTES = 512 * 1024
 /** Highest number of prompt receipts one connection remembers for idempotency. */
 export const PROMPT_RECEIPT_LIMIT = 512
 
@@ -89,12 +92,20 @@ export interface ConnectionAuth {
   readonly deviceId: string
 }
 
+/** The answer of a subscription's opening frame: a baseline, or why there is none. */
+type Opening = { readonly ok: true; readonly baseline: FollowBaseline } | { readonly ok: false; readonly code: string; readonly msg: string }
+
 /** One open follow stream and the answer its opening frame resolves. */
 interface Subscription {
   readonly sessionId: string
   readonly controller: AbortController
-  readonly args: Readonly<Record<string, unknown>>
-  opened: Promise<FollowBaseline>
+  /**
+   * Mutable on purpose: a delegated child is addressable only through its durable
+   * parent, and the bridge learns which address kind applies from the harness's own
+   * refusal on the first attempt.
+   */
+  address: SessionAddress
+  opened: Promise<Opening>
 }
 
 /** The refusal half of every dispatch outcome. */
@@ -142,9 +153,9 @@ function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
-/** The durable address of one ordinary session. */
-function sessionAddress(sessionId: string): Record<string, unknown> {
-  return { kind: 'session', sessionId }
+/** @returns a non-negative safe integer page argument, or undefined. */
+function pageNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 
 /**
@@ -176,6 +187,9 @@ export class BridgeConnection {
   readonly #receipts = new Set<string>()
   readonly #toolCalls = new ToolCallIndex()
   #capabilities: ReadonlySet<string> = new Set()
+  /** Delegated children this connection has learned the durable parent of, by child id. */
+  readonly #lineage = new Map<string, string>()
+  #lineageRead = false
   #deviceId: string | undefined
   #nonce: { readonly value: string; readonly expiresAt: number } | undefined
   #heartbeat: NodeJS.Timeout | undefined
@@ -284,6 +298,7 @@ export class BridgeConnection {
       case METHOD_SESSION_LIST: return await this.#sessionList()
       case METHOD_SESSION_TITLES: return this.#sessionTitles(frame.p)
       case METHOD_SESSION_SNAPSHOT: return await this.#sessionSnapshot(frame.p, frame.id)
+      case METHOD_SESSION_HISTORY: return await this.#sessionHistory(frame.p, frame.id)
       case METHOD_SESSION_PROMPT: return await this.#sessionPrompt(frame.p)
       case METHOD_SESSION_INTERRUPT: return await this.#sessionInterrupt(frame.p)
       case METHOD_APPROVAL_RESOLVE: return this.#approvalResolve(frame.p)
@@ -291,8 +306,7 @@ export class BridgeConnection {
     }
   }
 
-  #hello(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
-    const proto = payload.proto
+  #hello(payload: Readonly<Record<string, unknown>>): DispatchOutcome {    const proto = payload.proto
     if (proto !== PROTO) return refusal(CODE_PROTO_UNSUPPORTED, `this bridge speaks protocol ${PROTO}`)
     this.#capabilities = capabilitiesOf(payload.cap)
     return {
@@ -374,6 +388,10 @@ export class BridgeConnection {
         ...(archived === undefined ? {} : { archived: archived.has(item.sessionId) }),
       })
     }
+    // A listed roster is also the cheapest place to learn lineage: a delegated
+    // child's durable parent is on its own row, so a client that lists before it
+    // opens a session never costs a second read to address that session.
+    this.#rememberLineage(sessions)
     return { ok: true, r: { sessions } }
   }
 
@@ -405,16 +423,56 @@ export class BridgeConnection {
   async #sessionSnapshot(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {
     const sessionId = stringArg(payload, 'sessionId')
     if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.snapshot requires sessionId')
-    const baseline = await this.#awaitOpening(this.#ensureSubscription(sessionId))
-    if (baseline === undefined) return refusal(CODE_SNAPSHOT_UNAVAILABLE, `session ${sessionId} produced no opening frame`)
+    const opening = await this.#awaitOpening(this.#ensureSubscription(sessionId))
+    if (!opening.ok) return refusal(opening.code, `session ${sessionId} produced no opening frame (${opening.msg})`)
     // A client that declared the trim capability chooses what it is sent, never
     // which turns it gets: the projection is trimmed inside each turn first, and
     // only then does the frame budget start dropping whole turns.
-    const projected = turnsOfRecords(baseline.records)
-    const turns = this.#capabilities.has(CAP_SESSION_SNAPSHOT_TRIM) ? trimUnrenderedEntries(projected) : projected
-    const fitted = this.#fitTurns(turns, baseline.cursor, id)
+    const fitted = this.#fitTurns(this.#projectionOf(opening.baseline.records), opening.baseline.cursor, id)
     if (fitted === undefined) return refusal(CODE_SNAPSHOT_TOO_LARGE, `session ${sessionId} does not fit one ${MAX_FRAME_BYTES} byte frame`)
     return { ok: true, r: { turns: fitted.turns, lastSeq: fitted.lastSeq } }
+  }
+
+  /**
+   * Read one backwards page of a session's history.
+   *
+   * Pages are cut from the very baseline `session.snapshot` serves, so the two
+   * can never disagree about a turn or an entry; this method only slices that
+   * projection, by entry, from the newest entry below the caller's watermark. It
+   * is a pure read of the baseline: it never drops, replaces or re-addresses the
+   * subscription, and the same cursor always answers the same page.
+   * @param payload - `{sessionId, before?, maxBytes?}`.
+   * @param id - the request id the page budget is measured against.
+   */
+  async #sessionHistory(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.history requires sessionId')
+    const before = payload.before === undefined ? undefined : pageNumber(payload.before)
+    if (payload.before !== undefined && before === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'session.history before must be a non-negative integer')
+    }
+    const maxBytes = payload.maxBytes === undefined ? HISTORY_PAGE_BYTES : pageNumber(payload.maxBytes)
+    if (maxBytes === undefined || maxBytes < 1 || maxBytes > MAX_FRAME_BYTES) {
+      return refusal(CODE_INVALID_ARGS, `session.history maxBytes must be between 1 and ${MAX_FRAME_BYTES}`)
+    }
+    const opening = await this.#awaitOpening(this.#ensureSubscription(sessionId))
+    if (!opening.ok) return refusal(opening.code, `session ${sessionId} produced no opening frame (${opening.msg})`)
+    const page = pageTurns(this.#projectionOf(opening.baseline.records), before, maxBytes, (turns, nextBefore, hasMore) =>
+      Buffer.byteLength(JSON.stringify(responseFrame(id, { turns, ...(nextBefore === undefined ? {} : { nextBefore }), hasMore })), 'utf8'))
+    return {
+      ok: true,
+      r: {
+        turns: page.turns,
+        ...(page.nextBefore === undefined ? {} : { nextBefore: page.nextBefore }),
+        hasMore: page.hasMore,
+      },
+    }
+  }
+
+  /** The projection a baseline is served with: trimmed only for a client that asked for it. */
+  #projectionOf(records: readonly unknown[]): SnapshotTurn[] {
+    const projected = turnsOfRecords(records)
+    return this.#capabilities.has(CAP_SESSION_SNAPSHOT_TRIM) ? trimUnrenderedEntries(projected) : projected
   }
 
   async #sessionPrompt(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
@@ -488,55 +546,107 @@ export class BridgeConnection {
     const subscription: Subscription = {
       sessionId,
       controller: new AbortController(),
-      args: {
-        address: sessionAddress(sessionId),
-        // Decided after the frozen design's §2.1/§2.2 contradiction: one stream
-        // per session carries both the baseline and the process-local deltas.
-        assistantStream: true,
-        maxMessages: SNAPSHOT_MAX_MESSAGES,
-      },
-      opened: Promise.resolve({ cursor: 0, records: [], hasMore: false }),
+      address: this.#addressOf(sessionId),
+      // Resolved without ever rejecting: a caller may subscribe without awaiting
+      // the opening frame (`session.prompt` does exactly that), and an unobserved
+      // rejection would take the whole host process down under node's default
+      // `--unhandled-rejections=throw`.
+      opened: Promise.resolve({ ok: false, code: CODE_SNAPSHOT_UNAVAILABLE, msg: 'the stream was not opened' }),
     }
     subscription.opened = this.#openSubscription(subscription)
-    // A caller may subscribe without ever awaiting that opening frame:
-    // `session.prompt` does exactly that. An unobserved rejection would surface as
-    // an unhandled rejection and — under node's default `--unhandled-rejections=throw`
-    // — take the whole host process down. This second handler makes the rejection
-    // observed; `#awaitOpening` still awaits the original promise and still sees it.
-    subscription.opened.catch(() => undefined)
     this.#subscriptions.set(sessionId, subscription)
     return subscription
   }
 
-  async #openSubscription(subscription: Subscription): Promise<FollowBaseline> {
-    let stream: AsyncIterable<unknown>
-    try {
-      stream = await withServiceUnavailableRetry(() => this.#options.gateway.stream({
-        namespace: 'session',
-        method: 'follow',
-        args: wireArgs('session', 'follow', subscription.args),
-        signal: subscription.controller.signal,
-      }))
-    } catch (error) {
-      this.#forget(subscription)
-      throw error
+  /** The durable address of one session, as far as this connection has learned it. */
+  #addressOf(sessionId: string): SessionAddress {
+    const parent = this.#lineage.get(sessionId)
+    return parent === undefined ? sessionAddress(sessionId) : subagentAddress(parent, sessionId)
+  }
+
+  /** Remember the durable parent of every delegated child a roster carried. */
+  #rememberLineage(rows: readonly SessionRow[]): void {
+    for (const row of rows) {
+      if (row.origin === 'subagent' && row.parentSessionId !== undefined) this.#lineage.set(row.id, row.parentSessionId)
     }
-    const iterator = stream[Symbol.asyncIterator]()
-    let first: IteratorResult<unknown>
-    try {
-      first = await iterator.next()
-    } catch (error) {
-      this.#forget(subscription)
-      throw error
+  }
+
+  /**
+   * The durable parent of a delegated child, or undefined when the roster does
+   * not name one.
+   *
+   * The roster is the only endpoint that carries lineage, so it is read at most
+   * once per connection: a client that listed sessions has already populated the
+   * map, and a child opened without a listing costs exactly one roster read.
+   */
+  async #parentOf(sessionId: string): Promise<string | undefined> {
+    const known = this.#lineage.get(sessionId)
+    if (known !== undefined || this.#lineageRead) return known
+    const roster = await this.#sessionList()
+    if (roster.ok) this.#lineageRead = true
+    return this.#lineage.get(sessionId)
+  }
+
+  /**
+   * Open one follow stream, resolving the address kind the harness demands.
+   *
+   * A delegated child is addressable only through its durable parent, and the
+   * harness answers `session/agent-busy` when it is asked as an ordinary session.
+   * That refusal is the one signal that distinguishes it from a real failure, so
+   * it is the only one that triggers a roster lookup and a retry — everything
+   * else crosses to the caller unchanged.
+   */
+  async #openSubscription(subscription: Subscription): Promise<Opening> {
+    let outcome = await this.#openFollow(subscription)
+    if (!outcome.ok && outcome.code === CODE_SUBAGENT_ADDRESS_REQUIRED) {
+      const parent = await this.#parentOf(subscription.sessionId)
+      if (parent !== undefined) {
+        this.#lineage.set(subscription.sessionId, parent)
+        subscription.address = subagentAddress(parent, subscription.sessionId)
+        outcome = await this.#openFollow(subscription)
+      }
     }
-    const baseline = first.done === true ? undefined : readFollowBaseline(first.value)
-    if (baseline === undefined) {
+    if (!outcome.ok) {
+      // The stream is unusable for this connection: drop it rather than leaving a
+      // half-open subscription behind, so a later call starts a fresh one.
       this.#forget(subscription)
       subscription.controller.abort()
-      throw new Error('session/follow returned no opening snapshot frame')
     }
-    void this.#drain(subscription, iterator)
-    return baseline
+    return outcome
+  }
+
+  /** One attempt at the opening frame of a follow stream. */
+  async #openFollow(subscription: Subscription): Promise<Opening> {
+    let iterator: AsyncIterator<unknown>
+    try {
+      const stream = await withServiceUnavailableRetry(() => this.#options.gateway.stream({
+        namespace: 'session',
+        method: 'follow',
+        args: wireArgs('session', 'follow', {
+          address: subscription.address,
+          // Decided after the frozen design's §2.1/§2.2 contradiction: one stream
+          // per session carries both the baseline and the process-local deltas.
+          assistantStream: true,
+          maxMessages: SNAPSHOT_MAX_MESSAGES,
+        }),
+        signal: subscription.controller.signal,
+      }))
+      iterator = stream[Symbol.asyncIterator]()
+    } catch (error) {
+      return { ok: false, code: errorCodeOf(error, CODE_SNAPSHOT_UNAVAILABLE), msg: failureText(error) }
+    }
+    try {
+      const first = await iterator.next()
+      const baseline = first.done === true ? undefined : readFollowBaseline(first.value)
+      if (baseline === undefined) {
+        await iterator.return?.()
+        return { ok: false, code: CODE_SNAPSHOT_UNAVAILABLE, msg: 'session/follow returned no opening snapshot frame' }
+      }
+      void this.#drain(subscription, iterator)
+      return { ok: true, baseline }
+    } catch (error) {
+      return { ok: false, code: errorCodeOf(error, CODE_SNAPSHOT_UNAVAILABLE), msg: failureText(error) }
+    }
   }
 
   /** Consume the rest of a follow stream, publishing every increment. */
@@ -559,21 +669,20 @@ export class BridgeConnection {
   }
 
   /** Await a subscription's opening frame under a bounded wait. */
-  async #awaitOpening(subscription: Subscription): Promise<FollowBaseline | undefined> {
+  async #awaitOpening(subscription: Subscription): Promise<Opening> {
     let timer: NodeJS.Timeout | undefined
     const expiry = new Promise<undefined>(resolve => {
       timer = setTimeout(() => { resolve(undefined) }, SNAPSHOT_OPEN_TIMEOUT_MS)
       timer.unref?.()
     })
     try {
-      const baseline = await Promise.race([subscription.opened.catch(() => undefined), expiry])
-      if (baseline === undefined) {
-        // No baseline means the stream is unusable for this connection: drop it
-        // rather than leaving a half-open subscription behind.
-        subscription.controller.abort()
-        this.#forget(subscription)
-      }
-      return baseline
+      const outcome = await Promise.race([subscription.opened, expiry])
+      if (outcome !== undefined) return outcome
+      // No opening frame in time means the stream is unusable for this connection:
+      // drop it rather than leaving a half-open subscription behind.
+      subscription.controller.abort()
+      this.#forget(subscription)
+      return { ok: false, code: CODE_SNAPSHOT_UNAVAILABLE, msg: `no opening frame within ${SNAPSHOT_OPEN_TIMEOUT_MS} ms` }
     } finally {
       if (timer !== undefined) clearTimeout(timer)
     }

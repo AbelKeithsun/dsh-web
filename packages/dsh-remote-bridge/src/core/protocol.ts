@@ -9,6 +9,7 @@ export const METHOD_HELLO = 'hello'
 export const METHOD_SESSION_LIST = 'session.list'
 export const METHOD_SESSION_TITLES = 'session.titles'
 export const METHOD_SESSION_SNAPSHOT = 'session.snapshot'
+export const METHOD_SESSION_HISTORY = 'session.history'
 export const METHOD_SESSION_PROMPT = 'session.prompt'
 export const METHOD_SESSION_INTERRUPT = 'session.interrupt'
 export const METHOD_PAIR_BEGIN = 'pair.begin'
@@ -44,6 +45,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_SESSION_LIST,
   METHOD_SESSION_TITLES,
   METHOD_SESSION_SNAPSHOT,
+  METHOD_SESSION_HISTORY,
   METHOD_SESSION_PROMPT,
   METHOD_SESSION_INTERRUPT,
   METHOD_PAIR_BEGIN,

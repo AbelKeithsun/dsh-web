@@ -249,6 +249,97 @@ export function trimUnrenderedEntries(turns: readonly SnapshotTurn[]): SnapshotT
   })
 }
 
+/** One contiguous backwards page of a snapshot projection. */
+export interface SnapshotPage {
+  /** The turns this page carries, oldest first; each keeps its own turn-level fields. */
+  readonly turns: SnapshotTurn[]
+  /** Durable seq of this page's oldest entry: the cursor for the next, older page. */
+  readonly nextBefore?: number
+  readonly hasMore: boolean
+}
+
+/**
+ * Slice one backwards page out of a projection, BY ENTRY rather than by turn.
+ *
+ * `before` is a durable watermark, not an index: the page carries the newest
+ * entries whose `seq` is strictly below it, so a cursor stays meaningful across
+ * connections and a projection that changed shape under it (a trimmed entry
+ * that never reaches the client) cannot make a page skip or repeat data. The
+ * turn list is rebuilt around exactly the entries in the page, each turn
+ * keeping its own `seq`/`endSeq`/`reason`, so a turn may be split across pages.
+ *
+ * A single entry that exceeds the budget on its own is a page of its own: the
+ * size rule never removes an entry, it only ends the page.
+ * @param turns - the projection to page, in order.
+ * @param before - exclusive durable watermark, or undefined for the newest page.
+ * @param maxBytes - byte budget of the encoded page.
+ * @param measure - exact encoded size of one page shape, owned by the caller.
+ */
+export function pageTurns(
+  turns: readonly SnapshotTurn[],
+  before: number | undefined,
+  maxBytes: number,
+  measure: (turns: readonly SnapshotTurn[], nextBefore: number | undefined, hasMore: boolean) => number,
+): SnapshotPage {
+  const flat: { readonly turn: SnapshotTurn; readonly entry: SnapshotEntry }[] = []
+  for (const turn of turns) {
+    for (const entry of turn.entries) {
+      if (before === undefined || entry.seq < before) flat.push({ turn, entry })
+    }
+  }
+  if (flat.length === 0) return { turns: [], hasMore: false }
+
+  const shells = new Map<SnapshotTurn, number>()
+  for (const item of flat) {
+    if (!shells.has(item.turn)) shells.set(item.turn, Buffer.byteLength(JSON.stringify({ ...item.turn, entries: [] }), 'utf8'))
+  }
+  // Greedy from the newest entry on a conservative running estimate — every
+  // entry and every contributing turn shell counted once — and then verified
+  // against the real encoding, shrinking from the oldest side until it fits.
+  let start = flat.length
+  let estimate = 0
+  const counted = new Set<SnapshotTurn>()
+  for (let index = flat.length - 1; index >= 0; index -= 1) {
+    const item = flat[index]
+    if (item === undefined) break
+    let cost = Buffer.byteLength(JSON.stringify(item.entry), 'utf8') + 1
+    if (!counted.has(item.turn)) {
+      counted.add(item.turn)
+      cost += shells.get(item.turn) ?? 0
+    }
+    if (start < flat.length && estimate + cost > maxBytes) break
+    estimate += cost
+    start = index
+  }
+  for (;;) {
+    const oldest = flat[start]?.entry.seq
+    if (oldest === undefined) return { turns: [], hasMore: false }
+    const page = groupEntries(flat.slice(start))
+    const hasMore = start > 0
+    if (flat.length - start === 1 || measure(page, hasMore ? oldest : undefined, hasMore) <= maxBytes) {
+      return hasMore ? { turns: page, nextBefore: oldest, hasMore } : { turns: page, hasMore }
+    }
+    start += 1
+  }
+}
+
+/** Rebuild the turn list around one contiguous run of entries. */
+function groupEntries(items: readonly { readonly turn: SnapshotTurn; readonly entry: SnapshotEntry }[]): SnapshotTurn[] {
+  const page: SnapshotTurn[] = []
+  let current: SnapshotTurn | undefined
+  let entries: SnapshotEntry[] = []
+  for (const item of items) {
+    if (current !== item.turn) {
+      if (current !== undefined) page.push({ ...current, entries })
+      current = item.turn
+      entries = []
+    }
+    entries.push(item.entry)
+  }
+  if (current !== undefined) page.push({ ...current, entries })
+  return page
+}
+
 function snapshotEntryOf(record: unknown): SnapshotEntry | undefined {
   const event = isRecord(record) ? record.event : undefined
   if (!isRecord(event)) return undefined

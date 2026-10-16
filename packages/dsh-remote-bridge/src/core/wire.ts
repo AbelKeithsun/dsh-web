@@ -33,6 +33,46 @@ export interface BridgeGateway {
   stream(request: GatewayInvokeRequest): Promise<AsyncIterable<unknown>>
 }
 
+/**
+ * Durable identity of one ordinary Session or one direct subagent child.
+ *
+ * `session/follow` and `session/page` take this instead of a bare id, and the
+ * harness refuses a delegated child addressed as an ordinary session with
+ * `session/agent-busy` — "subagent Sessions require their durable parent
+ * address" — so the bridge must send the child's own kind for those sessions.
+ */
+export type SessionAddress = {
+  readonly kind: 'session'
+  readonly sessionId: string
+} | {
+  readonly kind: 'subagent'
+  readonly parentSessionId: string
+  readonly childSessionId: string
+  readonly mode: SubagentMode
+}
+
+/** How long a delegated child may be continued; `unknown` is checked against nothing. */
+export type SubagentMode = 'one-shot' | 'continuable' | 'unknown'
+
+/** The durable address of one ordinary session. */
+export function sessionAddress(sessionId: string): SessionAddress {
+  return { kind: 'session', sessionId }
+}
+
+/**
+ * The durable address of one delegated child.
+ *
+ * The mode is always `unknown`: the bridge has no reliable way to read a
+ * child's mode before the call, and the harness accepts `unknown` for every
+ * child while checking a claimed mode against the descriptor.
+ */
+export function subagentAddress(parentSessionId: string, childSessionId: string): SessionAddress {
+  return { kind: 'subagent', parentSessionId, childSessionId, mode: 'unknown' }
+}
+
+/** The failure code the harness raises for a child addressed as an ordinary session. */
+export const CODE_SUBAGENT_ADDRESS_REQUIRED = 'session/agent-busy'
+
 /** Wire name one endpoint declares for its single parameter. */
 export type WireName = 'request' | '_request' | 'none'
 

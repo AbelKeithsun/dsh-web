@@ -45,6 +45,7 @@
 | `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
 | `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId}` | `{turns:[...], lastSeq:<uint>}` |
+| `session.history` | `{sessionId, before?, maxBytes?}` | `{turns:[...], nextBefore?:<uint>, hasMore:<bool>}` |
 | `session.prompt` | `{sessionId, text, requestId}` | `{accepted:true}` |
 | `session.interrupt` | `{sessionId}` | `{ok:true}` |
 | `pair.begin` | `{token}` | `{nonce, expiresAt}` |
@@ -54,6 +55,10 @@
 `hello` 无需设备令牌即可调用，并回报本连接自身的 `auth` 状态。`session.snapshot` 把宿主 follow 流的开帧快照映射成 `turns`，把它的 cursor 作为 `lastSeq` 回报，随后保持该流作为本连接对该会话的订阅；`session.prompt` 幂等地确保同一条订阅，因此客户端可以跳过 snapshot。发言模式固定为排队，`clientTimeZone` 由服务端填本机 IANA 时区，`requestId` 是幂等键：同名 `requestId` 在同一会话内只发一次，重复调用直接回 `{accepted:true}` 且不再发送。`session.interrupt` 取消回合，不拆除订阅。
 
 `hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本协议版本认识的能力只有一个：`session.snapshot.trim.v1`。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
+
+`session.snapshot` 与 `session.history` 按宿主要求的方式寻址会话。普通会话用它自己的 id 寻址；被委派的子会话——名册行带 `origin:"subagent"` 的那些——只能通过它的持久父会话寻址，而把一个子会话当作普通会话来问，宿主会回 `session/agent-busy`。桥依据宿主自己的这条拒绝来判定，而不是去猜：它只对这一个会话改用委派地址 `{kind:"subagent", parentSessionId, childSessionId, mode:"unknown"}` 重试一次，并把子会话的真实历史交给客户端。父 id 来自名册——唯一携带谱系的端点：先列会话再打开会话的客户端不会多付一次读取，而每个连接最多读一次名册。普通会话永远不为此付费：它们第一次尝试就打开。没有内容可看的会话也不等于失败：日志里只有宿主自己记账记录的会话，回的是真实投影加一个空回合；只有拿不到开帧、或宿主自己抛错，才会被拒绝。
+
+`session.history` 以分页方式往回读一个会话的历史，而且它是纯读：既不打开、也不丢弃或改指任何订阅，同一个游标永远给出同一页。它的数据来自 `session.snapshot` 所用的那份开帧基线，因此两者永远不会在某个回合或某条 entry 上给出不同答案——`history` 只是对这份投影做切片。分页按 **entry** 切，不按回合切：一页从调用方游标之下取最新的 entry，直到编码后的页达到 `maxBytes`（默认 524288，即 512 KiB）；因此一个回合的 entry 可以跨页，而该回合仍保留自己的 `seq`、`endSeq`、`reason` 与 `time`；单条 entry 若比整页预算还大，就独占一页，而不是被拒绝。`before` 是持久水位而非下标：这一页取 `seq` 严格小于它的 entry，所以游标跨连接仍然有意义，投影在它之下改变形状也不会让分页跳号或重复。省略 `before` 即取最新一页；`hasMore` 说明下面是否还有更旧的 entry，而下一页的游标 `nextBefore` 恰好在 `hasMore` 为真时出现。裁剪能力在这里的生效方式与快照完全一致。
 
 `session.list` 除名册自身字段外还带上手机用来分组与命名的元数据：`cwd`、`parentSessionId`、`origin` 只在宿主确实上报时才出现，`blank` 始终存在，`archived` 只在本次进程能读到宿主归档集时出现——读不到就省略该键，而不是回 `false`。`title` 在本连接尚未通过 `session.titles` 解析过该 id 时保持 `""`，因此列名册仍然只是一次调用，且不会给每一行挂上一次标题读取。`session.titles` 用宿主自己的标题服务回答一批 1 到 100 个 id——读的是本进程的活跃会话，绝不为每个会话各开一条 follow 流——且每个被请求的 id 都是键：本宿主没有活跃持有的 id、或标题尚未落地的 id，一律回 `""`。一个已解析的标题会在 10 秒内被直接复用，之后才再问服务，因此重命名最多要等这么久才可见。与其它会话方法一样，没有设备令牌时两者都回 `unpaired`。
 
@@ -81,7 +86,7 @@
 | 错误码 | 含义 |
 | --- | --- |
 | `unpaired` | 本连接没有有效设备令牌，而该方法不在未配对白名单内 |
-| `snapshot-unavailable` | `session.snapshot` 未能从宿主 follow 流读到开帧快照 |
+| `snapshot-unavailable` | 读不到该会话的开帧——follow 流没产帧就结束，或 10 秒内没有开帧。宿主自己抛出的失败则带着它自己的错误码穿过 |
 | `token-invalid` | bootstrap token 未知、已被用掉，或已超过 30 秒 |
 | `nonce-invalid` | `pair.finish` 用的 nonce 从未签发、已被用掉或已过期 |
 | `signature-invalid` | ES256 签名无法用所给公钥与 nonce 验证通过 |
@@ -224,6 +229,8 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
 - **读不到归档集时没有 `archived` 键。** 该标记来自宿主的 workspace registry；该服务未挂载时，每一行都省略此键，而不是回 `false`。
 - **`lastSeq` 与 `seq` 是两个计数器。** `session.snapshot` 的 `lastSeq` 是宿主流的 cursor，事件的 `seq` 是本连接自己的事件序号，二者不可比较；续传状态属于客户端。
 - **不做增量补发。** 发现跳号或重连的客户端重新调 `session.snapshot` 拿完整基线；本包不为断开的客户端缓存 delta。
+- **被委派的子会话每个连接最多付一次名册读取。** 子会话的持久父 id 只有 `session.list` 会发布，所以一个连接在没先列名册的情况下打开的第一个子会话，要付一次名册读取；此后任何父名下的任何子会话都不再付费，而先列名册再打开的客户端一分不付。名册若没有指明该子会话的父，桥会让宿主自己的拒绝（`session/agent-busy`）原样穿过，而不是编造一个地址。
+- **`session.history` 到不了开帧窗口之下。** 分页走的就是 `session.snapshot` 所用的那份基线，因此最旧可达的 entry 就是那个窗口里最旧的 entry——受宿主自己的 `maxMessages` 窗口（200 条消息）限制。开帧上的 `hasMore` 是宿主对更旧内容的回答，桥不会越过它去取。
 - **工具调用参数以增量到达。** `tool-call` 增量的 `argumentsDelta` 可以为空串，参数由客户端拼装；整次调用不会被重发。
 - **订阅比 interrupt 活得久。** `session.interrupt` 只取消回合；订阅在连接关闭时结束，一个连接名下的 follow 流由同一个 AbortController 一起 abort。
 - **`clientTimeZone` 由宿主侧填写。** 桥接用本机 IANA 时区填充它；v1 里客户端无法指定自己的时区。
