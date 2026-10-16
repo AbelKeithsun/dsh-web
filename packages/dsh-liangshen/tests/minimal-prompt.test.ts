@@ -596,9 +596,9 @@ describe('liangshen-minimal-prompt', () => {
       expect(personaText(off)).toBe(`${PERSONA.text}\n\nYour working directory is ${cwd}.`)
       expect(off.sections.map((section: any) => section.name))
         .toEqual(['deployment:persona-prefix', 'plan:policy'])
-      expect(personaText(off)).not.toContain('【角色识别】')
+      expect(personaText(off)).not.toContain('[Role Identification]')
       expect(personaText(off)).not.toContain('Dispatcher rules')
-      expect(JSON.stringify(off.sections)).not.toContain('反模式')
+      expect(JSON.stringify(off.sections)).not.toContain('Anti-Patterns')
     })
 
     test('operator gets the appended block from a config that never mentions the switch', async () => {
@@ -610,7 +610,7 @@ describe('liangshen-minimal-prompt', () => {
       const absent = await assemble(register(), FULL_SECTIONS, undefined, agentAt(cwd))
       const on = await assemble(register({ dispatcher: true }), FULL_SECTIONS, undefined, agentAt(cwd))
       expect(personaText(absent)).toBe(personaText(on))
-      expect(personaText(absent)).toContain('【角色识别】')
+      expect(personaText(absent)).toContain('[Role Identification]')
       expect(personaText(absent)).toContain(DISPATCHER_RULES)
     })
 
@@ -644,42 +644,43 @@ describe('liangshen-minimal-prompt', () => {
       expect(result.sections.find((section: any) => section.name === 'plan:policy').text).toBe(PLAN.text)
     })
 
-    test('operator gets the whole rule set: identity, R0 through R8, R-T, and the anti-patterns', async () => {
+    test('operator gets the whole rule set: identity, R0 through R8, R-W, and the anti-patterns', async () => {
       // Given the switch on, When the operator assembles the prompt, Then every
-      // section of the reviewed rule set is present verbatim, the text names no
-      // repository that LiangShen does not own, and it carries no unbound
+      // section of the upstream rule set is present verbatim, the text names no
+      // package that LiangShen does not own, and it carries no unbound
       // template variable the harness renderer would refuse.
       const result = await assemble(register({ dispatcher: true }), FULL_SECTIONS, undefined, agentAt(project()))
       const text = personaText(result)
       for (const marker of [
-        '【角色识别】',
-        '【调度者身份】',
-        '## R0 · 复杂度分诊',
-        '## R0.5 · 协作模式侦测',
-        '## R-G · 澄清访谈',
-        '## R1 · 职责边界',
-        '## R2 · 模型路由',
-        '## R3 · 子代理自治',
-        '## R4 · 子代理角色',
-        '## R5 · 派发纪律',
-        '## R-T · teammate 模式',
-        '## R6 · 审查与验收',
-        '## R7 · 文档',
-        '## R8 · 兜底',
-        '## 反模式（出现即为违规）',
-        '12. 给 spawn_teammate 编造 provider/model',
-        '本节 G7–G14 是对上面 G1–G6 的本地补充',
-        '- G7 提问预算',
-        '- G14 查证型派发',
-        'A. 用提问代替判断',
-        'B. 同一决策重复追问',
+        '[Role Identification]',
+        '[Coordinator Identity]',
+        '## R0 · Complexity Triage',
+        '## R0.5 · Compatibility Gate',
+        '## R-G · Clarification Interview',
+        '## R1 · Responsibility Boundary',
+        '## R2 · Model Routing',
+        '## R3 · Subagent Autonomy',
+        '## R4 · Subagent Role',
+        '## R5 · Dispatch Discipline',
+        '## R-W · Turn Boundary',
+        '## R6 · Review & Acceptance',
+        '## R7 · Documentation',
+        '## R8 · Fallback',
+        '## Anti-Patterns (Any Occurrence Is a Violation)',
+        '16. Second-guessing list_subagent_models',
+        'G7 to G14 below are the local additions to G1 to G6 above',
+        'G15 below is a separate addition to R5',
+        '- G7 Asking budget',
+        '- G14 Fact-check dispatches',
+        'A. Asking instead of judging',
+        'B. Asking the same decision twice',
       ]) {
         expect(text, marker).toContain(marker)
       }
       // The role-recognition paragraph is carried in full, and both role halves
       // are present: the dispatcher rules identify the executor case too.
-      expect(text).toContain('若你的第一条用户消息是一份任务书（而不是用户本人的直接请求）')
-      expect(text).toContain('R3 仍然有效')
+      expect(text).toContain('If your first user message is a task brief')
+      expect(text).toContain('R3 remains in effect')
       // The guards announced by R2 are sub-agent model authorization guards, and
       // the subscription repository that happens to own one is not named.
       expect(text).not.toContain('dsh-chatgpt-subscription')
@@ -689,38 +690,102 @@ describe('liangshen-minimal-prompt', () => {
       expect(text).not.toMatch(/\{\{/)
     })
 
-    test('operator gets the interview additions after the reference block, which stays byte-identical', async () => {
+    test('operator gets the local additions after the reference block, which stays verbatim', async () => {
       // Given the switch on, When the operator assembles the prompt, Then the
-      // local interview additions ride after the last reference sentence and
-      // the reference block itself is unchanged: the additions are an appendix,
-      // not a rewrite of the text that was reviewed elsewhere.
+      // local additions ride after the last reference sentence and the
+      // reference block itself is unchanged: the additions are an appendix,
+      // not a rewrite of the upstream text the block was extracted from.
       const result = await assemble(register({ dispatcher: true }), FULL_SECTIONS, undefined, agentAt(project()))
       const text = personaText(result)
-      // The reference block ends at anti-pattern 12 and carries no addition.
-      expect(DISPATCHER_RULES.endsWith('12. 给 spawn_teammate 编造 provider/model（它没有这两个参数）。')).toBe(true)
+      // The reference block ends at anti-pattern 16 and carries no addition.
+      expect(DISPATCHER_RULES.endsWith('16. Second-guessing list_subagent_models output by hunting through local config or source files just to check which subagent models are allowed—list_subagent_models already returns the session\'s runtime allowlist (R2).')).toBe(true)
       expect(DISPATCHER_RULES).not.toContain('G7')
-      expect(DISPATCHER_RULES_APPENDIX).not.toContain('## R-G · 澄清访谈')
+      expect(DISPATCHER_RULES).not.toContain('Task board is not a dispatch')
+      // The reference block is the current upstream text: it carries the R-W
+      // turn-boundary section and the R0.5 compatibility gate, and it carries
+      // no R-T section and no teammate-support section: upstream removed both
+      // when it dropped teammate support, so the block names no teammate
+      // tooling of its own. The gate still names the tools it detects, which is
+      // what makes it a gate rather than a support path.
+      expect(DISPATCHER_RULES).toContain('## R-W · Turn Boundary')
+      expect(DISPATCHER_RULES).toContain('## R0.5 · Compatibility Gate')
+      // Every section heading, in order: an R-T section or any teammate-support
+      // section added upstream would appear here and fail this list.
+      const headings = DISPATCHER_RULES.split('\n').filter(line => line.startsWith('## '))
+      expect(headings).toEqual([
+        '## R0.5 · Compatibility Gate (Once per New Session, Before R0)',
+        '## R0 · Complexity Triage (Triage First, Then Choose the Workflow)',
+        '## R-G · Clarification Interview (L2 Only, Always Before Planning)',
+        '## R1 · Responsibility Boundary (Layered by Tier)',
+        '## R2 · Model Routing (Check Availability First, Then Decide How to Dispatch)',
+        '## R3 · Subagent Autonomy',
+        '## R4 · Subagent Role',
+        '## R5 · Dispatch Discipline',
+        '## R6 · Review & Acceptance',
+        '## R-W · Turn Boundary (Waiting / Goals / Questions)',
+        '## R7 · Documentation',
+        '## R8 · Fallback',
+        '## Anti-Patterns (Any Occurrence Is a Violation)',
+      ])
+      expect(headings.some(heading => heading.includes('R-T'))).toBe(false)
+      expect(DISPATCHER_RULES).not.toContain('team_task_')
+      // It is English, and it names no package this repository does not own.
+      expect(DISPATCHER_RULES).toContain('[Role Identification]')
+      expect(DISPATCHER_RULES).not.toContain('dsh-chatgpt-subscription')
+      // No unbound template variables ride in with the block: the renderer
+      // interpolates strictly, so a stray placeholder would fail every request.
+      expect(DISPATCHER_RULES).not.toMatch(/\{\{/)
+      // The appendix carries no reference section of its own.
+      expect(DISPATCHER_RULES_APPENDIX).not.toContain('## R-G · Clarification Interview')
+      // The composed constant is exactly the two halves with one newline.
       expect(DISPATCHER_RULES_WITH_APPENDIX).toBe(`${DISPATCHER_RULES}\n${DISPATCHER_RULES_APPENDIX}`)
       // The appendix follows the reference block, and every addition is
-      // present once.
+      // present exactly once.
       for (const marker of [
-        '本节 G7–G14 是对上面 G1–G6 的本地补充',
-        '- G7 提问预算：一轮不超过 4 个问题',
-        '- G8 假设出口：',
-        '- G9 新证据：',
-        '- G10 纪要落点：',
-        '- G11 推荐质量：',
-        '- G12 呈现与降级：',
-        '- G13 L1 的最小形式：',
-        '- G14 查证型派发：',
-        'A. 用提问代替判断：',
-        'B. 同一决策重复追问，',
+        'G7 to G14 below are the local additions to G1 to G6 above',
+        'G15 below is a separate addition to R5',
+        '- G7 Asking budget: at most 4 questions in a round',
+        '- G8 Assumption exit:',
+        '- G9 New evidence:',
+        '- G10 Where the record lands:',
+        '- G11 Recommendation quality:',
+        '- G12 Presentation and degradation:',
+        '- G13 The minimal L1 form:',
+        '- G14 Fact-check dispatches:',
+        '- G15 Task board is not a dispatch:',
+        'A. Asking instead of judging:',
+        'B. Asking the same decision twice,',
       ]) {
         expect(text, marker).toContain(marker)
         expect(text.split(marker)).toHaveLength(2)
       }
-      expect(text.indexOf('12. 给 spawn_teammate 编造 provider/model'))
-        .toBeLessThan(text.indexOf('本节 G7–G14'))
+      expect(text.indexOf('16. Second-guessing list_subagent_models'))
+        .toBeLessThan(text.indexOf('G7 to G14 below are the local additions'))
+      // The glossary splits the two scopes before the first bullet: G7 through
+      // G14 amend G1 through G6, while G15 amends R5 instead. Widening the
+      // glossary over G15 would silently mis-file a dispatch rule as an
+      // interview rule, so the whole line is pinned verbatim.
+      const glossary = DISPATCHER_RULES_APPENDIX.split('\n')[1]
+      expect(glossary).toBe(
+        'G7 to G14 below are the local additions to G1 to G6 above: where they conflict with G1 to G6, those entries win. G15 below is a separate addition to R5 and has no counterpart upstream.',
+      )
+      // No sentence in the appendix files G15 as an addition to G1 to G6. The
+      // check is per sentence, because the glossary sentence above names both
+      // scopes on one physical line; what must never appear is one sentence
+      // that puts G15 and the G1-to-G6 supplement in the same scope.
+      const sentences = DISPATCHER_RULES_APPENDIX.split(/(?<=\.)\s+/)
+      const g15Sentences = sentences.filter(sentence => sentence.includes('G15'))
+      expect(g15Sentences.length).toBeGreaterThan(0)
+      expect(g15Sentences.filter(sentence => sentence.includes('G1 to G6'))).toEqual([])
+      // G15's own scope sentence names R5, not the interview.
+      expect(g15Sentences.some(sentence => sentence.includes('addition to R5'))).toBe(true)
+      // The task-board rule sits with the other rules, before the violations:
+      // it is a dispatch rule, not an anti-pattern.
+      expect(text.indexOf('- G14 Fact-check dispatches')).toBeLessThan(text.indexOf('- G15 Task board is not a dispatch'))
+      expect(text.indexOf('- G15 Task board is not a dispatch')).toBeLessThan(text.indexOf('Violations added here'))
+      // The appendix is English throughout: no CJK character reaches the
+      // prompt from the local half.
+      expect(DISPATCHER_RULES_APPENDIX).not.toMatch(/[\u3000-\u9fff\uff00-\uffef]/)
     })
 
     test('operator keeps the additions when the persona already carries the reference block', async () => {
@@ -740,8 +805,8 @@ describe('liangshen-minimal-prompt', () => {
       const cwd = project()
       const result = await assemble(register({ dispatcher: true }), FULL_SECTIONS, undefined, agentAt(cwd))
       const rendered = renderPrompt({ sections: result.sections, variables: result.variables })
-      expect(rendered).toContain('【调度者身份】')
-      expect(rendered).toContain('## 反模式（出现即为违规）')
+      expect(rendered).toContain('[Coordinator Identity]')
+      expect(rendered).toContain('## Anti-Patterns (Any Occurrence Is a Violation)')
       expect(rendered).toContain(`Your working directory is ${cwd}.`)
     })
 
@@ -764,7 +829,7 @@ describe('liangshen-minimal-prompt', () => {
       const first = await assemble(harness, FULL_SECTIONS, undefined, agentAt(cwd))
       const second = await assemble(harness, first.sections, undefined, agentAt(cwd))
       const text = personaText(second)
-      expect(text.split('【调度者身份】')).toHaveLength(2)
+      expect(text.split('[Coordinator Identity]')).toHaveLength(2)
       expect(text).toBe(personaText(first))
     })
 
@@ -781,7 +846,7 @@ describe('liangshen-minimal-prompt', () => {
         'plan:policy',
         WORKSPACE_INSTRUCTIONS_SECTION_NAME,
       ])
-      expect(result.variables.workspace_instructions).not.toContain('【角色识别】')
+      expect(result.variables.workspace_instructions).not.toContain('[Role Identification]')
       expect(result.variables.workspace_instructions).toContain('project rule')
     })
   })

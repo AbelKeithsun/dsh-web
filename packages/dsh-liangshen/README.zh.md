@@ -118,7 +118,7 @@ dsh plugin --profile web remove @linxin666/dsh-liangshen
 | `enabled` | `true` | 总开关：关闭后不声明预设、也不发公告。 |
 | `announceToAgent` | `false` | 按需开启：开启后向 agent 系统提示注入本插件公告。默认关闭，保持系统提示词干净。 |
 | `presentation` | `both` | 写入本插件所声明 preset 之 `tool-catalog` 行的 wire 呈现：`both`（默认）让原生清单与 `run_code` 同驻；`native` 保持组装出的原生清单；`ptc` 把 wire 收拢为 `run_code`。Host 提交改动后立即重新声明 preset，此后新建的会话即采用新值；已开始的会话保持其已声明的组合。 |
-| `dispatcher` | `true` | 身份开关：开启时（出厂默认）所声明的 preset 在 persona 之后追加调度者规则段——复杂度分诊（L0/L1 直接执行，L2 走完整流程）、L2 任务先澄清访谈再规划、派发子代理并逐层审查与验收。关闭后回到仅含工作纪律的极简 persona。它与 `presentation` 正交：`presentation` 决定工具面，`dispatcher` 决定身份与流程纪律。 |
+| `dispatcher` | `true` | 身份开关：开启时（出厂默认）所声明的 preset 在 persona 之后追加调度者规则段——复杂度分诊（L0/L1 直接执行，L2 走完整流程）、拒绝 Agent Teams 的 R0.5 兼容性闸门、L2 任务先澄清访谈再规划、派发子代理并逐层审查与验收，以及落在 `todo_write` 的任务跟踪——其后是本地英文补充：访谈类新增内容，加上参考文本没有的那一条规则——看板卡片不替代派发。关闭后回到仅含工作纪律的极简 persona。它与 `presentation` 正交：`presentation` 决定工具面，`dispatcher` 决定身份与流程纪律。 |
 | `guardEnabled` | `true` | 运行时退化熔断器总开关：检测连续零产出长思考与同参重复失败，触发时注入熔断提示并临时下调推理档位；关闭后不干预任何请求。 |
 | `guardSensitivity` | `balanced` | 熔断灵敏度预设：整体缩放阈值——`conservative`（更少打断，×1.5）、`balanced`（出厂校准值）、`aggressive`（更早触发，×0.5）。 |
 | `guardStallReasoningChars` | （未设置） | 单步暴走梯字符阈值的**覆写值**：不设置时阈值随推理档位自适应（max 档 8000 / high 档 12000 / low 档 20000，按 V4.1 官方 384K 最大输出校准），并再按 `guardSensitivity` 缩放；设置本字段则以本值为准、覆盖所有档位的自适应表。 |
