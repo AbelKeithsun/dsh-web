@@ -108,6 +108,39 @@ interface ProjcacheRecordShape {
 }
 
 /**
+ * The file names one session's per-session projection cache may carry. The
+ * harness names the file from the id form it is holding, so a session's cache
+ * lives under the canonical `session-<id>` spelling or the bare one. The
+ * canonical spelling is tried first: it is what every archive id already is,
+ * so a cache written under it costs exactly one read. `scrubProjcache` deletes
+ * under both spellings for the same reason.
+ */
+function projcacheSpellings(id: string): readonly string[] {
+  const canonical = canonicalSessionId(id)
+  const bare = canonical.startsWith('session-') ? canonical.slice('session-'.length) : canonical
+  return bare === canonical ? [canonical] : [canonical, bare]
+}
+
+/** Parse one projection-cache file; unreadable or shapeless files yield undefined. */
+async function readProjcacheEntry(path: string): Promise<ProjcacheFileEntry | undefined> {
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8')) as { record?: ProjcacheRecordShape } & ProjcacheRecordShape
+    const record: ProjcacheRecordShape = parsed.record ?? parsed
+    const title = typeof record.rows?.title?.val === 'string' && record.rows.title.val !== '' ? record.rows.title.val : undefined
+    const createdAt = typeof record.identity?.createdAt === 'number' ? record.identity.createdAt : undefined
+    const cwd = typeof record.identity?.cwd === 'string' && record.identity.cwd !== '' ? record.identity.cwd : undefined
+    if (title === undefined && createdAt === undefined && cwd === undefined) return undefined
+    return {
+      ...(title !== undefined ? { title } : {}),
+      ...(createdAt !== undefined ? { createdAt } : {}),
+      ...(cwd !== undefined ? { cwd } : {}),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Fallback enrichment from one per-session projection-cache file
  * (`storages/session_projcache/sessions/<id>.json`). The aggregate index
  * only covers recent sessions, so older/archived rows fall back to these
@@ -118,23 +151,11 @@ export async function readProjcacheFile(dshHome: string, id: string, cache?: Inv
   if (cache !== undefined && cache.has(id)) {
     return cache.get(id) ?? undefined
   }
-  const path = join(dshHome, 'storages', 'session_projcache', 'sessions', `${id}.json`)
+  const dir = join(dshHome, 'storages', 'session_projcache', 'sessions')
   let entry: ProjcacheFileEntry | undefined
-  try {
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as { record?: ProjcacheRecordShape } & ProjcacheRecordShape
-    const record: ProjcacheRecordShape = parsed.record ?? parsed
-    const title = typeof record.rows?.title?.val === 'string' && record.rows.title.val !== '' ? record.rows.title.val : undefined
-    const createdAt = typeof record.identity?.createdAt === 'number' ? record.identity.createdAt : undefined
-    const cwd = typeof record.identity?.cwd === 'string' && record.identity.cwd !== '' ? record.identity.cwd : undefined
-    if (title !== undefined || createdAt !== undefined || cwd !== undefined) {
-      entry = {
-        ...(title !== undefined ? { title } : {}),
-        ...(createdAt !== undefined ? { createdAt } : {}),
-        ...(cwd !== undefined ? { cwd } : {}),
-      }
-    }
-  } catch {
-    entry = undefined
+  for (const spelling of projcacheSpellings(id)) {
+    entry = await readProjcacheEntry(join(dir, `${spelling}.json`))
+    if (entry !== undefined) break
   }
   if (cache !== undefined) cache.set(id, entry ?? null)
   return entry

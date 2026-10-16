@@ -188,6 +188,46 @@ describe('buildInventory', () => {
     expect(await readProjcacheFile(host.home, 'session-missing')).toBeUndefined()
   })
 
+  it('operator reads a session cache file named with either spelling, canonical first', async () => {
+    // Given one session whose projection cache exists only under the bare uuid name
+    const host = createFakeHost()
+    const bare = '3f0a1c2e-5d4b-4a19-9c7e-8b2d6f1a4c70'
+    writeProjcacheSessionFile(host.home, bare, { title: 'bare spelling' })
+
+    // When the archive reads that session's facts by its canonical id
+    const fromBare = await readProjcacheFile(host.home, `session-${bare}`)
+
+    // Then the bare-named file answers
+    expect(fromBare?.title).toBe('bare spelling')
+
+    // When both spellings exist, whichever spelling the caller holds
+    writeProjcacheSessionFile(host.home, `session-${bare}`, { title: 'canonical spelling' })
+    const heldCanonical = await readProjcacheFile(host.home, `session-${bare}`)
+    const heldBare = await readProjcacheFile(host.home, bare)
+
+    // Then the canonical file is the one that answers, exactly as before
+    expect(heldCanonical?.title).toBe('canonical spelling')
+    expect(heldBare?.title).toBe('canonical spelling')
+  })
+
+  it('operator sees a canonical row enriched from a cache file the harness named with the bare id', async () => {
+    // Given a canonical session row whose cache file carries the bare uuid name
+    const bare = '3f0a1c2e-5d4b-4a19-9c7e-8b2d6f1a4c70'
+    const id = `session-${bare}`
+    const host = createFakeHost({ archivedSessionIds: [id], dirs: [id] })
+    writeProjcacheSessionFile(host.home, bare, { title: '裸拼写', createdAt: 1788049691263, cwd: '/Users/demo' })
+
+    // When one inventory pass reads the fallback
+    const built = await buildInventory(host.sources(), AbortSignal.timeout(5000))
+    const row = built.rows.find((entry) => entry.id === id)
+
+    // Then the row carries every fact that file holds and is no longer flagged
+    expect(row?.title).toBe('裸拼写')
+    expect(row?.createdAt).toBe(1788049691263)
+    expect(row?.cwd).toBe('/Users/demo')
+    expect(row?.issues).not.toContain('no-title')
+  })
+
   it('canonicalizes bare harness ids and remembers their native spelling', async () => {
     const bare = '84777561-8adb-452d-a3ac-b25c7e72d36e'
     const bareArchived = '41030de9-301d-4ced-ba68-3c5cee113a1b'
