@@ -22,10 +22,13 @@
  * constraints it satisfies.
  *
  * Host shell replacement: once win_bash is registered, the host's own pwsh
- * tool is withdrawn from each session's model-facing surface, so the session's
- * command work goes to bash rather than to the shell a model already knows.
- * Windows only, visibility only, and per agent scope; see ./pwsh-replacement.ts
- * for why it is neither global nor an execution denial.
+ * tool is withdrawn from each session win_bash can actually SERVE - the
+ * sessions whose own sandbox mode is danger-full-access - so their command work
+ * goes to bash rather than to the shell a model already knows. A session in any
+ * other mode keeps its pwsh, because win_bash refuses to run there and pwsh is
+ * then the only shell it has. Windows only, visibility only, per agent scope,
+ * and re-evaluated when a session switches mode; see ./pwsh-replacement.ts for
+ * why it is neither global nor an execution denial.
  *
  * Lifecycle: one shell process per calling agent, released when that agent is
  * disposed and when the plugin fiber unloads. The pwsh restriction follows the
@@ -68,7 +71,14 @@ export {
   DEFAULT_SYNC_WITH_LIANGSHEN,
   validateConfig,
 } from './config.ts'
-export { HOST_PWSH_TOOL, installPwshReplacement, type PwshReplacementOptions } from './pwsh-replacement.ts'
+export {
+  HOST_PWSH_TOOL,
+  SERVING_MODE,
+  installPwshReplacement,
+  type PwshReplacementOptions,
+  type ScopedRestrictor,
+  type SessionPolicyReader,
+} from './pwsh-replacement.ts'
 export { WIN_BASH_TOOL, renderResult, readJobRegistry, truncationNotice } from './tool.ts'
 export type { RenderFacts } from './tool.ts'
 export {
