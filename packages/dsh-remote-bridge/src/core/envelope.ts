@@ -10,7 +10,7 @@
  *   heartbeat {"t":"ping","ts":<ms>} / {"t":"pong","ts":<ms>}
  *
  * Decisions this module owns (not restated by the frozen design):
- * - the 256 KiB cap is measured in UTF-8 bytes of the received text, before
+ * - the 10 MiB cap is measured in UTF-8 bytes of the received text, before
  *   parsing, so an oversized frame never allocates a parsed object graph;
  * - direction violations (a `res` or `ev` arriving FROM the client) are their
  *   own failure code instead of `malformed`, because "the peer is speaking the
@@ -20,8 +20,8 @@
  * @module dsh-remote-bridge/core/envelope
  */
 
-/** Largest single text frame either direction may carry, in UTF-8 bytes. */
-export const MAX_FRAME_BYTES = 256 * 1024
+/** Largest single text frame either direction may carry, in UTF-8 bytes: 10 MiB. */
+export const MAX_FRAME_BYTES = 10 * 1024 * 1024
 
 /** Reserved response id for a frame whose own id could not be recovered. */
 export const UNIDENTIFIED_FRAME_ID = 0

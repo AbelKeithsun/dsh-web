@@ -18,11 +18,12 @@
 
 import type { ApprovalRegistry } from './approvals.ts'
 import type { DeviceRoster } from './devices.ts'
-import { deltaOfFollowFrame, readFollowBaseline, ToolCallIndex, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
+import { deltaOfFollowFrame, readFollowBaseline, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
 import { EventSequence, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import type { PairingService } from './pairing.ts'
 import {
+  CAP_SESSION_SNAPSHOT_TRIM,
   CODE_APPROVAL_UNKNOWN,
   CODE_INTERNAL,
   CODE_INVALID_ARGS,
@@ -147,6 +148,20 @@ function sessionAddress(sessionId: string): Record<string, unknown> {
 }
 
 /**
+ * Read the capability names a `hello` announced.
+ *
+ * A capability is an announcement, not a negotiation: an unreadable `cap`, an
+ * unknown name and an absent key all leave the connection with no capabilities
+ * rather than failing the handshake.
+ * @param value - the `cap` member of a hello payload, as it crossed the wire.
+ * @returns the declared names, empty when the client declared none.
+ */
+function capabilitiesOf(value: unknown): ReadonlySet<string> {
+  if (!Array.isArray(value)) return new Set()
+  return new Set(value.filter((name): name is string => typeof name === 'string' && name !== ''))
+}
+
+/**
  * Everything one connected device may do.
  *
  * Not thread-safe by construction but safe by awaiting: handlers are invoked
@@ -160,6 +175,7 @@ export class BridgeConnection {
   readonly #subscriptions = new Map<string, Subscription>()
   readonly #receipts = new Set<string>()
   readonly #toolCalls = new ToolCallIndex()
+  #capabilities: ReadonlySet<string> = new Set()
   #deviceId: string | undefined
   #nonce: { readonly value: string; readonly expiresAt: number } | undefined
   #heartbeat: NodeJS.Timeout | undefined
@@ -278,6 +294,7 @@ export class BridgeConnection {
   #hello(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
     const proto = payload.proto
     if (proto !== PROTO) return refusal(CODE_PROTO_UNSUPPORTED, `this bridge speaks protocol ${PROTO}`)
+    this.#capabilities = capabilitiesOf(payload.cap)
     return {
       ok: true,
       r: {
@@ -390,7 +407,12 @@ export class BridgeConnection {
     if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.snapshot requires sessionId')
     const baseline = await this.#awaitOpening(this.#ensureSubscription(sessionId))
     if (baseline === undefined) return refusal(CODE_SNAPSHOT_UNAVAILABLE, `session ${sessionId} produced no opening frame`)
-    const fitted = this.#fitTurns(turnsOfRecords(baseline.records), baseline.cursor, id)
+    // A client that declared the trim capability chooses what it is sent, never
+    // which turns it gets: the projection is trimmed inside each turn first, and
+    // only then does the frame budget start dropping whole turns.
+    const projected = turnsOfRecords(baseline.records)
+    const turns = this.#capabilities.has(CAP_SESSION_SNAPSHOT_TRIM) ? trimUnrenderedEntries(projected) : projected
+    const fitted = this.#fitTurns(turns, baseline.cursor, id)
     if (fitted === undefined) return refusal(CODE_SNAPSHOT_TOO_LARGE, `session ${sessionId} does not fit one ${MAX_FRAME_BYTES} byte frame`)
     return { ok: true, r: { turns: fitted.turns, lastSeq: fitted.lastSeq } }
   }

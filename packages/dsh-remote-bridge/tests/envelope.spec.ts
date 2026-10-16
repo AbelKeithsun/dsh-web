@@ -13,6 +13,16 @@ function refusalOf(text: string): { id: number; code: string } {
   return { id: outcome.id, code: outcome.code }
 }
 
+/**
+ * One request frame whose UTF-8 length is exactly `bytes`.
+ * `x` is ASCII and carries no JSON escape, so a run of it replaces the empty
+ * text of the template one byte per character.
+ */
+function frameOfSize(bytes: number): string {
+  const template = JSON.stringify({ t: 'req', id: 9, m: 'session.prompt', p: { text: '' } })
+  return JSON.stringify({ t: 'req', id: 9, m: 'session.prompt', p: { text: 'x'.repeat(bytes - template.length) } })
+}
+
 describe('protocol v1 envelope', () => {
   it('user sends a request frame and the bridge reads its method, id and payload', () => {
     // Given a well-formed request frame carrying an empty payload
@@ -91,6 +101,27 @@ describe('protocol v1 envelope', () => {
     const refusal = refusalOf(text)
     // Then the refusal is the size rule, decided without allocating a parsed graph
     expect(refusal).toEqual({ id: 0, code: 'frame-too-large' })
+  })
+
+  it('user sends a frame at the published cap and the bridge decodes it whole', () => {
+    // Given protocol v1's single-frame budget, which an operator reads as ten mebibytes
+    expect(MAX_FRAME_BYTES).toBe(10 * 1024 * 1024)
+    // When a request frame is exactly that many UTF-8 bytes long
+    const text = frameOfSize(MAX_FRAME_BYTES)
+    // Then the cap admits its own size instead of refusing the boundary
+    expect(Buffer.byteLength(text, 'utf8')).toBe(MAX_FRAME_BYTES)
+    expect(decoded(text)).toMatchObject({ t: 'req', m: 'session.prompt' })
+  })
+
+  it('user sends a frame one byte past the published cap and the bridge refuses it', () => {
+    // Given a request frame one byte longer than one frame may carry
+    const text = frameOfSize(MAX_FRAME_BYTES + 1)
+    // When the bridge decodes it
+    const outcome = decodeClientFrame(text)
+    if (outcome.ok) throw new Error(`expected a refusal, got ${outcome.frame.t}`)
+    // Then the refusal is the size rule, and its message names the budget it enforced
+    expect({ id: outcome.id, code: outcome.code }).toEqual({ id: 0, code: 'frame-too-large' })
+    expect(outcome.msg).toBe(`frame exceeds ${MAX_FRAME_BYTES} bytes`)
   })
 
   it('operator sees one connection sequence counting events from one upward', () => {

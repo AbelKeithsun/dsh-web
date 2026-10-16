@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ControllableStream, answerOf, makeConnection, requestFrame, settle } from './support/harness.ts'
+import { MAX_FRAME_BYTES } from '../src/core/envelope.ts'
+import { ControllableStream, answerOf, makeConnection, requestFrame, settle, type ConnectionHarness } from './support/harness.ts'
 
 /** One follow record as DSH writes it. */
 function record(type: string, seq: number, time: number, data: unknown): unknown {
@@ -9,6 +10,66 @@ function record(type: string, seq: number, time: number, data: unknown): unknown
 /** One assistant-stream chunk frame. */
 function chunk(index: number, body: unknown): unknown {
   return { type: 'assistant-stream', frame: { type: 'chunk', attemptId: 'a-1', revision: 1, index, time: 10 + index, chunk: body } }
+}
+
+/** One entry of a snapshot turn as the wire carries it. */
+interface WireEntry {
+  readonly seq: number
+  readonly type: string
+  readonly data: unknown
+}
+
+/** One snapshot turn as the wire carries it. */
+interface WireTurn {
+  readonly seq: number
+  readonly endSeq: number
+  readonly reason: string
+  readonly entries: WireEntry[]
+}
+
+/**
+ * One closed turn mixing the entries a client renders with the harness's own
+ * bookkeeping records — the shape that made a phone's baseline unopenable.
+ */
+function mixedTurn(): unknown[] {
+  return [
+    record('turn/start', 1, 100, { turn: 1 }),
+    record('user/message', 2, 101, { text: 'hi' }),
+    record('request/header', 3, 102, { model: 'm-1' }),
+    record('assistant/message', 4, 103, { text: 'hello' }),
+    record('system/message', 5, 104, { text: 'the harness prompt' }),
+    record('tool/call', 6, 105, { callId: 'c-1', name: 'read', arguments: '{"path":"a"}' }),
+    record('turn/end', 7, 106, { turn: 1, reason: { kind: 'completed' } }),
+  ]
+}
+
+/** Feed one follow baseline to a connection and await its snapshot answer. */
+async function snapshot(harness: ConnectionHarness, id: number, records: unknown[], cursor: number): Promise<void> {
+  const follow = new ControllableStream()
+  harness.gateway.follow = call => follow.attach(call.signal).iterable()
+  const pending = harness.connection.handleText(requestFrame(id, 'session.snapshot', { sessionId: 's-1' }))
+  follow.push({ type: 'snapshot', header: {}, cursor, hasMore: false, projections: {}, records })
+  await pending
+}
+
+/** One snapshot answer's turns. */
+function turnsOf(harness: ConnectionHarness, id: number): WireTurn[] {
+  return (answerOf(harness, id).r as { turns: WireTurn[] }).turns
+}
+
+/** One snapshot answer's durable cursor. */
+function lastSeqOf(harness: ConnectionHarness, id: number): number {
+  return (answerOf(harness, id).r as { lastSeq: number }).lastSeq
+}
+
+/** One response frame's exact text, as it crossed the wire. */
+function rawAnswer(harness: ConnectionHarness, id: number): string {
+  const text = harness.transport.sent.find(entry => {
+    const frame = JSON.parse(entry) as { t?: string; id?: number }
+    return frame.t === 'res' && frame.id === id
+  })
+  if (text === undefined) throw new Error(`no response for request ${id}`)
+  return text
 }
 
 describe('session methods over protocol v1', () => {
@@ -278,7 +339,7 @@ describe('session methods over protocol v1', () => {
       projections: {},
       records: [
         record('turn/start', 1, 100, { turn: 1 }),
-        record('user/message', 2, 101, { text: 'x'.repeat(300 * 1024) }),
+        record('user/message', 2, 101, { text: 'x'.repeat(MAX_FRAME_BYTES + 1024) }),
       ],
     })
     // When the snapshot is awaited
@@ -317,5 +378,71 @@ describe('session methods over protocol v1', () => {
     expect(answerOf(harness, 22).r).toEqual({ accepted: true })
     await harness.connection.handleText(requestFrame(23, 'hello', { proto: 1 }))
     expect(answerOf(harness, 23).ok).toBe(true)
+  })
+
+  it('user declaring the snapshot trim capability receives only the entries the client renders', async () => {
+    // Given a client that announces the trim capability beside the capability it already declared
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(30, 'hello', { proto: 1, cap: ['session.stream.v1', 'session.snapshot.trim.v1'] }))
+    // When it snapshots a turn mixing rendered entries with records it cannot render
+    await snapshot(harness, 31, mixedTurn(), 7)
+    // Then only the rendered entries cross, in their original order, carrying their own fields
+    const turns = turnsOf(harness, 31)
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.entries.map(entry => entry.type)).toEqual(['user/message', 'assistant/message', 'tool/call'])
+    expect(turns[0]?.entries.map(entry => entry.seq)).toEqual([2, 4, 6])
+    expect(turns[0]?.entries[2]?.data).toEqual({ callId: 'c-1', name: 'read', arguments: '{"path":"a"}' })
+    // And the turn's own boundaries and the durable cursor stay the projection's own numbers
+    expect([turns[0]?.seq, turns[0]?.endSeq, turns[0]?.reason]).toEqual([1, 7, 'completed'])
+    expect(lastSeqOf(harness, 31)).toBe(7)
+  })
+
+  it('user declaring no trim capability receives the untrimmed baseline byte for byte', async () => {
+    // Given two clients over the same turn: one declares no capability, the other announces the older one
+    const plain = makeConnection({ paired: true })
+    const legacy = makeConnection({ paired: true })
+    await legacy.connection.handleText(requestFrame(40, 'hello', { proto: 1, cap: ['session.stream.v1'] }))
+    // When both snapshot that turn
+    await Promise.all([snapshot(plain, 41, mixedTurn(), 7), snapshot(legacy, 41, mixedTurn(), 7)])
+    // Then every record crosses, and the two answers are the same bytes
+    expect(rawAnswer(plain, 41)).toBe(rawAnswer(legacy, 41))
+    expect(turnsOf(plain, 41)[0]?.entries.map(entry => entry.type))
+      .toEqual(['turn/start', 'user/message', 'request/header', 'assistant/message', 'system/message', 'tool/call', 'turn/end'])
+  })
+
+  it('user declaring the trim capability receives a baseline that without it exceeds one frame', async () => {
+    // Given a single turn whose unrenderable record alone is larger than one frame, beside a small rendered one
+    const records = [
+      record('system/message', 1, 100, { text: 's'.repeat(MAX_FRAME_BYTES + 1024) }),
+      record('assistant/message', 2, 101, { text: 'ok' }),
+    ]
+    const untrimmed = makeConnection({ paired: true })
+    const trimmed = makeConnection({ paired: true })
+    await trimmed.connection.handleText(requestFrame(50, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1'] }))
+    // When both snapshot that turn
+    await Promise.all([snapshot(untrimmed, 51, records, 9), snapshot(trimmed, 51, records, 9)])
+    // Then the untrimmed client is refused as too large, and the trimmed one gets the small rendered entry
+    expect(answerOf(untrimmed, 51).e?.code).toBe('snapshot-too-large')
+    const turns = turnsOf(trimmed, 51)
+    expect(turns).toHaveLength(1)
+    expect(turns[0]?.entries.map(entry => entry.type)).toEqual(['assistant/message'])
+    expect(lastSeqOf(trimmed, 51)).toBe(9)
+  })
+
+  it('user declaring the trim capability keeps a turn of pure bookkeeping as an empty turn', async () => {
+    // Given a client that announces the trim capability, and a turn holding nothing it could render
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(60, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1'] }))
+    // When it snapshots that turn
+    await snapshot(harness, 61, [
+      record('turn/start', 1, 100, { turn: 1 }),
+      record('system/message', 2, 101, { text: 'the harness prompt' }),
+      record('turn/end', 3, 102, { turn: 1, reason: { kind: 'completed' } }),
+    ], 3)
+    // Then the turn is still there with its own boundaries, and its entry list is empty rather than absent
+    const turns = turnsOf(harness, 61)
+    expect(turns).toHaveLength(1)
+    expect([turns[0]?.seq, turns[0]?.endSeq, turns[0]?.reason]).toEqual([1, 3, 'completed'])
+    expect(turns[0]?.entries).toEqual([])
   })
 })

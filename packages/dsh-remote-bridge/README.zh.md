@@ -18,7 +18,7 @@
 
 本包发布一套协议，并在它旁边提供一个很小的浏览器面。宿主半区发布的是一套协议：
 
-- **一个面。** 宿主 WebServer 上以精确路径注册的 `/ios/v1` WebSocket；帧为文本帧，一帧一个 JSON 对象，单帧上限 256KB。
+- **一个面。** 宿主 WebServer 上以精确路径注册的 `/ios/v1` WebSocket；帧为文本帧，一帧一个 JSON 对象，单帧上限 10 MiB（10485760 字节）。
 - **会话面。** `session.list`、`session.titles`、`session.snapshot`、`session.prompt`、`session.interrupt` 分别覆盖带工作区、谱系与归档元数据的名册、一批会话标题、完整基线加实时订阅、带幂等键的排队发言，以及回合取消。
 - **订阅而非轮询。** `session.snapshot` 打开宿主的 follow 流并保持它，基线与其后的每一条增量都走同一条 socket。
 - **审批直达客户端。** 需要授权的工具以 `approval.request` 事件到达，客户端用 `approval.resolve` 作答；无人应答的请求按拒绝处理。
@@ -35,13 +35,13 @@
 | 事件 | `{"t":"ev","seq":<uint>,"m":"<topic>","p":{...}}` |
 | 心跳 | `{"t":"ping","ts":<ms>}` 与 `{"t":"pong","ts":<ms>}` |
 
-`seq` 属于每个连接，自 1 起单调递增：它给的是该连接收到的事件序号，不是宿主自身的历史。帧为文本帧、一帧一个 JSON 对象、单帧上限 256KB。空闲连接每 20 秒探活一次；客户端以 pong 回应 ping，桥接侧同样如此。
+`seq` 属于每个连接，自 1 起单调递增：它给的是该连接收到的事件序号，不是宿主自身的历史。帧为文本帧、一帧一个 JSON 对象、单帧上限 10 MiB（10485760 字节）。空闲连接每 20 秒探活一次；客户端以 pong 回应 ping，桥接侧同样如此。
 
 ## 方法集
 
 | 方法 | 请求 `p` | 响应 `r` |
 | --- | --- | --- |
-| `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" 或 "unpaired"}` |
+| `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1","session.snapshot.trim.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" 或 "unpaired"}` |
 | `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
 | `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId}` | `{turns:[...], lastSeq:<uint>}` |
@@ -52,6 +52,8 @@
 | `approval.resolve` | `{id, decision}` | `{ok:true}` |
 
 `hello` 无需设备令牌即可调用，并回报本连接自身的 `auth` 状态。`session.snapshot` 把宿主 follow 流的开帧快照映射成 `turns`，把它的 cursor 作为 `lastSeq` 回报，随后保持该流作为本连接对该会话的订阅；`session.prompt` 幂等地确保同一条订阅，因此客户端可以跳过 snapshot。发言模式固定为排队，`clientTimeZone` 由服务端填本机 IANA 时区，`requestId` 是幂等键：同名 `requestId` 在同一会话内只发一次，重复调用直接回 `{accepted:true}` 且不再发送。`session.interrupt` 取消回合，不拆除订阅。
+
+`hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本协议版本认识的能力只有一个：`session.snapshot.trim.v1`。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
 
 `session.list` 除名册自身字段外还带上手机用来分组与命名的元数据：`cwd`、`parentSessionId`、`origin` 只在宿主确实上报时才出现，`blank` 始终存在，`archived` 只在本次进程能读到宿主归档集时出现——读不到就省略该键，而不是回 `false`。`title` 在本连接尚未通过 `session.titles` 解析过该 id 时保持 `""`，因此列名册仍然只是一次调用，且不会给每一行挂上一次标题读取。`session.titles` 用宿主自己的标题服务回答一批 1 到 100 个 id——读的是本进程的活跃会话，绝不为每个会话各开一条 follow 流——且每个被请求的 id 都是键：本宿主没有活跃持有的 id、或标题尚未落地的 id，一律回 `""`。一个已解析的标题会在 10 秒内被直接复用，之后才再问服务，因此重命名最多要等这么久才可见。与其它会话方法一样，没有设备令牌时两者都回 `unpaired`。
 
@@ -89,7 +91,7 @@
 | `proto-unsupported` | `hello` 握手声明的协议版本本桥说不出来 |
 | `snapshot-too-large` | 开帧快照无法压缩进单帧：连一个回合都放不下 |
 | `internal` | 桥在服务该调用时自身失败 |
-| `frame-too-large` | 该帧超过 256KB，未被解析 |
+| `frame-too-large` | 该帧超过 10 MiB 上限，未被解析 |
 | `malformed` | 该帧不是形状可辨的单个 JSON 对象 |
 | `direction-violation` | 客户端发来了只有宿主才发的 `res` 或 `ev` 帧 |
 
@@ -202,7 +204,7 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
 
 ## 配置
 
-桥接像其他宿主插件行一样挂载。v1 不带任何面向用户的选项：本文中的取值——30 秒一次性 bootstrap token、仅 loopback 的 token 端点、256KB 单帧上限、固定的 `/ios/v1` 路径——都是协议常量而非设置项。配对与吊销也不是配置，而是名册里的逐设备事实。桥接唯一依赖的环境事实是 `$DSH_HOME`，因为名册就在它下面。
+桥接像其他宿主插件行一样挂载。v1 不带任何面向用户的选项：本文中的取值——30 秒一次性 bootstrap token、仅 loopback 的 token 端点、10 MiB 单帧上限、固定的 `/ios/v1` 路径——都是协议常量而非设置项。配对与吊销也不是配置，而是名册里的逐设备事实。桥接唯一依赖的环境事实是 `$DSH_HOME`，因为名册就在它下面。
 
 ## 安全模型
 

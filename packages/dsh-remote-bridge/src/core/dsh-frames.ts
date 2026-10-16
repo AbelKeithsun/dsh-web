@@ -20,6 +20,19 @@ export type SessionDelta =
 /** Highest number of tool calls one connection remembers by id. */
 export const TOOL_CALL_MEMORY = 512
 
+/**
+ * The durable entry types a protocol v1 client renders — `user/message`,
+ * `assistant/message`, `tool/call` and `tool/result`. Everything else in a
+ * turn's entries is the harness's own bookkeeping, which the client can only
+ * count as unknown, so a client that asks for a trimmed baseline is not sent it.
+ */
+export const RENDERED_ENTRY_TYPES: ReadonlySet<string> = new Set([
+  'user/message',
+  'assistant/message',
+  'tool/call',
+  'tool/result',
+])
+
 /** One raw durable event inside a snapshot turn. */
 export interface SnapshotEntry {
   readonly seq: number
@@ -216,6 +229,24 @@ export function turnsOfRecords(records: readonly unknown[]): SnapshotTurn[] {
   }
   if (current !== undefined && current.entries.length > 0) turns.push(current)
   return turns
+}
+
+/**
+ * Drop the entries of each turn that a protocol v1 client would not render.
+ *
+ * Only the inside of a turn changes: which turns survive, their order, their
+ * `seq`/`endSeq` metadata and every kept entry's `type` and `data` are the
+ * projection's own output. A turn whose entries are all unrenderable stays as a
+ * turn with an empty `entries` array, so the client never sees a shape it does
+ * not know how to read.
+ * @param turns - the projection of a follow baseline, in order.
+ * @returns the same turns, each carrying only its rendered entries.
+ */
+export function trimUnrenderedEntries(turns: readonly SnapshotTurn[]): SnapshotTurn[] {
+  return turns.map(turn => {
+    const entries = turn.entries.filter(entry => RENDERED_ENTRY_TYPES.has(entry.type))
+    return entries.length === turn.entries.length ? turn : { ...turn, entries }
+  })
 }
 
 function snapshotEntryOf(record: unknown): SnapshotEntry | undefined {

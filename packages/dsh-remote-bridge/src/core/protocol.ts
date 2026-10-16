@@ -20,6 +20,14 @@ export const TOPIC_SESSION_DELTA = 'session.delta'
 export const TOPIC_APPROVAL_REQUEST = 'approval.request'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to ask for a trimmed
+ * `session.snapshot` baseline. A client that does not declare it — including
+ * every client written before this capability existed — is served exactly the
+ * baseline protocol v1 always served.
+ */
+export const CAP_SESSION_SNAPSHOT_TRIM = 'session.snapshot.trim.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.

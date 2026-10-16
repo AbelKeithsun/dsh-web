@@ -18,7 +18,7 @@ Protocol v1 is deliberately a second, independent surface: the browser path (the
 
 The package publishes one protocol and, beside it, one small browser surface. What the host half publishes is a protocol:
 
-- **One surface.** A WebSocket at `/ios/v1`, registered as an exact upgrade route on the host webserver; frames are text, one JSON object each, at most 256 KB.
+- **One surface.** A WebSocket at `/ios/v1`, registered as an exact upgrade route on the host webserver; frames are text, one JSON object each, at most 10 MiB (10485760 bytes).
 - **A session surface.** `session.list`, `session.titles`, `session.snapshot`, `session.prompt` and `session.interrupt` cover the roster with its workspace, lineage and archive metadata, a batch of session titles, a full baseline plus a live subscription, a queued prompt with an idempotency key, and turn cancellation.
 - **A subscription, not a poll.** `session.snapshot` opens the harness follow stream and keeps it, so the baseline and every later increment arrive over the same socket.
 - **Approvals reach the client.** A tool that asks for permission arrives as an `approval.request` event and is answered with `approval.resolve`; a request nobody answers is rejected.
@@ -35,13 +35,13 @@ The package publishes one protocol and, beside it, one small browser surface. Wh
 | event | `{"t":"ev","seq":<uint>,"m":"<topic>","p":{...}}` |
 | heartbeat | `{"t":"ping","ts":<ms>}` and `{"t":"pong","ts":<ms>}` |
 
-`seq` is per connection and starts at 1: it numbers the events that connection received, not the harness's own history. Frames are text, one JSON object per frame, at most 256 KB. Idle connections are probed every 20 s; a client answers a ping with a pong of its own and a bridge answers the same way.
+`seq` is per connection and starts at 1: it numbers the events that connection received, not the harness's own history. Frames are text, one JSON object per frame, at most 10 MiB (10485760 bytes). Idle connections are probed every 20 s; a client answers a ping with a pong of its own and a bridge answers the same way.
 
 ## Methods
 
 | method | request `p` | response `r` |
 | --- | --- | --- |
-| `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" or "unpaired"}` |
+| `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1","session.snapshot.trim.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" or "unpaired"}` |
 | `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
 | `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId}` | `{turns:[...], lastSeq:<uint>}` |
@@ -52,6 +52,8 @@ The package publishes one protocol and, beside it, one small browser surface. Wh
 | `approval.resolve` | `{id, decision}` | `{ok:true}` |
 
 `hello` is callable without a device token and reports the connection's own `auth` state. `session.snapshot` maps the harness follow stream's opening snapshot into `turns`, reports its cursor as `lastSeq` and then keeps that stream open as this connection's subscription for the session; `session.prompt` ensures the same subscription idempotently, so a client may skip the snapshot. The prompt mode is fixed to queue, `clientTimeZone` is filled server-side with the host's IANA zone, and `requestId` is an idempotency key: the same `requestId` in the same session is sent once, and a repeat answers `{accepted:true}` without sending anything again. `session.interrupt` cancels the turn; it does not drop the subscription.
+
+`hello` also carries the client's capabilities, and a capability is an announcement rather than a negotiation: the handshake answers the same frame whatever `cap` holds, an unknown name is ignored, and the frame cap is one constant in both directions — the 10 MiB that bounds a received frame is the same budget that fits a snapshot and that drops an oversized outbound event. The one capability this protocol version recognizes is `session.snapshot.trim.v1`. A client that does not declare it — including every client written before it existed — is served exactly the baseline protocol v1 always served. A client that does declare it is sent a trimmed baseline: inside every turn, only the entries it renders (`user/message`, `assistant/message`, `tool/call`, `tool/result`) survive, and the harness's own bookkeeping records (`system/message`, `request/header` and the like) are dropped before the frame is measured. Nothing else about the snapshot changes: which turns are kept, their order, and each turn's `seq`, `endSeq`, `reason` and `time` are the projection's own values, a turn whose entries are all bookkeeping stays as a turn with an empty `entries` array, and `lastSeq` is still the harness cursor. The frame budget applies afterwards — entries are trimmed first, then whole oldest turns are dropped, and only then does a snapshot that still does not fit answer `snapshot-too-large`.
 
 `session.list` carries the roster's own fields plus the metadata a phone groups and labels by: `cwd`, `parentSessionId` and `origin` are present only when the host reported them, `blank` is always present, and `archived` is present only when this process can read the host's archive set — a bridge that cannot tell omits the key instead of answering `false`. `title` stays `""` unless this connection has already resolved that id through `session.titles`, so listing sessions stays one call and never puts a title read on every row. `session.titles` answers a batch of one to 100 ids out of the host's own title service — the live sessions of this process, never one follow stream per session — and every requested id becomes a key: an id this host does not hold live, or one whose title has not landed yet, answers `""`. One resolved title is served for 10 s before the service is asked again, so a rename can take that long to show. Like every other session method, both answer `unpaired` without a device token.
 
@@ -89,7 +91,7 @@ An `approval.request` carries a summary taken from the harness's display reason 
 | `proto-unsupported` | the `hello` handshake named a protocol version this bridge does not speak |
 | `snapshot-too-large` | the opening snapshot cannot be shrunk to one frame: even a single turn does not fit |
 | `internal` | the bridge failed while serving the call |
-| `frame-too-large` | the frame exceeded 256 KB and was not parsed |
+| `frame-too-large` | the frame exceeded the 10 MiB cap and was not parsed |
 | `malformed` | the frame is not one JSON object with a recognizable shape |
 | `direction-violation` | the client sent a `res` or `ev` frame, which only the host sends |
 
@@ -202,7 +204,7 @@ The family aggregate package `@linxin666/dsh-web-all` installs this plugin toget
 
 ## Configuration
 
-The bridge is mounted like any other host plugin row. It carries no user-facing options in v1: the values in this document — the 30 s one-time bootstrap token, the loopback-only token endpoint, the 256 KB frame cap, the fixed `/ios/v1` path — are protocol constants rather than settings. Pairing and revocation are not configuration either; they are per-device facts in the roster. The one environment fact the bridge depends on is `$DSH_HOME`, since the roster lives under it.
+The bridge is mounted like any other host plugin row. It carries no user-facing options in v1: the values in this document — the 30 s one-time bootstrap token, the loopback-only token endpoint, the 10 MiB frame cap, the fixed `/ios/v1` path — are protocol constants rather than settings. Pairing and revocation are not configuration either; they are per-device facts in the roster. The one environment fact the bridge depends on is `$DSH_HOME`, since the roster lives under it.
 
 ## Security model
 
