@@ -8,6 +8,7 @@
     "dsh-market": { "lines": 77.3, "statements": 73.07, "functions": 67.54, "branches": 60.66 },
     "dsh-model-capabilities": { "lines": 84.29, "statements": 81.3, "functions": 81.35, "branches": 81.41 },
     "dsh-plugin-manager": { "lines": 81.87, "statements": 77.77, "functions": 73.23, "branches": 72.3 },
+    "dsh-remote-bridge": { "lines": 88.21, "statements": 84.04, "functions": 91, "branches": 76.53 },
     "dsh-remote-web-ui": { "lines": 69.99, "statements": 66.31, "functions": 62.21, "branches": 58.7 },
     "dsh-session-archive": { "lines": 70.24, "statements": 67.59, "functions": 56.23, "branches": 54.42 },
     "dsh-session-id": { "lines": 83.87, "statements": 78.57, "functions": 88, "branches": 78 },

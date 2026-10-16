@@ -1,0 +1,194 @@
+# dsh-remote-bridge · DeepSeek Harness (DSH) 协议 v1 宿主适配包
+
+[English](README.md) | 中文
+
+<p align="center">
+  <img src="https://img.shields.io/npm/v/@linxin666/dsh-remote-bridge?style=flat-square" alt="Version">
+  &nbsp;
+  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
+  &nbsp;
+  <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
+</p>
+
+把 DeepSeek Harness（DSH）本体发布成协议 v1 的宿主侧适配包：一个 `/ios/v1` 的 WebSocket 面，原生客户端（手机 App、平板、终端脚本）无需浏览器、无需 Web GUI 包体、也无需改动中继即可驱动它。
+
+协议 v1 是有意独立于浏览器路径的第二条面：配对设备 cookie 与受门禁的 `/remote` 通道属于 `dsh-remote-web-ui`，本包不回放那份凭据。它在同一进程内消费宿主——会话工作走 Typert gateway，权限请求走审批瀑布——并自行签发一次性 bootstrap token，不改动 `dsh-remote-web-ui` 的配对服务面。
+
+## 功能
+
+本包只有宿主半区：不声明 `dsh.client`、不带 `src/client/`、不注册 locale、不含任何 UI 文案。它发布的是一套协议：
+
+- **一个面。** 宿主 WebServer 上以精确路径注册的 `/ios/v1` WebSocket；帧为文本帧，一帧一个 JSON 对象，单帧上限 256KB。
+- **会话面。** `session.list`、`session.snapshot`、`session.prompt`、`session.interrupt` 分别覆盖名册、完整基线加实时订阅、带幂等键的排队发言，以及回合取消。
+- **订阅而非轮询。** `session.snapshot` 打开宿主的 follow 流并保持它，基线与其后的每一条增量都走同一条 socket。
+- **审批直达客户端。** 需要授权的工具以 `approval.request` 事件到达，客户端用 `approval.resolve` 作答；无人应答的请求按拒绝处理。
+- **配对。** 一次性 bootstrap token 加 P-256 挑战应答产出可吊销的设备令牌；未配对连接只能触达三个方法。
+- **中继无需改动。** 协议搭在实例本来就发布的那个 origin 上，中继这一跳照原样转发它，与其他所有请求无异。
+
+## 传输
+
+| 帧 | 形状 |
+| --- | --- |
+| 请求 | `{"t":"req","id":<uint>,"m":"<method>","p":{...}}` |
+| 响应 | `{"t":"res","id":<uint>,"ok":true,"r":{...}}` 或 `{"t":"res","id":<uint>,"ok":false,"e":{"code":"<str>","msg":"<str>"}}` |
+| 事件 | `{"t":"ev","seq":<uint>,"m":"<topic>","p":{...}}` |
+| 心跳 | `{"t":"ping","ts":<ms>}` 与 `{"t":"pong","ts":<ms>}` |
+
+`seq` 属于每个连接，自 1 起单调递增：它给的是该连接收到的事件序号，不是宿主自身的历史。帧为文本帧、一帧一个 JSON 对象、单帧上限 256KB。空闲连接每 20 秒探活一次；客户端以 pong 回应 ping，桥接侧同样如此。
+
+## 方法集
+
+| 方法 | 请求 `p` | 响应 `r` |
+| --- | --- | --- |
+| `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" 或 "unpaired"}` |
+| `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning}]}` |
+| `session.snapshot` | `{sessionId}` | `{turns:[...], lastSeq:<uint>}` |
+| `session.prompt` | `{sessionId, text, requestId}` | `{accepted:true}` |
+| `session.interrupt` | `{sessionId}` | `{ok:true}` |
+| `pair.begin` | `{token}` | `{nonce, expiresAt}` |
+| `pair.finish` | `{devicePubKey, signature}` | `{deviceToken, deviceId}` |
+| `approval.resolve` | `{id, decision}` | `{ok:true}` |
+
+`hello` 无需设备令牌即可调用，并回报本连接自身的 `auth` 状态。`session.snapshot` 把宿主 follow 流的开帧快照映射成 `turns`，把它的 cursor 作为 `lastSeq` 回报，随后保持该流作为本连接对该会话的订阅；`session.prompt` 幂等地确保同一条订阅，因此客户端可以跳过 snapshot。发言模式固定为排队，`clientTimeZone` 由服务端填本机 IANA 时区，`requestId` 是幂等键：同名 `requestId` 在同一会话内只发一次，重复调用直接回 `{accepted:true}` 且不再发送。`session.interrupt` 取消回合，不拆除订阅。
+
+## 事件
+
+| 主题 | 载荷 |
+| --- | --- |
+| `session.delta` | `{sessionId, kind, ...}`——某会话某一回合的一条增量（种类见下） |
+| `approval.request` | `{sessionId, id, summary}`——有工具正在等待裁决 |
+
+### session.delta 的种类
+
+| 种类 | 附加字段 | 含义 |
+| --- | --- | --- |
+| `text` | `{text, blockIndex}` | 助手正文增量 |
+| `reasoning` | `{text, blockIndex}` | 推理增量 |
+| `tool-call` | `{callId, name, argumentsDelta}` | 工具调用增量；`argumentsDelta` 可为空串 |
+| `tool-result` | `{callId, output, isError}` | 工具结果 |
+| `turn-end` | `{reason}` | 回合结束；`completed` 之外都算异常结束 |
+
+`approval.request` 的摘要取自宿主按客户端语言给出的显示理由，缺失时回落英文、再回落工具名，并附带工具名本身。客户端用 `approval.resolve` 作答，`decision` 取 `allowed-once` 或 `rejected`；未知或过期的 `id` 会被拒绝，而无人应答的请求在两分钟后按 unavailable 结算，宿主视之为拒绝。桥只在下游有已配对客户端连接时才认领请求：一个都没有时，请求交给下一个应答者，而不是干等一台不在场的手机。
+
+## 错误码
+
+| 错误码 | 含义 |
+| --- | --- |
+| `unpaired` | 本连接没有有效设备令牌，而该方法不在未配对白名单内 |
+| `snapshot-unavailable` | `session.snapshot` 未能从宿主 follow 流读到开帧快照 |
+| `token-invalid` | bootstrap token 未知、已被用掉，或已超过 30 秒 |
+| `nonce-invalid` | `pair.finish` 用的 nonce 从未签发、已被用掉或已过期 |
+| `signature-invalid` | ES256 签名无法用所给公钥与 nonce 验证通过 |
+| `approval-unknown` | `approval.resolve` 指的审批 id 未知或已过期 |
+| `unknown-method` | 方法名不属于协议 v1 |
+| `invalid-args` | 载荷与方法形状不符 |
+| `proto-unsupported` | `hello` 握手声明的协议版本本桥说不出来 |
+| `snapshot-too-large` | 开帧快照无法压缩进单帧：连一个回合都放不下 |
+| `internal` | 桥在服务该调用时自身失败 |
+| `frame-too-large` | 该帧超过 256KB，未被解析 |
+| `malformed` | 该帧不是形状可辨的单个 JSON 对象 |
+| `direction-violation` | 客户端发来了只有宿主才发的 `res` 或 `ev` 帧 |
+
+在 DSH 内部产生的失败同样不被改名：它带着 gateway 自己的错误码穿过桥，例如 `service-unavailable`、`invocation-unavailable`、`definition-unavailable`、`arguments-invalid`。只有服务激活窗口会被重试（5 次、间隔 2 秒），因为那是唯一「片刻后即成功」的失败。
+
+## 鉴权
+
+设备令牌随 WebSocket upgrade 以 `Authorization: Bearer <deviceToken>` 携带——这是首选载体——并对不便设置 header 的客户端接受 `?token=<deviceToken>`。比对为定长比较，不会在长度不符时短路。没有有效设备令牌的连接只放行三个方法——`hello`、`pair.begin`、`pair.finish`——其余方法在任何会话工作发生之前一律回 `unpaired`。
+
+### Bootstrap token
+
+`GET /remote-bridge/pair/token` 是宿主上的精确路由，门禁同时看两个条件：来源地址必须是 `127.0.0.1`、`::1` 或 `::ffff:127.0.0.1`，且 `Host` header 必须写本机（`127.0.0.1`、`localhost` 或 `[::1]`，端口忽略）。经隧道进来的请求即使其隧道客户端就从本机连出，也会在第二个条件上被拒，因此该端点在公网 origin 上够不到；其余情况一律 403。token 只存内存，30 秒后过期，被第一次 `pair.begin` 用掉即焚，同一条链接也会打到宿主日志，便于桌面端取用。
+
+```sh
+curl -s http://127.0.0.1:3080/remote-bridge/pair/token
+# {"token":"...","expiresAt":1760000030000,"url":"ws://127.0.0.1:3080/ios/v1?token=..."}
+```
+
+### 设备令牌
+
+`pair.begin` 应答一个 nonce 及其过期时刻；客户端用 P-256 密钥对 nonce 的原始字节签名，并以 base64url 的 SPKI 公钥与 base64url 的 ES256 签名调用 `pair.finish`。签名必须是 WebCrypto 与 CryptoKit 产出的原始 64 字节 `r||s` 形态，不能是 DER 包装：宿主先校验长度再验签，重新编码过的签名会被拒绝。宿主回一个 32 随机字节的 base64url 设备令牌及其 deviceId。服务端只存该令牌的 SHA-256 哈希，因此名册文件即使被拿走也换不出可用凭据。
+
+## 设备名册
+
+名册落在 `$DSH_HOME/remote-bridge/devices.json`，是一份带版本号的文档，每个已配对设备一行：
+
+```json
+{
+  "version": 1,
+  "devices": [
+    {
+      "deviceId": "dev_9Qm2r0Tn1Zk4",
+      "pubKey": "<base64url SPKI, P-256>",
+      "fingerprint": "<sha256 of the SPKI>",
+      "createdAt": 1760000000000,
+      "lastSeenAt": 1760000000000,
+      "tokenHash": "<sha256 of the bearer token>"
+    }
+  ]
+}
+```
+
+文件里没有任何可直接使用的明文凭据：一行保留设备的公钥、指纹，以及签发给它的令牌的 SHA-256，从不保留令牌本身。目录为 0700、文件为 0600；写入先落临时文件、flush 后再原子 rename，崩溃不会留下半截名册，解析失败的文件会被改名加上 `.corrupt-<时间戳>` 后缀隔离，而不是被当作空名册。协议 v1 没有吊销方法，所以吊销一个设备就是移除它的那一行（或删掉整个文件）再重启宿主：名册每个进程只读一次，自那次启动起该设备连接即未配对。
+
+## 中继
+
+把私网实例发布到公网的中继是**全量反代**：它查出实例当前的隧道目标，只重写 `Host` header，其余原样转发 origin 的响应——唯一按路径区分的规则是对内容哈希的 `/assets/*` 加不可变缓存。WebSocket upgrade 走的是同一跳：Workers 运行时在客户端发出 `Upgrade` 请求且 body 为空时，会让该 `fetch` 升级为 WebSocket。因此协议 v1 只是同一 origin 上的又一条路径：Worker 无需改动、不需要第二条隧道、也不需要多发布一个 origin。
+
+这一跳带来两条后果。它看得见请求 URL，所以用 `?token=` 连接等于把设备令牌交给中继、Cloudflare 边缘与 origin 访问日志——优先用 header。而 `GET /remote-bridge/pair/token` 会像其他路径一样被转发，但它的 loopback 门禁会拒掉这条转发请求，因此配对只能从本机发起。
+
+## 客户端脚本
+
+`scripts/client.mjs` 是一个零依赖的协议 v1 客户端——只用 Node 22 的内置全局，不引任何包——用于对活着的桥接做检查，也给没有 Secure Enclave 的测试机配对。它按固定顺序跑一遍，给每帧加方向前缀、把事件按到达顺序编号，整段输出可直接粘进报告；它自身不执行任何模型调用。
+
+```sh
+# check a paired connection: hello -> session.list -> session.snapshot -> session.prompt -> session.delta
+BRIDGE_URL=ws://127.0.0.1:3080/ios/v1 BRIDGE_TOKEN=<deviceToken> node scripts/client.mjs
+
+# pair this machine with a throwaway P-256 key and print the device token
+node scripts/client.mjs --pair --pair-base http://127.0.0.1:3080
+```
+
+## 安装
+
+### 从 npm 安装
+
+```sh
+dsh plugin --profile web add @linxin666/dsh-remote-bridge@latest
+```
+
+### 从仓库安装
+
+```sh
+git clone https://github.com/zhu1090093659/dsh-web.git
+cd dsh-web
+pnpm install && pnpm -r build
+dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
+```
+
+家族聚合包 `@linxin666/dsh-web-all` 会连同家族其余内容一起装上本插件。安装或更新后需重启 `dsh web`：桥接会在宿主 WebServer 上注册 upgrade 路由，该路由只由运行中的宿主提供。
+
+## 配置
+
+桥接像其他宿主插件行一样挂载。v1 不带任何面向用户的选项：本文中的取值——30 秒一次性 bootstrap token、仅 loopback 的 token 端点、256KB 单帧上限、固定的 `/ios/v1` 路径——都是协议常量而非设置项。配对与吊销也不是配置，而是名册里的逐设备事实。桥接唯一依赖的环境事实是 `$DSH_HOME`，因为名册就在它下面。
+
+## 安全模型
+
+- **配对即完全控制凭据。** 已配对设备在同一进程内触达宿主：会话、发言、审批。只配对你掌控的设备，吊销方式是移除名册那一行并重启宿主。
+- **token 端点仅 loopback 可达，且看两个条件。** 来源地址必须是 loopback，且 `Host` header 必须写本机。经隧道的请求由本机的隧道客户端终结，所以对一条全互联网可达的请求，来源地址也读作 `127.0.0.1`；而中继与普通隧道都会把 `Host` 改写成公网名。任一条件不成立即 403。token 只存内存、30 秒过期、被一次 `pair.begin` 用掉即焚，同一条链接还会写进宿主日志——把那一行日志当作活着的密钥。
+- **未配对连接只有三个方法的白名单。** `hello`、`pair.begin`、`pair.finish`；其余方法在分发前即回 `unpaired`，因此没有设备令牌就够不到会话面、审批面与名册面。
+- **设备令牌只存哈希。** 名册保留公钥及其 SHA-256 指纹，从不存令牌本身，所以该文件不是凭据库。令牌丢失、轮换或被拒的处置就是重新配对——这是常规流程而非异常路径（重新签发一条 bootstrap 链接，或在桌面配对流程里重扫），且从不需要手工改名册。
+- **令牌比对不泄漏长度。** 用的是定长比较而非提前返回的比较，因此错误令牌无法被逐字节逼近。
+- **审批在客户端在线时 fail closed。** 只要还有一个已配对客户端在线，桥才认领工具的权限请求；一个都没有时，请求交给下一个应答者而不是卡住。已认领而无人应答的审批会被归一为 `unavailable`，宿主按拒绝处理：手机沉默永远不等于同意。
+- **header 是更安全的载体。** `Authorization: Bearer <deviceToken>` 让凭据不进入 URL；`?token=` 是给无法设置握手 header 的客户端的，此时中继、边缘与访问日志都会看到一条以该设备身份鉴权的 URL。
+
+## 已知限制
+
+- **`session.list` 的 `title` 恒为空串。** DSH 的会话名册没有 title 字段——title 只存在于重命名请求里——本包不会为了造出它而给每个会话开一条 follow 流。
+- **`lastSeq` 与 `seq` 是两个计数器。** `session.snapshot` 的 `lastSeq` 是宿主流的 cursor，事件的 `seq` 是本连接自己的事件序号，二者不可比较；续传状态属于客户端。
+- **不做增量补发。** 发现跳号或重连的客户端重新调 `session.snapshot` 拿完整基线；本包不为断开的客户端缓存 delta。
+- **工具调用参数以增量到达。** `tool-call` 增量的 `argumentsDelta` 可以为空串，参数由客户端拼装；整次调用不会被重发。
+- **订阅比 interrupt 活得久。** `session.interrupt` 只取消回合；订阅在连接关闭时结束，一个连接名下的 follow 流由同一个 AbortController 一起 abort。
+- **`clientTimeZone` 由宿主侧填写。** 桥接用本机 IANA 时区填充它；v1 里客户端无法指定自己的时区。
+- **名册改动在下一次宿主启动时生效。** 名册每个进程只读一次，因此移除设备要等 `dsh web` 重启才起作用。
+- **本包是传输而非 UI。** 没有浏览器半区、没有设置分区、没有 locale；Web GUI 自身的面不受它影响。
+- **`scripts/client.mjs` 是检查用的工具，不是客户端 SDK。** 它只按固定顺序跑一遍，不保存状态，也没有重连逻辑。

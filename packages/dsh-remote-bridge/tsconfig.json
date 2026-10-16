@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2024"],
+    "strict": true,
+    "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "lib/tsconfig.typecheck.tsbuildinfo",
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

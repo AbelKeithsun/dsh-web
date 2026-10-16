@@ -1,0 +1,14 @@
+# dsh-remote-bridge bundle patch: inserts its plugin row into the web plugin
+# roster. Install it into a dsh profile with
+# `dsh plugin --profile <name> add link:<repo>/packages/dsh-remote-bridge`.
+#
+# Host half only: this package declares no `dsh.client`, ships no
+# src/client/index.ts and therefore mounts no browser half. The single row id
+# below lives in the loader's global id space, so it must stay clear of every
+# official DSH bundle row and of the family's own rows — `remote-bridge` is
+# claimed by neither (the official roster carries no `remote-*` id at all,
+# and the aggregate's `web-ui-*` namespace is off limits to standalone
+# packages).
+- insert:
+    - id: remote-bridge
+      name: '@linxin666/dsh-remote-bridge'

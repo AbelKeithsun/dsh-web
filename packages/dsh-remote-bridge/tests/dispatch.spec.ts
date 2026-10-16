@@ -1,0 +1,129 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { answerOf, makeConnection, requestFrame } from './support/harness.ts'
+
+describe('protocol v1 authorization and dispatch', () => {
+  afterEach(() => { vi.useRealTimers() })
+  it('user greets the bridge before pairing and is told the connection is unpaired', async () => {
+    // Given a connection that presented no device token
+    const harness = makeConnection()
+    // When the user sends the handshake
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, minor: 0, client: 'ios/0.1' }))
+    // Then the handshake answers with this bridge's identity and the unpaired state
+    expect(answerOf(harness, 1)).toEqual({
+      ok: true,
+      r: { proto: 1, minor: 0, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' },
+    })
+  })
+
+  it('user greets the bridge with a protocol this one does not speak and is refused', async () => {
+    // Given a client that announces protocol 2
+    const harness = makeConnection()
+    // When the user sends the handshake
+    await harness.connection.handleText(requestFrame(2, 'hello', { proto: 2 }))
+    // Then the version is refused by name instead of being answered as if compatible
+    expect(answerOf(harness, 2).e?.code).toBe('proto-unsupported')
+  })
+
+  it('user unpaired reaches for a session and is refused without touching the host', async () => {
+    // Given a connection with no device token
+    const harness = makeConnection()
+    // When the user lists sessions
+    await harness.connection.handleText(requestFrame(3, 'session.list'))
+    // Then the refusal is unpaired and no gateway call was made at all
+    expect(answerOf(harness, 3).e?.code).toBe('unpaired')
+    expect(harness.gateway.invocations).toEqual([])
+  })
+
+  it('user unpaired tries to answer an approval and is refused', async () => {
+    // Given an unpaired connection and a question id that was never issued
+    const harness = makeConnection()
+    // When the user answers it
+    await harness.connection.handleText(requestFrame(4, 'approval.resolve', { id: 'q-1', decision: 'allowed-once' }))
+    // Then pairing is required before any approval can be answered
+    expect(answerOf(harness, 4).e?.code).toBe('unpaired')
+  })
+
+  it('user unpaired may still begin and finish pairing', async () => {
+    // Given an unpaired connection and a live bootstrap token
+    const harness = makeConnection()
+    const ticket = harness.pairing.issueToken()
+    // When the user begins pairing with that token
+    await harness.connection.handleText(requestFrame(5, 'pair.begin', { token: ticket.value }))
+    // Then the bridge mints the nonce to sign and reports when it stops being accepted
+    const answer = answerOf(harness, 5)
+    const issued = answer.r as { nonce: string; expiresAt: number }
+    expect(answer.ok).toBe(true)
+    expect(issued.nonce.length).toBeGreaterThan(0)
+    expect(issued.expiresAt).toBeGreaterThan(ticket.expiresAt)
+  })
+
+  it('user paired lists sessions through the gateway', async () => {
+    // Given a paired connection and a host that serves one session
+    const harness = makeConnection({ paired: true })
+    harness.gateway.handler = async () => ({ items: [{ sessionId: 's-1', updatedAt: 5, running: false, blank: true, agentAvailable: true }] })
+    // When the user lists sessions
+    await harness.connection.handleText(requestFrame(6, 'session.list'))
+    // Then the roster crosses in the protocol's own field names
+    expect(answerOf(harness, 6).r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 5, agentRunning: false }] })
+  })
+
+  it('user calls a method this protocol does not define and is refused by name', async () => {
+    // Given a paired connection
+    const harness = makeConnection({ paired: true })
+    // When the user calls a method outside the frozen set
+    await harness.connection.handleText(requestFrame(7, 'session.rename', { sessionId: 's-1' }))
+    // Then the refusal names the unknown method and nothing reaches the host
+    expect(answerOf(harness, 7).e?.code).toBe('unknown-method')
+    expect(harness.gateway.invocations).toEqual([])
+  })
+
+  it('user sends a prompt without its text and is refused with the argument names', async () => {
+    // Given a paired connection
+    const harness = makeConnection({ paired: true })
+    // When the user prompts with only a session and a request id
+    await harness.connection.handleText(requestFrame(8, 'session.prompt', { sessionId: 's-1', requestId: 'r-1' }))
+    // Then the refusal is about the arguments and no prompt was sent
+    const answer = answerOf(harness, 8)
+    expect(answer.e?.code).toBe('invalid-args')
+    expect(answer.e?.msg).toBe('session.prompt requires sessionId, text and requestId')
+    expect(harness.gateway.countOf('session', 'prompt')).toBe(0)
+  })
+
+  it('user sends a frame the envelope cannot read and still receives a correlation', async () => {
+    // Given a paired connection
+    const harness = makeConnection({ paired: true })
+    // When the user sends a frame that is not JSON
+    await harness.connection.handleText('{oops')
+    // Then the refusal arrives on the reserved id so the socket does not go silent
+    expect(harness.transport.frames()).toEqual([
+      { t: 'res', id: 0, ok: false, e: { code: 'malformed', msg: 'frame is not JSON' } },
+    ])
+  })
+
+  it('user answers the bridge heartbeat and receives nothing back', async () => {
+    // Given a paired connection
+    const harness = makeConnection({ paired: true })
+    // When the user replies with a pong
+    await harness.connection.handleText(JSON.stringify({ t: 'pong', ts: 1 }))
+    // Then no frame is written: a pong only proves the socket is alive
+    expect(harness.transport.frames()).toEqual([])
+  })
+
+  it('user leaves the socket idle and the bridge keeps it alive with a heartbeat', async () => {
+    // Given a connection whose idle period the test controls
+    vi.useFakeTimers()
+    const harness = makeConnection({ paired: true, heartbeatMs: 20_000 })
+    harness.connection.startHeartbeat()
+    // When the socket has been quiet for one idle period
+    await vi.advanceTimersByTimeAsync(20_000)
+    // Then the bridge pinged it exactly once, and answers a client ping with its own timestamp echoed
+    expect(harness.transport.ofType('ping')).toHaveLength(1)
+    const pinged = harness.transport.ofType('ping')[0] as unknown as { ts: number }
+    await harness.connection.handleText(JSON.stringify({ t: 'ping', ts: pinged.ts + 1 }))
+    expect(harness.transport.ofType('pong')).toEqual([{ t: 'pong', ts: pinged.ts + 1 }])
+    harness.connection.dispose()
+    // Then a disposed connection stops heartbeating
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(harness.transport.ofType('ping')).toHaveLength(1)
+  })
+})
