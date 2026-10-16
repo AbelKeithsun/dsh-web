@@ -1,0 +1,155 @@
+import { describe, expect, it } from 'vitest'
+import { SessionMeta, TITLES_MAX_IDS, type SessionMetaFaces } from '../src/core/session-meta.ts'
+import { answerOf, makeConnection, requestFrame, titlesDouble } from './support/harness.ts'
+
+/** One metadata source over fixed faces, for a connection that reads real metadata. */
+function metaOver(faces: SessionMetaFaces, now: () => number = () => Date.now(), log: (message: string) => void = () => {}): SessionMeta {
+  return new SessionMeta(() => faces, now, log)
+}
+
+/** One row of the gateway's roster answer, as the host writes it. */
+function summary(sessionId: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { sessionId, updatedAt: 5, running: false, blank: false, agentAvailable: true, ...extra }
+}
+
+describe('session metadata over protocol v1', () => {
+  it('operator listing sessions sees the working directory, lineage and blank flag of every row', async () => {
+    // Given a host whose roster reports a delegated session and an archived one
+    const titles = titlesDouble({ 'sub-1': 'Draft the copy' })
+    const harness = makeConnection({
+      paired: true,
+      sessionMeta: metaOver({ ...titles.faces, archive: { archivedSessionIds: ['s-2'] } }),
+    })
+    harness.gateway.handler = async () => ({
+      items: [
+        summary('sub-1', { updatedAt: 7, running: true, cwd: '/Users/zcl/code/x', parentSessionId: 's-1', origin: 'subagent' }),
+        summary('s-2', { blank: true, cwd: '/Users/zcl/code/y' }),
+      ],
+    })
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(1, 'session.list'))
+    // Then every field the host reported crosses under the protocol's own name
+    expect(answerOf(harness, 1).r).toEqual({
+      sessions: [
+        {
+          id: 'sub-1',
+          title: '',
+          updatedAt: 7,
+          agentRunning: true,
+          cwd: '/Users/zcl/code/x',
+          parentSessionId: 's-1',
+          origin: 'subagent',
+          blank: false,
+          archived: false,
+        },
+        { id: 's-2', title: '', updatedAt: 5, agentRunning: false, cwd: '/Users/zcl/code/y', blank: true, archived: true },
+      ],
+    })
+  })
+
+  it('operator whose host reports no optional field gets rows without those keys at all', async () => {
+    // Given a host with no archive registry and a roster row carrying nothing optional
+    const harness = makeConnection({ paired: true })
+    harness.gateway.handler = async () => ({ items: [summary('s-1', { cwd: '', origin: 'root' })] })
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(2, 'session.list'))
+    // Then the row carries only the keys this host can actually answer for
+    const answer = answerOf(harness, 2)
+    expect(answer.r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 5, agentRunning: false, blank: false }] })
+    expect(Object.keys((answer.r as { sessions: Record<string, unknown>[] }).sessions[0] ?? {})).toEqual(['id', 'title', 'updatedAt', 'agentRunning', 'blank'])
+  })
+
+  it('operator asking for a batch of titles receives one entry per id, empty for the untitled ones', async () => {
+    // Given a host holding one titled session and one live session with no title yet
+    const titles = titlesDouble({ 's-1': 'Plan the trip' }, ['s-1', 's-2'])
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    // When the operator asks for those two and one id this host does not hold
+    await harness.connection.handleText(requestFrame(3, 'session.titles', { ids: ['s-1', 's-2', 's-9'] }))
+    // Then every requested id is a key, the unknown ones answering the empty title
+    const answer = answerOf(harness, 3)
+    expect(answer.r).toEqual({ titles: { 's-1': 'Plan the trip', 's-2': '', 's-9': '' } })
+    expect(Object.keys((answer.r as { titles: Record<string, string> }).titles)).toEqual(['s-1', 's-2', 's-9'])
+    expect(titles.reads).toEqual(['s-1', 's-2'])
+  })
+
+  it('operator asking twice for the same title reads the title service once', async () => {
+    // Given a host holding one titled session
+    const titles = titlesDouble({ 's-1': 'Plan the trip' })
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    // When the operator asks for that title twice
+    await harness.connection.handleText(requestFrame(4, 'session.titles', { ids: ['s-1'] }))
+    await harness.connection.handleText(requestFrame(5, 'session.titles', { ids: ['s-1'] }))
+    // Then both answers carry it and the service was read once
+    expect(answerOf(harness, 4).r).toEqual({ titles: { 's-1': 'Plan the trip' } })
+    expect(answerOf(harness, 5).r).toEqual({ titles: { 's-1': 'Plan the trip' } })
+    expect(titles.reads).toEqual(['s-1'])
+  })
+
+  it('operator listing sessions after resolving titles sees the names on the roster rows', async () => {
+    // Given a host that has already answered one title lookup
+    const titles = titlesDouble({ 's-1': 'Plan the trip' })
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    harness.gateway.handler = async () => ({ items: [summary('s-1')] })
+    await harness.connection.handleText(requestFrame(6, 'session.titles', { ids: ['s-1'] }))
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(7, 'session.list'))
+    // Then the cached title rides the row and the roster itself read no title
+    expect(answerOf(harness, 7).r).toEqual({
+      sessions: [{ id: 's-1', title: 'Plan the trip', updatedAt: 5, agentRunning: false, blank: false }],
+    })
+    expect(titles.reads).toEqual(['s-1'])
+  })
+
+  it('operator sending an empty, oversized or malformed title batch is refused without reading a title', async () => {
+    // Given a host whose title service records every read
+    const titles = titlesDouble({ 's-1': 'Plan the trip' })
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    const oversized = Array.from({ length: TITLES_MAX_IDS + 1 }, (_value, index) => `s-${index}`)
+    // When the operator sends four batches that are not a usable one
+    await harness.connection.handleText(requestFrame(8, 'session.titles', { ids: [] }))
+    await harness.connection.handleText(requestFrame(9, 'session.titles', { ids: oversized }))
+    await harness.connection.handleText(requestFrame(10, 'session.titles', { ids: ['s-1', 7] }))
+    await harness.connection.handleText(requestFrame(11, 'session.titles', {}))
+    // Then every one of them is refused as arguments and nothing was read
+    expect([8, 9, 10, 11].map(id => answerOf(harness, id).e?.code)).toEqual(['invalid-args', 'invalid-args', 'invalid-args', 'invalid-args'])
+    expect(answerOf(harness, 8).e?.msg).toBe(`session.titles requires 1 to ${TITLES_MAX_IDS} session ids`)
+    expect(titles.reads).toEqual([])
+  })
+
+  it('operator sending exactly the largest allowed batch receives a title for every id', async () => {
+    // Given a host holding one title per id of a full batch
+    const ids = Array.from({ length: TITLES_MAX_IDS }, (_value, index) => `s-${index}`)
+    const table = Object.fromEntries(ids.map(id => [id, `Title ${id}`]))
+    const titles = titlesDouble(table)
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    // When the operator asks for that whole batch
+    await harness.connection.handleText(requestFrame(12, 'session.titles', { ids }))
+    // Then every id came back titled
+    const answer = answerOf(harness, 12)
+    const answered = (answer.r as { titles: Record<string, string> }).titles
+    expect(Object.keys(answered)).toHaveLength(TITLES_MAX_IDS)
+    expect(answered['s-0']).toBe('Title s-0')
+    expect(answered[`s-${TITLES_MAX_IDS - 1}`]).toBe(`Title s-${TITLES_MAX_IDS - 1}`)
+  })
+
+  it('operator asking for titles on a host with no title service gets empty titles, not a refusal', async () => {
+    // Given a paired connection on a host where no title service is mounted
+    const harness = makeConnection({ paired: true })
+    // When the operator asks for one title
+    await harness.connection.handleText(requestFrame(13, 'session.titles', { ids: ['s-1'] }))
+    // Then the answer is still a full map, with the empty title for that id
+    expect(answerOf(harness, 13).r).toEqual({ titles: { 's-1': '' } })
+  })
+
+  it('operator naming an id that collides with an object prototype still receives that key', async () => {
+    // Given a host asked for an id that names an object prototype member
+    const titles = titlesDouble({}, [])
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    // When the operator asks for it
+    await harness.connection.handleText(requestFrame(14, 'session.titles', { ids: ['__proto__', 'constructor'] }))
+    // Then both names came back as ordinary keys
+    const answer = answerOf(harness, 14)
+    expect(Object.keys((answer.r as { titles: Record<string, string> }).titles)).toEqual(['__proto__', 'constructor'])
+    expect(answer.r).toEqual({ titles: { ['__proto__']: '', constructor: '' } })
+  })
+})

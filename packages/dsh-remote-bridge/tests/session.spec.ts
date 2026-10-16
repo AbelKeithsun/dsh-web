@@ -303,7 +303,7 @@ describe('session methods over protocol v1', () => {
     await pending
     // Then the fifth try answered and the roster crossed
     expect(attempts).toBe(5)
-    expect(answerOf(harness, 21).r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 1, agentRunning: true }] })
+    expect(answerOf(harness, 21).r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 1, agentRunning: true, blank: false }] })
   })
 
   it('operator prompts a session whose stream cannot open and the connection stays usable', async () => {

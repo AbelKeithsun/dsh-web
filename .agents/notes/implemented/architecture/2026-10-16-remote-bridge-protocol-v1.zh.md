@@ -20,11 +20,11 @@ Status: implemented
 - **浏览器半区渲染那枚 token，且从不消耗它。** 面板注册进官方 `sidebar.footer.action` 座位——ui-sidebar 声明的那个列表槽位，`dsh-remote-web-ui` 的手机触发器与 `dsh-update` 的更新器已经占用它——用同源请求读同一条仅 loopback 门禁的路由，并把密钥以 `qrcode.react` 二维码加旁边的明文呈现，配 30 秒倒计时与「重新取码」动作。二维码里装的只有裸 token：那里若放 URL 或 JSON，手机端自己的解析器会把 origin 改写成这台机器的 loopback 地址，而那恰恰是手机唯一够不到的地址。`403` 与网络失败各自渲染成有名字的状态，绝不呈现为一块沉默的面板。面板不能签发设备令牌、不能消耗配对码、不能列名册、不能吊销设备，也不新增任何 wire 面。
 - **一条授权规则，在分发之前检查。** 设备令牌缺失、未知或已吊销的连接只能调三个方法（`hello`、`pair.begin`、`pair.finish`），其余一律回 `unpaired`。设备令牌随 upgrade 以 `Authorization: Bearer` 携带，也给无法设置握手 header 的客户端留了 `?token=`；比对先对两侧取哈希，再比等长摘要。
 - **不做增量补发。** 连接的 event `seq` 自 1 起，给的是该连接收到的东西编号；发现跳号或重连的客户端调 `session.snapshot` 拿完整基线。`session.snapshot` 打开宿主 `session/follow` 流并保持它作为本连接的订阅，因此增量无需轮询即到达；而快照的 `lastSeq` 是宿主游标——与 `seq` 是两个计数器，协议从不比较二者。
-- **中继无需改动。** 桥搭在实例本来就发布的那个 origin 上：`market/worker/src/relay.js` 查出隧道目标、只重写 `Host` header、原样返回 origin 的响应，而 WebSocket upgrade 走同一跳，因为 Workers 运行时会把携带 `Upgrade` 请求且 body 为空的 `fetch` 升级为 WebSocket。把 token 端点挡在公网 origin 之外的是 loopback 门禁，不是中继。
+- **中继无需改动。** 桥搭在实例本来就发布的那个 origin 上：`market/worker/src/relay.js` 查出隧道目标、只重写 `Host` header、原样返回 origin 的响应，而 WebSocket upgrade 走同一跳，因为 Workers 运行时会把携带 `Upgrade` 请求且 body 为空的 `fetch` 升级为 WebSocket。把 token 端点挡在公网 origin 之外的是 loopback 门禁，不是中继。- **名册带上宿主自己的会话元数据，标题在本进程内读。** `session.list` 除重发手机用来分组与命名的摘要字段——`cwd`、`parentSessionId`、`origin`——以及 `blank` 之外，还从 workspace registry 的唯一归档集补上 `archived`；每个可选键只在本次进程确实能回答时才出现，因此读不到归档集的桥省略该键，而不是回 `false`。`session.titles` 用 `ctx.sessionTitle.get` 读 `ctx.sessions` 活跃持有的会话，回答一批最多 100 个 id——绝不为每个会话各开一条 follow 流（名册里空标题的老代价正来自此）——并把每个已解析的标题缓存 10 秒。缓存按时间失效而不是按事件失效：标题变更是 `session/title` 这条*日志*事件，背后没有 cordis 事件；做失效钩子等于给每个活跃会话挂一个监听器，而 TTL 把陈旧度限住（重命名最多 10 秒后才可见），且每次批量调用本身就是一次刷新。两个服务都通过 `ctx.get` 以可选的结构化 face 访问，而不进 `inject`：把它们列为必需会让标题或工作区插件缺位时整个桥一起倒下；服务未挂载时，一个 id 回 `""`，一个键被省略。
 
 ## Testing
 
-协议的纯逻辑不依赖宿主即可单测：信封编解码与 256 KiB 上限、每连接序号、wire 表的参数布局、DSH 帧到 `session.delta` 的映射、审批桥的 resolve 与超时路径，以及名册读写与 ES256 验签（测试用 `node:crypto` 真造一对 P-256 密钥并签名，因此 DER 与原始形态的差异、或摘要被换掉，都会让套件失败）。浏览器半区同样如此：取码逻辑注入传输，跑遍它的 `200`、`403`、畸形响应体与不可达四种结局；面板与座位则对着注入的 props 渲染——注入的是读码器与剪贴板，而不是被打补丁的模块——所以倒计时在假时钟上断言，靠的不是 sleep。另有零依赖脚本 `packages/dsh-remote-bridge/scripts/client.mjs` 对活着的宿主跑固定序列——`hello`、`session.list`、`session.snapshot`、`session.prompt`，随后收 `session.delta` 直到三条或收到 turn-end——并能给没有 Secure Enclave 的机器用一次性 P-256 密钥完成配对。
+协议的纯逻辑不依赖宿主即可单测：信封编解码与 256 KiB 上限、每连接序号、wire 表的参数布局、DSH 帧到 `session.delta` 的映射、审批桥的 resolve 与超时路径，以及名册读写与 ES256 验签（测试用 `node:crypto` 真造一对 P-256 密钥并签名，因此 DER 与原始形态的差异、或摘要被换掉，都会让套件失败）。浏览器半区同样如此：取码逻辑注入传输，跑遍它的 `200`、`403`、畸形响应体与不可达四种结局；面板与座位则对着注入的 props 渲染——注入的是读码器与剪贴板，而不是被打补丁的模块——所以倒计时在假时钟上断言，靠的不是 sleep。另有零依赖脚本 `packages/dsh-remote-bridge/scripts/client.mjs` 对活着的宿主跑固定序列——`hello`、`session.list`、`session.snapshot`、`session.prompt`，随后收 `session.delta` 直到三条或收到 turn-end——并能给没有 Secure Enclave 的机器用一次性 P-256 密钥完成配对。会话元数据两个层次都有覆盖：标题缓存的窗口、只读缓存、降级与容量对着注入的 face 单测；线上行为——名册可选键的出现、省略与从缓存回填，标题批次含 100 的闭区间上限、本宿主未持有的 id 回空串、以及未配对拒绝——则在连接本身上测。
 
 ## Alternatives considered
 
@@ -40,7 +40,7 @@ Status: implemented
 - 现在有两条远程面、两套互不依赖的访问控制：浏览器路径（配对 cookie、`/remote` 通道、`dsh-remote-web-ui` 的名册）与原生路径（设备令牌、`/ios/v1`、桥自己的名册）。吊销其一不吊销其二，这正是有意的分离——也是两个包的 README 各自陈述自己安全模型的原因。
 - 本包现在在宿主半区旁边多了一个浏览器半区，方向是单向的：浏览器半区可以读配对路由并渲染它，不能签发、消耗、列出或吊销任何东西。它唯一的 wire 调用，是对一条浏览器配对路径从不提供的路由发起同源 `GET`。
 - 桥现在除了 wire 格式还拥有 UI 文案：面板注册了 `remote-bridge` locale 命名空间，并占用 Web GUI 侧栏底部的一个座位，因此它的触发器加入家族的底部行，文案遵循仓库的 zh/en 字典纪律。
-- 协议 v1 的方法集冻结为七个客户端方法加一个审批回复；桥可能调用的每个 DSH 端点的 wire 布局集中在一张表里（`src/core/wire.ts`），其中还包含三个尚无方法暴露的端点。新方法若把某个参数名写错，会在 gateway 处以 `arguments-invalid` 失败，而不是静默调错形状。
+- 协议 v1 的方法集冻结为八个客户端方法加一个审批回复：`session.titles` 加入了名册、快照、发言与中断这几条方法；桥可能调用的每个 DSH 端点的 wire 布局集中在一张表里（`src/core/wire.ts`），其中还包含三个尚无方法暴露的端点。新方法若把某个参数名写错，会在 gateway 处以 `arguments-invalid` 失败，而不是静默调错形状。
 - 桥自己拥有一份持久格式：`$DSH_HOME/remote-bridge/devices.json`。它的形状从上线那天起就是兼容性面；损坏的文件被隔离待查而不是被静默清零，因此「解析失败的名册」永远不会被误当成「没有设备的名册」。
 - 丢掉设备令牌的客户端用一枚新的 bootstrap token 重新配对——这是常规恢复路径而非异常路径。整个流程里没有任何一步需要手工改名册。
 - token 端点只能从本机触达，同一条链接会写进宿主日志，而配对码本身渲染在配对面板里；那行日志与屏幕上那串码在其 30 秒生命期内都是活着的密钥，README 把它们写在操作者会读到的地方。

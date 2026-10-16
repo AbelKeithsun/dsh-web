@@ -36,6 +36,7 @@ import { DeviceRoster } from './core/devices.ts'
 import { BridgeHub } from './core/hub.ts'
 import { PairingService } from './core/pairing.ts'
 import { WS_PATH } from './core/protocol.ts'
+import { SessionMeta, type ArchiveSetFace, type SessionStoreFace, type SessionTitleFace } from './core/session-meta.ts'
 import { dshHome } from './host/dsh-home.ts'
 import { makePairTokenRoute } from './host/routes.ts'
 import { isWebSocketUpgrade, presentedTokenOf, readSecWebSocketKey, refuseUpgrade, serveUpgrade } from './host/websocket.ts'
@@ -101,6 +102,26 @@ function makeUpgradeHandler(hub: BridgeHub, roster: DeviceRoster, log: (message:
 }
 
 /**
+ * Resolve the host services session metadata is read from, now.
+ *
+ * All three are read per call rather than captured at mount: none of them is in
+ * this plugin's `inject` list, because requiring them would let the title or
+ * workspace plugin's absence take the whole bridge down with it. An unmounted
+ * service simply reads as undefined, and the protocol degrades one key of one
+ * row instead of failing a method. The faces are structural — this package
+ * imports no part of those services' own types.
+ * @param ctx - the plugin's context.
+ * @returns the metadata faces as they stand right now.
+ */
+function sessionMetaFaces(ctx: Context) {
+  return {
+    sessions: ctx.get('sessions') as SessionStoreFace | undefined,
+    titles: ctx.get('sessionTitle') as SessionTitleFace | undefined,
+    archive: ctx.get('workspaceRegistry') as ArchiveSetFace | undefined,
+  }
+}
+
+/**
  * Mount the bridge.
  * @param ctx - the plugin's context, carrying the gateway and web server.
  */
@@ -109,11 +130,13 @@ export function apply(ctx: Context): void {
   const roster = new DeviceRoster({ file: join(dshHome(), ROSTER_PATH), log })
   const pairing = new PairingService()
   const approvals = new ApprovalRegistry()
+  const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
   const hub = new BridgeHub({
     gateway: ctx.typertGateway,
     pairing,
     roster,
     approvals,
+    sessionMeta,
     now: () => Date.now(),
     clientTimeZone: localTimeZone,
     log,

@@ -42,6 +42,7 @@ import {
   METHOD_SESSION_LIST,
   METHOD_SESSION_PROMPT,
   METHOD_SESSION_SNAPSHOT,
+  METHOD_SESSION_TITLES,
   MINOR,
   PROTO,
   SERVER_ID,
@@ -49,6 +50,7 @@ import {
   UNPAIRED_METHODS,
 } from './protocol.ts'
 import { base64UrlDecode, verifyEs256 } from './crypto.ts'
+import { TITLES_MAX_IDS, type SessionMeta } from './session-meta.ts'
 import type { BridgeGateway } from './wire.ts'
 import { wireArgs } from './wire.ts'
 
@@ -72,6 +74,8 @@ export interface BridgeConnectionOptions {
   readonly pairing: PairingService
   readonly roster: DeviceRoster
   readonly approvals: ApprovalRegistry
+  /** Process-local session metadata: live titles and the host's archive set. */
+  readonly sessionMeta: SessionMeta
   readonly now: () => number
   /** This machine's IANA time zone, sent with every prompt. */
   readonly clientTimeZone: () => string | undefined
@@ -107,6 +111,15 @@ interface SessionRow {
   readonly title: string
   readonly updatedAt: number
   readonly agentRunning: boolean
+  /** The session's working directory, omitted when the host did not report one. */
+  readonly cwd?: string
+  /** The session this one was delegated from, omitted for a root session. */
+  readonly parentSessionId?: string
+  /** `subagent` for a delegated session, omitted for an ordinary one. */
+  readonly origin?: 'subagent'
+  readonly blank: boolean
+  /** The host's archive flag; omitted when this process cannot read the archive set. */
+  readonly archived?: boolean
 }
 
 function refusal(code: string, msg: string): CallFailure {
@@ -120,6 +133,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** @returns a non-empty string argument, or undefined. */
 function stringArg(payload: Readonly<Record<string, unknown>>, key: string): string | undefined {
   const value = payload[key]
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/** @returns a non-empty string payload value, or undefined. */
+function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
@@ -248,6 +266,7 @@ export class BridgeConnection {
       case METHOD_PAIR_BEGIN: return this.#pairBegin(frame.p)
       case METHOD_PAIR_FINISH: return await this.#pairFinish(frame.p)
       case METHOD_SESSION_LIST: return await this.#sessionList()
+      case METHOD_SESSION_TITLES: return this.#sessionTitles(frame.p)
       case METHOD_SESSION_SNAPSHOT: return await this.#sessionSnapshot(frame.p, frame.id)
       case METHOD_SESSION_PROMPT: return await this.#sessionPrompt(frame.p)
       case METHOD_SESSION_INTERRUPT: return await this.#sessionInterrupt(frame.p)
@@ -315,20 +334,55 @@ export class BridgeConnection {
     if (!call.ok) return call
     const items = isRecord(call.value) ? call.value.items : undefined
     if (!Array.isArray(items)) return refusal(CODE_INTERNAL, 'session/list returned no item table')
+    // Read once for the whole roster: the archive flag comes from one process-wide
+    // set, and an unreadable registry leaves the key out of every row.
+    const archived = this.#options.sessionMeta.archiveSet()
     const sessions: SessionRow[] = []
     for (const item of items) {
       if (!isRecord(item) || typeof item.sessionId !== 'string') continue
+      const cwd = optionalText(item.cwd)
+      const parentSessionId = optionalText(item.parentSessionId)
       sessions.push({
         id: item.sessionId,
-        // `SessionSummary` has no title field, and a title is only ever written
-        // through a rename request, so the roster cannot source one. Opening a
-        // follow stream per session just to look for one would cost N streams.
-        title: '',
+        // The roster itself carries no title: `SessionSummary` has none. The
+        // connection fills in whatever `session.titles` already resolved for
+        // this id and never looks one up here, so listing stays one call.
+        title: this.#options.sessionMeta.cachedTitle(item.sessionId) ?? '',
         updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : 0,
         agentRunning: item.running === true,
+        ...(cwd === undefined ? {} : { cwd }),
+        ...(parentSessionId === undefined ? {} : { parentSessionId }),
+        ...(item.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
+        blank: item.blank === true,
+        ...(archived === undefined ? {} : { archived: archived.has(item.sessionId) }),
       })
     }
     return { ok: true, r: { sessions } }
+  }
+
+  /**
+   * Answer a batch of title lookups out of this process's title service.
+   *
+   * Every read is synchronous and in-process, so the batch bound is the whole
+   * cost bound: nothing here awaits, opens a follow stream or touches
+   * persistence. A session that is not live here, one whose title has not
+   * landed yet, and a host without the title service all answer `""` — the
+   * batch never fails for one id, and never fails because a service is absent.
+   * @param payload - `{ids}`: one to {@link TITLES_MAX_IDS} session ids.
+   */
+  #sessionTitles(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
+    const ids = payload.ids
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > TITLES_MAX_IDS) {
+      return refusal(CODE_INVALID_ARGS, `session.titles requires 1 to ${TITLES_MAX_IDS} session ids`)
+    }
+    for (const id of ids) {
+      if (typeof id !== 'string' || id === '') return refusal(CODE_INVALID_ARGS, 'session.titles requires non-empty string ids')
+    }
+    // The ids are chosen by the client, so the answer map is built on a null
+    // prototype: a literal id like `__proto__` has to become a real key.
+    const titles = Object.create(null) as Record<string, string>
+    for (const id of ids) titles[id] = this.#options.sessionMeta.title(id)
+    return { ok: true, r: { titles } }
   }
 
   async #sessionSnapshot(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {

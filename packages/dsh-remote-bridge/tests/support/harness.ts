@@ -12,6 +12,7 @@ import { ApprovalRegistry } from '../../src/core/approvals.ts'
 import { DeviceRoster } from '../../src/core/devices.ts'
 import { BridgeHub } from '../../src/core/hub.ts'
 import { PairingService } from '../../src/core/pairing.ts'
+import { SessionMeta, type SessionMetaFaces } from '../../src/core/session-meta.ts'
 import type { BridgeGateway, GatewayInvokeRequest } from '../../src/core/wire.ts'
 
 /** One frame as it crossed the wire. */
@@ -178,7 +179,48 @@ export interface HarnessOptions {
   readonly rosterFile?: string
   /** Roster stand-in, for the failure paths a real file cannot be made to take. */
   readonly roster?: DeviceRoster
+  /** Session metadata source; the default models a host with no such service mounted. */
+  readonly sessionMeta?: SessionMeta
   readonly heartbeatMs?: number
+}
+
+/** Session metadata for a host whose session services are all present. */
+function metaOf(options: HarnessOptions, log: (message: string) => void): SessionMeta {
+  return options.sessionMeta ?? new SessionMeta(() => ({}), () => Date.now(), log)
+}
+
+/**
+ * A title service over one fixed table, plus the live-session store in front of
+ * it — the two faces {@link SessionMeta} reads.
+ */
+export interface TitlesDouble {
+  /** The faces one `SessionMeta` is built from. */
+  readonly faces: SessionMetaFaces
+  /** The ids the title service was actually asked for, in order. */
+  readonly reads: string[]
+}
+
+/**
+ * Build a title double.
+ * @param table - titles by session id.
+ * @param live - ids the store reports as live sessions; defaults to the table's keys.
+ * @returns the faces, and the log of every id the title service was asked for.
+ */
+export function titlesDouble(table: Record<string, string>, live: readonly string[] = Object.keys(table)): TitlesDouble {
+  const reads: string[] = []
+  return {
+    reads,
+    faces: {
+      sessions: { get: id => (live.includes(id) ? { id } : undefined) },
+      titles: {
+        get: session => {
+          reads.push(session.id)
+          const title = table[session.id]
+          return title === undefined ? undefined : { title }
+        },
+      },
+    },
+  }
 }
 
 /** Build one connection over the recording carrier. */
@@ -194,6 +236,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     pairing,
     roster,
     approvals,
+    sessionMeta: metaOf(options, message => { logs.push(message) }),
     now: () => Date.now(),
     clientTimeZone: () => 'Asia/Shanghai',
     log: (message: string) => { logs.push(message) },
@@ -262,6 +305,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     pairing: new PairingService(),
     roster: options.roster ?? new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' }),
     approvals,
+    sessionMeta: metaOf(options, message => { logs.push(message) }),
     now: () => Date.now(),
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },

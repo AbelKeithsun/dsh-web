@@ -19,7 +19,7 @@
 本包发布一套协议，并在它旁边提供一个很小的浏览器面。宿主半区发布的是一套协议：
 
 - **一个面。** 宿主 WebServer 上以精确路径注册的 `/ios/v1` WebSocket；帧为文本帧，一帧一个 JSON 对象，单帧上限 256KB。
-- **会话面。** `session.list`、`session.snapshot`、`session.prompt`、`session.interrupt` 分别覆盖名册、完整基线加实时订阅、带幂等键的排队发言，以及回合取消。
+- **会话面。** `session.list`、`session.titles`、`session.snapshot`、`session.prompt`、`session.interrupt` 分别覆盖带工作区、谱系与归档元数据的名册、一批会话标题、完整基线加实时订阅、带幂等键的排队发言，以及回合取消。
 - **订阅而非轮询。** `session.snapshot` 打开宿主的 follow 流并保持它，基线与其后的每一条增量都走同一条 socket。
 - **审批直达客户端。** 需要授权的工具以 `approval.request` 事件到达，客户端用 `approval.resolve` 作答；无人应答的请求按拒绝处理。
 - **配对。** 一次性 bootstrap token 加 P-256 挑战应答产出可吊销的设备令牌；未配对连接只能触达三个方法。
@@ -42,7 +42,8 @@
 | 方法 | 请求 `p` | 响应 `r` |
 | --- | --- | --- |
 | `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" 或 "unpaired"}` |
-| `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning}]}` |
+| `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
+| `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId}` | `{turns:[...], lastSeq:<uint>}` |
 | `session.prompt` | `{sessionId, text, requestId}` | `{accepted:true}` |
 | `session.interrupt` | `{sessionId}` | `{ok:true}` |
@@ -51,6 +52,8 @@
 | `approval.resolve` | `{id, decision}` | `{ok:true}` |
 
 `hello` 无需设备令牌即可调用，并回报本连接自身的 `auth` 状态。`session.snapshot` 把宿主 follow 流的开帧快照映射成 `turns`，把它的 cursor 作为 `lastSeq` 回报，随后保持该流作为本连接对该会话的订阅；`session.prompt` 幂等地确保同一条订阅，因此客户端可以跳过 snapshot。发言模式固定为排队，`clientTimeZone` 由服务端填本机 IANA 时区，`requestId` 是幂等键：同名 `requestId` 在同一会话内只发一次，重复调用直接回 `{accepted:true}` 且不再发送。`session.interrupt` 取消回合，不拆除订阅。
+
+`session.list` 除名册自身字段外还带上手机用来分组与命名的元数据：`cwd`、`parentSessionId`、`origin` 只在宿主确实上报时才出现，`blank` 始终存在，`archived` 只在本次进程能读到宿主归档集时出现——读不到就省略该键，而不是回 `false`。`title` 在本连接尚未通过 `session.titles` 解析过该 id 时保持 `""`，因此列名册仍然只是一次调用，且不会给每一行挂上一次标题读取。`session.titles` 用宿主自己的标题服务回答一批 1 到 100 个 id——读的是本进程的活跃会话，绝不为每个会话各开一条 follow 流——且每个被请求的 id 都是键：本宿主没有活跃持有的 id、或标题尚未落地的 id，一律回 `""`。一个已解析的标题会在 10 秒内被直接复用，之后才再问服务，因此重命名最多要等这么久才可见。与其它会话方法一样，没有设备令牌时两者都回 `unpaired`。
 
 ## 事件
 
@@ -214,7 +217,9 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
 
 ## 已知限制
 
-- **`session.list` 的 `title` 恒为空串。** DSH 的会话名册没有 title 字段——title 只存在于重命名请求里——本包不会为了造出它而给每个会话开一条 follow 流。
+- **标题属于活跃会话。** `session.titles` 读的是本宿主进程活跃持有的会话的标题；名册仍会列出未被挂载的持久会话，这些 id 在宿主挂载它们之前一律回 `""`。
+- **已服务过的标题最多可能旧 10 秒。** 一个已解析的标题在 10 秒内被直接复用，之后才再问标题服务，因此重命名或刚生成的标题最多要等这么久才出现。
+- **读不到归档集时没有 `archived` 键。** 该标记来自宿主的 workspace registry；该服务未挂载时，每一行都省略此键，而不是回 `false`。
 - **`lastSeq` 与 `seq` 是两个计数器。** `session.snapshot` 的 `lastSeq` 是宿主流的 cursor，事件的 `seq` 是本连接自己的事件序号，二者不可比较；续传状态属于客户端。
 - **不做增量补发。** 发现跳号或重连的客户端重新调 `session.snapshot` 拿完整基线；本包不为断开的客户端缓存 delta。
 - **工具调用参数以增量到达。** `tool-call` 增量的 `argumentsDelta` 可以为空串，参数由客户端拼装；整次调用不会被重发。

@@ -19,7 +19,7 @@ Protocol v1 is deliberately a second, independent surface: the browser path (the
 The package publishes one protocol and, beside it, one small browser surface. What the host half publishes is a protocol:
 
 - **One surface.** A WebSocket at `/ios/v1`, registered as an exact upgrade route on the host webserver; frames are text, one JSON object each, at most 256 KB.
-- **A session surface.** `session.list`, `session.snapshot`, `session.prompt` and `session.interrupt` cover the roster, a full baseline plus a live subscription, a queued prompt with an idempotency key, and turn cancellation.
+- **A session surface.** `session.list`, `session.titles`, `session.snapshot`, `session.prompt` and `session.interrupt` cover the roster with its workspace, lineage and archive metadata, a batch of session titles, a full baseline plus a live subscription, a queued prompt with an idempotency key, and turn cancellation.
 - **A subscription, not a poll.** `session.snapshot` opens the harness follow stream and keeps it, so the baseline and every later increment arrive over the same socket.
 - **Approvals reach the client.** A tool that asks for permission arrives as an `approval.request` event and is answered with `approval.resolve`; a request nobody answers is rejected.
 - **Pairing.** A one-time bootstrap token plus a P-256 challenge-response mint a revocable device token; an unpaired connection reaches three methods only.
@@ -42,7 +42,8 @@ The package publishes one protocol and, beside it, one small browser surface. Wh
 | method | request `p` | response `r` |
 | --- | --- | --- |
 | `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" or "unpaired"}` |
-| `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning}]}` |
+| `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
+| `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId}` | `{turns:[...], lastSeq:<uint>}` |
 | `session.prompt` | `{sessionId, text, requestId}` | `{accepted:true}` |
 | `session.interrupt` | `{sessionId}` | `{ok:true}` |
@@ -51,6 +52,8 @@ The package publishes one protocol and, beside it, one small browser surface. Wh
 | `approval.resolve` | `{id, decision}` | `{ok:true}` |
 
 `hello` is callable without a device token and reports the connection's own `auth` state. `session.snapshot` maps the harness follow stream's opening snapshot into `turns`, reports its cursor as `lastSeq` and then keeps that stream open as this connection's subscription for the session; `session.prompt` ensures the same subscription idempotently, so a client may skip the snapshot. The prompt mode is fixed to queue, `clientTimeZone` is filled server-side with the host's IANA zone, and `requestId` is an idempotency key: the same `requestId` in the same session is sent once, and a repeat answers `{accepted:true}` without sending anything again. `session.interrupt` cancels the turn; it does not drop the subscription.
+
+`session.list` carries the roster's own fields plus the metadata a phone groups and labels by: `cwd`, `parentSessionId` and `origin` are present only when the host reported them, `blank` is always present, and `archived` is present only when this process can read the host's archive set — a bridge that cannot tell omits the key instead of answering `false`. `title` stays `""` unless this connection has already resolved that id through `session.titles`, so listing sessions stays one call and never puts a title read on every row. `session.titles` answers a batch of one to 100 ids out of the host's own title service — the live sessions of this process, never one follow stream per session — and every requested id becomes a key: an id this host does not hold live, or one whose title has not landed yet, answers `""`. One resolved title is served for 10 s before the service is asked again, so a rename can take that long to show. Like every other session method, both answer `unpaired` without a device token.
 
 ## Events
 
@@ -214,7 +217,9 @@ The bridge is mounted like any other host plugin row. It carries no user-facing 
 
 ## Known limitations
 
-- **`session.list` reports `title: ""`.** The harness session roster has no title field — a title exists only on a rename request — and the bridge does not open one follow stream per session just to invent one.
+- **A title belongs to a live session.** `session.titles` reads the titles of the sessions this host process holds live; the roster still lists persisted sessions that are not attached, and their ids answer `""` until the host attaches them.
+- **A served title can be up to 10 s old.** One resolved title is served for 10 s before the title service is asked again, so a rename or a newly generated title can take that long to appear.
+- **`archived` is absent when the archive set cannot be read.** The flag comes from the host's workspace registry; when that service is not mounted, every row omits the key instead of answering `false`.
 - **`lastSeq` and `seq` are different counters.** `session.snapshot`'s `lastSeq` is the harness stream cursor; the event `seq` is this connection's own event number. They must not be compared, and resume state belongs to the client.
 - **No incremental replay.** A client that detects a gap or reconnects calls `session.snapshot` again and takes the full baseline; the bridge does not buffer deltas for a disconnected client.
 - **Tool-call arguments arrive as deltas.** A `tool-call` delta may carry an empty `argumentsDelta`, and the client assembles the arguments; a whole call is never re-sent.

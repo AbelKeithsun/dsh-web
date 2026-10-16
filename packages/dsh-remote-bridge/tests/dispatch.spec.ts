@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { answerOf, makeConnection, requestFrame } from './support/harness.ts'
+import { answerOf, makeConnection, requestFrame, titlesDouble } from './support/harness.ts'
+import { SessionMeta } from '../src/core/session-meta.ts'
 
 describe('protocol v1 authorization and dispatch', () => {
   afterEach(() => { vi.useRealTimers() })
@@ -64,7 +65,18 @@ describe('protocol v1 authorization and dispatch', () => {
     // When the user lists sessions
     await harness.connection.handleText(requestFrame(6, 'session.list'))
     // Then the roster crosses in the protocol's own field names
-    expect(answerOf(harness, 6).r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 5, agentRunning: false }] })
+    expect(answerOf(harness, 6).r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 5, agentRunning: false, blank: true }] })
+  })
+
+  it('user unpaired reaches for session titles and is refused without reading a title', async () => {
+    // Given an unpaired connection on a host whose title service records every read
+    const titles = titlesDouble({ 's-1': 'Plan the trip' })
+    const harness = makeConnection({ sessionMeta: new SessionMeta(() => titles.faces, () => Date.now(), () => {}) })
+    // When the user asks for that title
+    await harness.connection.handleText(requestFrame(9, 'session.titles', { ids: ['s-1'] }))
+    // Then pairing is required before any title is read
+    expect(answerOf(harness, 9).e?.code).toBe('unpaired')
+    expect(titles.reads).toEqual([])
   })
 
   it('user calls a method this protocol does not define and is refused by name', async () => {
