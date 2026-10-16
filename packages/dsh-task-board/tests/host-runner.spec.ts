@@ -571,6 +571,54 @@ describe('HostExecutionRunner', () => {
     expect(page.mock.calls.length).toBe(afterFirst)
   })
 
+  it('operator: a working teammate in a long session is re-inspected from the last scanned seq, not from the run start', async () => {
+    // Given a durable teammate session whose history is far longer than one
+    // page, the roster still reporting it running, and one new record arriving
+    // between two polls
+    const PAGE = 100
+    let head = 1_200
+    let completed = false
+    const recordAt = (seq: number) => sessionEvent(completed && seq === head ? 'turn/end' : 'assistant/message', seq, 4_000 + seq, completed && seq === head ? { reason: { kind: 'completed' } } : {})
+    const window = () => Array.from({ length: 21 }, (_, index) => recordAt(head - 20 + index))
+    const page = vi.fn(async (request: GatewayRequest) => {
+      const beforeSeq = (request.args.request as { beforeSeq?: number }).beforeSeq ?? head
+      const from = Math.max(1, beforeSeq - PAGE)
+      const records = Array.from({ length: beforeSeq - from }, (_, index) => recordAt(from + index))
+      return { records, hasMore: from > 1 }
+    })
+    const sessions = [{ sessionId: 'session-a', running: true, agentAvailable: true, updatedAt: 4_000, blank: false }] as unknown as Parameters<HostExecutionRunner['inspect']>[2]
+    const gateway = {
+      invoke: fakeInvoke(async (request: GatewayRequest) => {
+        if (request.method === 'list') return { items: sessions }
+        if (request.method === 'projections') return { values: {} }
+        return page(request)
+      }),
+      stream: fakeStream(async () => ({
+        async *[Symbol.asyncIterator]() {
+          yield snapshot(window(), head, head - 20 > 1)
+        },
+      })),
+    }
+    const runner = new HostExecutionRunner(gateway)
+
+    // When the first poll walks back to the execution start
+    await expect(runner.inspect('session-a', 1_000, sessions, { whileRunning: true })).resolves.toEqual({ outcome: 'pending' })
+    const afterFirst = page.mock.calls.length
+    expect(afterFirst).toBeGreaterThan(1)
+
+    // Then the next poll of the same teammate examines only the head it has not
+    // scanned yet, and pays no page RPC for the history it already cleared
+    head += 1
+    await expect(runner.inspect('session-a', 1_000, sessions, { whileRunning: true })).resolves.toEqual({ outcome: 'pending' })
+    expect(page.mock.calls.length).toBe(afterFirst)
+
+    // And the turn this teammate completes afterwards is still found
+    completed = true
+    head += 1
+    await expect(runner.inspect('session-a', 1_000, sessions, { whileRunning: true })).resolves.toEqual({ outcome: 'succeeded' })
+    expect(page.mock.calls.length).toBe(afterFirst)
+  })
+
   it('drops the scan memo once the execution settles or the session vanishes', async () => {
     let headSeq = 40
     let found = false

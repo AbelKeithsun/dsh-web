@@ -315,7 +315,11 @@ function invokeWireArgs(namespace: string, method: string, request: Record<strin
 }
 
 export class HostExecutionRunner {
-  /** Newest scanned event sequence per session with no matching execution end. */
+  /**
+   * Newest event sequence per session whose COMPLETE history walk (reaching
+   * the execution boundary) found no matching execution end. A later walk may
+   * trust everything at or below it and examine only newer records.
+   */
   private readonly scanMemos = new Map<string, number>()
   private readonly unavailableAttempts: number
   private readonly unavailableBackoffMs: number
@@ -788,10 +792,21 @@ export class HostExecutionRunner {
     }
     const openingEvents = opening.records.map(record => ({ event: recordEvent(record) }))
     const newestSeq = openingEvents.reduce<number | undefined>((newest, entry) => newest === undefined ? entry.event.seq : Math.max(newest, entry.event.seq), undefined)
-    if (newestSeq !== undefined && this.scanMemos.get(sessionId) === newestSeq) return { outcome: 'pending' }
+    const scannedThrough = this.scanMemos.get(sessionId)
+    if (newestSeq !== undefined && scannedThrough === newestSeq) return { outcome: 'pending' }
+    // The memo is not only "nothing changed": it is the seq up to which a
+    // COMPLETE walk already proved this execution has no completed turn. A
+    // session log is append-only, so records at or below it can never acquire
+    // one — this pass only has to examine what arrived after it. Without that,
+    // a working teammate (whose roster entry never stops reporting `running`,
+    // so every poll re-inspects it) re-read its whole history since the run
+    // started once per poll: a 1200-record history cost 12 page RPCs and 1223
+    // materialized records per session per poll, against 0 and 21 here.
+    const oldestOpeningSeq = openingEvents.reduce<number | undefined>((oldest, entry) => oldest === undefined ? entry.event.seq : Math.min(oldest, entry.event.seq), undefined)
+    const coveredThrough = scannedThrough !== undefined && oldestOpeningSeq !== undefined && oldestOpeningSeq <= scannedThrough
     const events: Array<{ event: { type: string; seq: number; time: number; data: unknown } }> = [...openingEvents]
     let beforeSeq: number | undefined
-    let reachedExecutionBoundary = !opening.hasMore
+    let reachedExecutionBoundary = !opening.hasMore || coveredThrough
     for (let page = 0; page < HISTORY_PAGE_LIMIT && !reachedExecutionBoundary; page += 1) {
       let history: SessionPage
       try {
@@ -808,11 +823,13 @@ export class HostExecutionRunner {
       const pageEntries = pageEvents(history)
       events.push(...pageEntries)
       const oldestTime = pageEntries.reduce<number | undefined>((oldest, entry) => oldest === undefined ? entry.event.time : Math.min(oldest, entry.event.time), undefined)
-      if (!history.hasMore || (oldestTime !== undefined && oldestTime <= startedAt)) {
+      const oldestSeq = pageEntries.reduce<number | undefined>((oldest, entry) => oldest === undefined ? entry.event.seq : Math.min(oldest, entry.event.seq), undefined)
+      if (!history.hasMore
+        || (oldestTime !== undefined && oldestTime <= startedAt)
+        || (scannedThrough !== undefined && oldestSeq !== undefined && oldestSeq <= scannedThrough)) {
         reachedExecutionBoundary = true
         break
       }
-      const oldestSeq = pageEntries.reduce<number | undefined>((oldest, entry) => oldest === undefined ? entry.event.seq : Math.min(oldest, entry.event.seq), undefined)
       if (oldestSeq === undefined || oldestSeq === beforeSeq) return { outcome: 'pending' }
       beforeSeq = oldestSeq
     }
