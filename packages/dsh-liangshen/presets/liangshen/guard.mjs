@@ -24,7 +24,12 @@
  *   step-count measure (see DEFAULT_BLIND_STALL_CAP) and says so once.
  * - ECHO: the same tool called with the same arguments failing M times in a
  *   row with no success in between — the closed loop of repeating one broken
- *   call.
+ *   call. Its message carries the retry-safety half, in dsh-ops' effectState
+ *   vocabulary: a call the guard can PROVE was read-only left nothing behind,
+ *   so corrected arguments may be retried; every other call — a shell command,
+ *   a write, a batch that may have been interrupted halfway — has an UNKNOWN
+ *   effect, and the model has to inspect the real state with read-only tools
+ *   before it decides the next call.
  *
  * On either signal the breaker FIRES once per episode with a circuit-breaker
  * user message injected at the next pre-step (the one channel guaranteed to
@@ -215,8 +220,11 @@ function isErrorResult(event) {
  * - the latest tool call's signature and its consecutive-failure count,
  *   reset by any success or any differently-shaped call.
  *
- * Returns `{ signal: 'stall' | 'echo' | undefined, detail, blind }` for the TAIL
- * of the stream: the breaker only cares whether the session is degenerate NOW.
+ * Returns `{ signal: 'stall' | 'echo' | undefined, detail, blind, tool }` for
+ * the TAIL of the stream: the breaker only cares whether the session is
+ * degenerate NOW. `tool` is the name of the tool whose failures produced an
+ * ECHO verdict, which is what the injected message's retry-safety clause is
+ * classified from; it never changes which signal fires.
  * `blind` reports the session-level fact that reasoning blocks were observed
  * without a single character of reasoning text, so the caller can say once that
  * this session's stall detection is running on step counts.
@@ -285,9 +293,11 @@ export function foldGuardSignal(events, options) {
     pendingOutput = false
   }
 
-  // Echo: latest call signature and its consecutive failure count.
+  // Echo: latest call signature and its consecutive failure count, plus the
+  // tool name that signature belongs to (evidence for the breaker message only).
   let lastSignature
   let lastCallId
+  let lastTool
   let failStreak = 0
 
   for (const event of Array.isArray(events) ? events : []) {
@@ -318,6 +328,7 @@ export function foldGuardSignal(events, options) {
           failStreak = 0
         }
         lastCallId = event.data?.callId
+        lastTool = event.data?.name
         break
       }
       case 'tool/result': {
@@ -329,6 +340,7 @@ export function foldGuardSignal(events, options) {
           failStreak = 0
           lastSignature = undefined
           lastCallId = undefined
+          lastTool = undefined
         }
         break
       }
@@ -355,7 +367,7 @@ export function foldGuardSignal(events, options) {
     return { signal: 'stall', detail: `${globalStreak} consecutive output-free reasoning steps (slow burn)`, blind }
   }
   if (failStreak >= echoFailures) {
-    return { signal: 'echo', detail: `${failStreak} consecutive identical-argument tool failures`, blind }
+    return { signal: 'echo', detail: `${failStreak} consecutive identical-argument tool failures`, blind, tool: lastTool }
   }
   return { signal: undefined, detail: '', blind }
 }
@@ -402,18 +414,81 @@ export function stepDownEffort(effort) {
   return EFFORT_LADDER[index + 1]
 }
 
-/** The breaker message injected at pre-step. */
+/**
+ * Tools whose failed call provably left nothing behind: they return information
+ * and change no state, or their whole effect IS the next user interaction.
+ * The list stays an allowlist on purpose — the ECHO message's retry advice is
+ * the one claim that must never be wrong, and telling a model to retry a call
+ * that may have half-applied is how one interrupted batch becomes two.
+ *
+ * A shell tool is deliberately absent: the guard cannot know what a command
+ * line does (the same `bash` runs `ls` and `git commit`), which is exactly
+ * the "verify the scene first" case.
+ */
+const RETRY_SAFE_TOOLS = new Set([
+  'read',
+  'glob',
+  'grep',
+  'read_image',
+  'list_agents',
+  'list_mcp_resources',
+  'list_mcp_resource_templates',
+  'get_goal',
+  'mcp__codegraph__codegraph_explore',
+  'ask_user_question',
+  'exit_plan_mode',
+])
+
+/**
+ * Retry safety of one tool name, in dsh-ops' effectState vocabulary: `none`
+ * when a failed call of that tool is known to have left the world unchanged (a
+ * read-only or idempotent call, so corrected arguments may simply be retried),
+ * `unknown` for everything else — writes, shell commands, and every tool the
+ * guard has never seen. Unknown is the default because it is the only reading
+ * that cannot duplicate an effect.
+ */
+function effectStateOf(tool) {
+  return RETRY_SAFE_TOOLS.has(tool) ? 'none' : 'unknown'
+}
+
+/**
+ * The breaker message injected at pre-step.
+ *
+ * A STALL keeps its original wording: its cause is an over-large reasoning
+ * budget and its remedy is "stop re-deriving, act". An ECHO carries the extra
+ * retry-safety clause, because the same signal covers two different situations
+ * that need opposite next moves — a read-only call that failed cleanly (fix the
+ * arguments and retry) versus a call whose effect is unknown (validate the
+ * scene with read-only tools first). The tool name is the only evidence the
+ * guard has, so an unrecognised tool is told the conservative half.
+ */
 export function renderGuardMessage(verdict) {
   const what = verdict.signal === 'stall'
     ? 'repeated long reasoning with no tool call and no reply'
     : 'the same tool call failing repeatedly with identical arguments'
-  return [
-    `[Circuit Breaker] The runtime interrupted a degeneration loop: ${what}.`,
+  const lines = [`[Circuit Breaker] The runtime interrupted a degeneration loop: ${what}.`]
+  if (verdict.signal === 'echo') {
+    const tool = typeof verdict.tool === 'string' && verdict.tool.length > 0 ? verdict.tool : undefined
+    const named = tool === undefined ? 'the failing call' : `the failing call \`${tool}\``
+    if (tool !== undefined && effectStateOf(tool) === 'none') {
+      lines.push(
+        `Retry safety of ${named}: effectState none — it is read-only or idempotent, so nothing was left behind, and fixing the arguments and retrying it is safe.`,
+        'Anything else (a write, a shell command, a batch that may have stopped halfway) has effectState unknown and must be inspected with read-only tools before it is called again, never blind-retried.',
+      )
+    } else {
+      lines.push(
+        `Retry safety of ${named}: effectState unknown — it may already have changed something before it failed (a batch that stopped halfway, a write that landed), so do NOT call it again as it is: first read the real state with read-only tools, then decide the next call.`,
+        'If the call that failed is in fact read-only or idempotent (effectState none), no state was left behind and fixing its arguments before retrying it is safe.',
+      )
+    }
+  }
+  lines.push(
     'Stop re-deriving in thought. Do exactly ONE of these now:',
     '1. give the user the best final answer you already have, or',
     '2. take ONE materially different concrete action (a different tool, different arguments, or a smaller sub-step) and verify its result.',
     'Do not repeat the interrupted pattern.',
-  ].join(' ')
+  )
+  return lines.join(' ')
 }
 
 /** Register the signal fold, the pre-step injection, and the stall-triggered effort step-down. */

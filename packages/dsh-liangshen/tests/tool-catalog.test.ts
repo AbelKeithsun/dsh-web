@@ -5,12 +5,14 @@ import {
   catalogDescription,
   catalogEntries,
   createCatalogMessage,
+  CURATED_TOOL_SUMMARIES,
   estimateSurfaceTokens,
   name,
   PRESENTATION_MODES,
   renderCatalogText,
   renderJsonSchemaType,
   renderSignature,
+  toolSummary,
 } from '../presets/liangshen/tool-catalog.mjs'
 
 type Listener = (first: any, second: any, third: any) => Promise<any>
@@ -247,8 +249,10 @@ describe('liangshen-tool-catalog', () => {
     const catalog = catalogOf(result.messages)
     expect(catalog.role).toBe('user')
     expect(catalog.content[0].text).toContain('The following tools are available in this session:')
-    expect(catalog.content[0].text).toContain('- `bash({ command: string, timeoutMs?: number })`: Run commands in a bash shell * State is persistent across command calls.')
-    expect(catalog.content[0].text).toContain('- `read`: Read a UTF-8 text file and return line-numbered content.')
+    // bash and read are curated host builtins, so both render their hand-written
+    // line instead of the schema description WIRE_SDK_SURFACE carries.
+    expect(catalog.content[0].text).toContain(`- \`bash({ command: string, timeoutMs?: number })\`: ${CURATED_TOOL_SUMMARIES.get('bash')}`)
+    expect(catalog.content[0].text).toContain(`- \`read\`: ${CURATED_TOOL_SUMMARIES.get('read')}`)
   })
 
   test("default presentation is 'ptc': the wire collapses to the run_code transport", async () => {
@@ -268,7 +272,7 @@ describe('liangshen-tool-catalog', () => {
     const agent = agentOf()
     await assemble(harness, agent)
     const text = catalogText((await preStep(harness, agent)).messages)
-    expect(text).toContain('- `run_code({ code: string, description: string })`: Execute a TypeScript program against the available tools.')
+    expect(text).toContain(`- \`run_code({ code: string, description: string })\`: ${CURATED_TOOL_SUMMARIES.get('run_code')}`)
     expect(text).toContain('- `bash')
     expect(text).toContain('Prefer calling the tools above directly by name')
     expect(text).toContain('`await tools.<name>({ ... })`')
@@ -415,7 +419,7 @@ describe('liangshen-tool-catalog', () => {
     await assemble(harness, history, [...WIRE, { name: 'edit', description: 'Edit one file.' }])
     const second = await preStep(harness, history)
     const update = catalogOf(second.messages)
-    expect(update.content[0].text).toContain('- `edit`: Edit one file.')
+    expect(update.content[0].text).toContain(`- \`edit\`: ${CURATED_TOOL_SUMMARIES.get('edit')}`)
     expect(update.content[0].text).toContain('replaces any earlier available-tools list')
   })
 
@@ -738,6 +742,73 @@ describe('liangshen-tool-catalog', () => {
     ], 200, { includeRunCode: true })
     expect(withRunCode.map((entry: any) => entry.name)).toEqual(['a', 'run_code'])
     expect(catalogEntries(undefined, 200)).toEqual([])
+  })
+
+  test('operator gets the curated line ahead of the mechanical cap', () => {
+    // Given one curated host builtin, one uncurated tool and one cap far below
+    // both texts, When each renders its summary, Then the curated name renders
+    // the table line verbatim - never truncated, however small the cap - while
+    // the uncurated name keeps the existing mechanical cap.
+    const curated = new Map(CURATED_TOOL_SUMMARIES)
+    expect(curated.size).toBeGreaterThan(0)
+    expect([...curated.keys()].every(tool => typeof tool === 'string' && tool !== '')).toBe(true)
+
+    const cap = 12
+    for (const [tool, line] of curated) {
+      expect(toolSummary({ name: tool, description: 'a schema description long enough to be cut down' }, cap)).toBe(line)
+    }
+
+    // The fallback survives curation: a tool the table does not name is still
+    // capped the way it always was, and no curated key is truncated.
+    const uncurated = 'An uncurated tool description that outruns any short cap'
+    expect(toolSummary({ name: 'not_a_curated_tool', description: uncurated }, cap))
+      .toBe(catalogDescription(uncurated, cap))
+    expect(toolSummary({ name: 'not_a_curated_tool', description: uncurated }, cap).endsWith('...')).toBe(true)
+    expect([...curated.values()].every(line => line.length <= 200)).toBe(true)
+  })
+
+  test('operator gets curated entries from catalogEntries while uncurated tools still cap', () => {
+    // Given one curated host builtin, one uncurated tool and one cap far below
+    // both texts, When the entries are built, Then the curated name renders the
+    // whole table line and the uncurated name still truncates at the same cap.
+    const entries = catalogEntries([
+      { name: 'read', description: 'Read a UTF-8 text file and return line-numbered content.' },
+      { name: 'vendor_tool', description: 'A'.repeat(60) },
+    ], 20)
+    const byName = new Map(entries.map((entry: any) => [entry.name, entry]))
+    const curatedLine = CURATED_TOOL_SUMMARIES.get('read')!
+    // A curated name ignores the cap entirely: the line ships whole.
+    expect(curatedLine.length).toBeGreaterThan(20)
+    expect(byName.get('read')).toEqual({ name: 'read', signature: '', description: curatedLine })
+    // An uncurated name still truncates at the same cap.
+    expect(byName.get('vendor_tool')).toEqual({ name: 'vendor_tool', signature: '', description: `${'A'.repeat(17)}...` })
+  })
+
+  test('operator gets a curated table covering exactly the host builtins this preset opens', () => {
+    // Given the roster the preset's own rows register for a session, When the
+    // curated table is inspected, Then its key set is exactly that roster: a
+    // tool dropped from the table would silently fall back to the cap, and a
+    // tool added for a row this composition does not mount would announce a
+    // surface the request never opens. Every curated key also wins over a
+    // hostile one-character cap, and every line stays one printable ASCII
+    // line well inside the shipped 200-character summary budget.
+    const hostBuiltins = [
+      'run_code', 'bash', 'pwsh', 'read', 'read_image', 'write', 'edit', 'str_replace_editor',
+      'glob', 'grep', 'job_output', 'job_list', 'job_kill', 'todo_write',
+      'create_goal', 'get_goal', 'update_goal', 'exit_plan_mode',
+      'subagent', 'subagent_fork', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
+      'ask_user_question', 'web_search', 'skill', 'tool_activate', 'fact_register', 'ralph',
+      'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource',
+    ].sort()
+    expect([...CURATED_TOOL_SUMMARIES.keys()].sort()).toEqual(hostBuiltins)
+
+    for (const tool of hostBuiltins) {
+      expect(toolSummary({ name: tool, description: 'x' }, 1)).toBe(CURATED_TOOL_SUMMARIES.get(tool))
+    }
+    for (const line of CURATED_TOOL_SUMMARIES.values()) {
+      expect(/^[\x20-\x7e]+$/u.test(line)).toBe(true)
+      expect(line.length).toBeLessThanOrEqual(200)
+    }
   })
 
   test('renderCatalogText frames a list, the contracts, and the paged summary', () => {

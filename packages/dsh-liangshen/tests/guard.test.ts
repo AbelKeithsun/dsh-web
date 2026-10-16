@@ -112,9 +112,12 @@ describe('guard foldGuardSignal', () => {
       ...failingCall('b'),
       ...failingCall('c'),
     ]
-    // When the fold runs, Then it reports an echo loop.
+    // When the fold runs, Then it reports an echo loop and carries the name of
+    // the tool that loop is stuck on — the retry-safety evidence the breaker
+    // message is classified from, never a second signal.
     const verdict = foldGuardSignal(events)
     expect(verdict.signal).toBe('echo')
+    expect(verdict.tool).toBe('bash')
   })
 
   it('operator sees the echo streak reset on success or a different call', () => {
@@ -278,12 +281,66 @@ describe('guard stepDownEffort', () => {
   })
 })
 
-describe('guard renderGuardMessage', () => {
+describe('guard renderGuardMessage retry safety', () => {
   it('operator reads the interrupted pattern named for each signal', () => {
     // Given each verdict, When the message renders, Then it names the pattern and the breaker.
     expect(renderGuardMessage({ signal: 'stall' })).toContain('no tool call')
     expect(renderGuardMessage({ signal: 'echo' })).toContain('identical arguments')
     expect(renderGuardMessage({ signal: 'stall' })).toContain('[Circuit Breaker]')
+    expect(renderGuardMessage({ signal: 'echo' })).toContain('[Circuit Breaker]')
+  })
+
+  it('operator is told a read-only echo may be retried once its arguments are fixed', () => {
+    // Given an echo verdict on a tool whose failed call cannot have left state
+    // behind, so its effect is known to be none.
+    const message = renderGuardMessage({ signal: 'echo', tool: 'read' })
+    // When the message renders, Then it names that tool, states the effect, and
+    // allows the one move that is safe here: corrected arguments, then retry.
+    expect(message).toContain('effectState none')
+    expect(message).toContain('retrying it is safe')
+    // The verdict on THIS call is none: the unknown half is only the contrast
+    // the message states for every other call shape.
+    expect(message).toContain('`read`: effectState none')
+    expect(message).not.toContain('`read`: effectState unknown')
+  })
+
+  it('operator is told an unknown-effect echo needs read-only verification first', () => {
+    // Given an echo verdict on a call whose effect the runtime cannot know — a
+    // shell command, or a batch that may have stopped halfway.
+    const message = renderGuardMessage({ signal: 'echo', tool: 'bash' })
+    // When the message renders, Then the model is sent to read-only inspection
+    // before the next call, and told not to repeat the interrupting one.
+    expect(message).toContain('effectState unknown')
+    expect(message).toContain('`bash`')
+    expect(message).toContain('read-only tools')
+    expect(message).toContain('do NOT call it again')
+    // And the read-only half stays stated, so a model that can prove the call
+    // was idempotent is not blocked by the conservative default.
+    expect(message).toContain('effectState none')
+  })
+
+  it('operator gets the conservative half when the breaking tool is unknown', () => {
+    // Given an echo verdict naming no tool, and one naming a tool the guard has
+    // never seen (an unrecognised read-only tool lands here by design).
+    const nameless = renderGuardMessage({ signal: 'echo' })
+    const unseen = renderGuardMessage({ signal: 'echo', tool: 'some_unseen_tool' })
+    // When the messages render, Then neither promises a retry is safe: guessing
+    // here would duplicate an effect that may already have landed.
+    for (const message of [nameless, unseen]) {
+      expect(message).toContain('effectState unknown')
+      expect(message).toContain('the failing call')
+    }
+    expect(unseen).toContain('`some_unseen_tool`')
+  })
+
+  it('operator keeps the stalled-reasoning message free of retry advice', () => {
+    // Given a stall verdict, whose cause is an over-large reasoning budget
+    // rather than a broken call.
+    const message = renderGuardMessage({ signal: 'stall' })
+    // When the message renders, Then it keeps its original wording: there is no
+    // call to classify and nothing to retry.
+    expect(message).not.toContain('effectState')
+    expect(message).toContain('Stop re-deriving in thought')
   })
 })
 
@@ -320,6 +377,9 @@ describe('guard fire behaviour (signal to action)', () => {
     const decision = await guard.preStep(target)
     expect(decision.messages).toHaveLength(1)
     expect(decision.messages[0].content[0].text).toContain('[Circuit Breaker]')
+    // The injected message carries the retry-safety half of the fold verdict:
+    // the loop is stuck on a shell call, whose effect the guard cannot know.
+    expect(decision.messages[0].content[0].text).toContain('effectState unknown')
     // ...and the request is left exactly as the route resolved it: an echo is a
     // broken call, so weakening the model is not the remedy.
     await expect(guard.request(target, 'max')).resolves.toEqual({ reasoningEffort: 'max' })

@@ -71,6 +71,11 @@
  * namespaces with their activation pointer. Under 'both' the catalog lists
  * `run_code` like any other tool and notes the programmatic-escape hatch; the
  * 'ptc' program contract only ships when the wire actually collapsed to it.
+ * A tool the catalog curates renders the hand-written line from
+ * {@link CURATED_TOOL_SUMMARIES}; only an uncurated tool falls back to the
+ * mechanical `descriptionMaxLength` truncation of its own schema description,
+ * because a character-count cut can slice off exactly the sentence that says
+ * what the tool is for.
  * The catalog republishes only when its content changes or the published copy
  * left the visible surface (compaction, resume).
  *
@@ -225,6 +230,89 @@ function validateRetiredAnchorTools(value) {
 }
 
 /**
+ * Curated one-line summaries, one per host builtin tool this preset can put on
+ * a wire. Each line says what the tool is FOR and names the arguments that
+ * decide how it is called, kept well inside {@link DEFAULT_DESCRIPTION_MAX_LENGTH}.
+ *
+ * PRECEDENCE: a tool named here renders THIS line; every other tool keeps the
+ * mechanical cap — its own schema description, whitespace collapsed and cut to
+ * `descriptionMaxLength`. Curation therefore wins over truncation and never
+ * replaces it: a tool the table does not name (a paged MCP namespace's tool, a
+ * plugin-registered tool, a tool the harness adds later) still reaches the
+ * model, just at whatever the cap leaves of its own description. A character
+ * count is a poor editor — it slices off the sentence that says what the tool
+ * is for — so the tools this session mounts on every request get a hand-written
+ * line instead.
+ *
+ * SCOPE: exactly the host builtins the preset's own `agent.cordis.yml` rows
+ * mount for a session, which is the surface the paging wildcard leaves resident
+ * (`pagedToolPatterns` defaults to `mcp__*`, so no host builtin is ever paged
+ * out):
+ * - the shell (one of bash / pwsh per platform), the filesystem and discovery
+ *   tools, the background-job controls, and the editor;
+ * - the prompt/skill surface, the todo list, the user question tool, and
+ *   `web_search` (the preset's own `tool-web` row configures `fetch: false`,
+ *   so the session opens the search tool alone);
+ * - the preset's own `tool_activate` and `fact_register`;
+ * - the READ-ONLY MCP resource tools, which the base composition mounts and
+ *   which are reachable whenever the deployment registers an MCP server — even
+ *   though a configured `mcp__*` server's tools are the ones paging withholds.
+ *
+ * Three names a reader might expect are deliberately ABSENT, because this
+ * composition mounts no row that registers them and curating them would write a
+ * catalog line for a tool surface the request never opens — exactly the claim
+ * the declare-exactly-what-the-request-opens contract forbids:
+ * - `present`: only the builtin Standard / PTC / Cordis compositions mount the
+ *   `@deepseek-ai/dsh-tool-present` row, and the web app disables the host one;
+ * - `web_fetch`: the per-session `tool-web` row below sets `fetch: false`,
+ *   so this session opens `web_search` alone;
+ * - `workflow`: the delegation group ships that row `disabled: true` so no
+ *   second model-authored orchestration surface sits beside `run_code`.
+ * The goal tools and `exit_plan_mode` ARE here, because the `tool-goal` and
+ * `plan-mode` rows below mount them.
+ *
+ * Adding a tool the preset mounts is the one edit an entry needs, and no test
+ * pins the exact text of any line: an operator reword is not a behavior change.
+ * That is why the table is exported — a test can prove every key is a tool name
+ * and every value is a single bounded line, without freezing the prose.
+ */
+export const CURATED_TOOL_SUMMARIES = new Map([
+  ['run_code', 'Execute a TypeScript program against the available tools (`code`, `description`); reach a tool as `await tools.<name>(args)` and return only what the next step needs.'],
+  ['bash', 'Run a command in a fresh bash shell (`command`, optional `timeoutMs`, `workdir`, `run_in_background`).'],
+  ['pwsh', 'Run a command in a fresh PowerShell process (`command`, optional `timeoutMs`, `workdir`, `run_in_background`); native Windows paths and `$env:NAME` variables.'],
+  ['read', 'Read one UTF-8 text file as line-numbered content (`file_path`, optional `offset` and `limit`).'],
+  ['read_image', 'Read a PNG/JPEG/WebP/GIF image file and return the image itself (`file_path`); large images are downscaled automatically.'],
+  ['write', 'Create or fully replace one UTF-8 text file (`file_path`, `content`).'],
+  ['edit', 'Replace literal text in one existing file (`file_path`, `old_string`, `new_string`, optional `replace_all`).'],
+  ['str_replace_editor', 'View, create, and edit files through one command tool (`command`, `path`, plus `file_text`, `old_str` / `new_str`, `insert_line`, `view_range`).'],
+  ['glob', 'Find files whose paths match a glob pattern (`pattern`, optional `path`); up to 100 paths in modification-time order.'],
+  ['grep', 'Search file contents with a ripgrep expression (`pattern`, optional `path`, optional `include`); matching lines with line numbers.'],
+  ['job_output', 'Read a background job: output since the previous read, or the finished result (`job_id`, optional `wait`, `timeout_ms`).'],
+  ['job_list', 'List the background jobs started by this session with their ids, kinds, and statuses.'],
+  ['job_kill', 'Request cancellation of a running background job (`job_id`, optional `reason`).'],
+  ['todo_write', 'Record and update the plan as one todo per concrete step (`todos`: content and status); skip it for trivial single-step work.'],
+  ['create_goal', 'Create a persisted goal that keeps this session working across automatic continuation rounds (`objective`, optional `max_goal_rounds`).'],
+  ['get_goal', 'Read the current session goal, including the id and revision that update_goal requires.'],
+  ['update_goal', 'Change one goal: edit, pause, resume, complete or blocked (`goal_id`, `revision`, `action`, plus `objective`, `max_goal_rounds`, `blocked_reason`).'],
+  ['exit_plan_mode', 'Present the completed plan for user review (`plan`, markdown starting with a title); approval is the only way out of plan mode.'],
+  ['subagent', 'Delegate a self-contained task to a subagent that works in its own context and returns its result, not its steps (`description`, `prompt`, optional `provider` / `model` / `reasoning_effort`).'],
+  ['subagent_fork', 'Delegate a task to a subagent seeded with this conversation (`description`, `prompt`); it inherits the parent route, so route fields are not accepted.'],
+  ['list_subagent_models', 'Discover the subagent routes this session authorizes (`provider`, optional `model`); the returned ids feed the delegation tools.'],
+  ['send_message', 'Send a message to a subagent started from this session (`agent_id`, `message`); the call confirms delivery, not the answer.'],
+  ['list_agents', 'List the subagents started from this session with their ids, labels, and status (`scope`).'],
+  ['interrupt_agent', 'Ask a subagent to stop its current work (`agent_id`); the call returns without waiting for it to settle.'],
+  ['ask_user_question', 'Ask the user a concise question and wait for the answer (`questions`: id, question, optional header, options, and custom input).'],
+  ['web_search', 'Search the web for current information (one to four `queries`); returns a merged summary and its source URLs.'],
+  ['skill', 'Load the full instructions of one session skill (`name`); call it before acting on a task that names or matches a skill.'],
+  ['tool_activate', 'Load one paged tool namespace back onto the wire and into the generated SDK (`namespace`, exactly as the catalog names it).'],
+  ['fact_register', 'Pin one key fact into the working context (`fact`, optional `tag`), or unpin with `revoke`; at most twelve short facts stay pinned.'],
+  ['ralph', 'Run a foreground fresh-agent Ralph loop toward one immutable objective (`objective`, optional `maxRounds`); only when the human explicitly asks for it.'],
+  ['list_mcp_resources', 'List the resources an MCP server exposes (`server`, optional `cursor`).'],
+  ['list_mcp_resource_templates', 'List the parameterized resource URI templates of one MCP server (`server`, optional `cursor`).'],
+  ['read_mcp_resource', 'Read one MCP resource by URI from the named server (`server`, `uri`).'],
+])
+
+/**
  * One-line model-facing summary of a tool description: whitespace collapsed,
  * truncated with an ellipsis when maxLength is specified.
  */
@@ -232,6 +320,21 @@ export function catalogDescription(value, maxLength) {
   const normalized = String(value ?? '').replaceAll(/\s+/g, ' ').trim()
   if (maxLength === undefined || maxLength <= 0 || normalized.length <= maxLength) return normalized
   return `${normalized.slice(0, maxLength - 3)}...`
+}
+
+/**
+ * The one-line summary one entry renders for a tool: the curated line when the
+ * table names it, otherwise the mechanically capped schema description. The
+ * order is the whole point — curation first, truncation only as the fallback
+ * for a tool nobody has written a line for yet.
+ * @param {{ name?: unknown, description?: unknown }} schema - one tool definition.
+ * @param {number} maxLength - the schema-description cap, in characters.
+ * @returns the summary text for the catalog entry.
+ */
+export function toolSummary(schema, maxLength) {
+  const name = schema?.name
+  if (typeof name === 'string' && CURATED_TOOL_SUMMARIES.has(name)) return CURATED_TOOL_SUMMARIES.get(name)
+  return catalogDescription(schema?.description, maxLength)
 }
 
 /** One scalar literal as TypeScript-ish text; non-JSON scalars degrade to the broad type. */
@@ -292,7 +395,9 @@ export function renderSignature(parameters) {
  * Catalog entries for one tool surface, sorted by name so an unchanged surface
  * renders byte-identical text across assemblies. Nameless definitions are
  * skipped; the `run_code` transport is listed only when the presentation puts
- * it on the wire beside the native tools ('both').
+ * it on the wire beside the native tools ('both'). Each entry's summary is
+ * resolved by {@link toolSummary}: the curated line where the table has one,
+ * the capped schema description otherwise.
  */
 export function catalogEntries(schemas, maxLength, options) {
   const includeRunCode = options?.includeRunCode === true
@@ -309,7 +414,7 @@ export function catalogEntries(schemas, maxLength, options) {
     entries.push({
       name: toolName,
       signature: renderSignature(schema.parameters),
-      description: catalogDescription(schema.description, maxLength),
+      description: toolSummary(schema, maxLength),
       ...(namespace === undefined ? {} : { namespace }),
     })
   }
