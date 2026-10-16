@@ -1,6 +1,25 @@
 # Frutiger Aero
 
+[简体中文](README.zh.md) | English
+
+> 中文说明见 **[README.zh.md](README.zh.md)**（含本次性能修复的完整实测数据）。
+
 A Frutiger Aero skin for the DSH Web GUI: ice-blue translucent glass panels over an original sky-and-grass wallpaper, with slowly rising glossy bubbles.
+
+## What's new in 1.1.0
+
+- **Performance.** The 1.0.0 panel frost pinned the GPU's 3D engine at 82.33% on integrated
+  graphics (Intel Iris Xe, 1920×1200 maximised, window focused). 1.1.0 bakes the "2px
+  softening + cool tint" into the wallpaper asset instead and measures 22.79% under the same
+  conditions. The whole-window difference is 2–3 levels out of 255; bubbles and colours are
+  unchanged. On affected machines the symptoms were heat, fan noise, dropped frames and
+  faster battery drain.
+- **Wallpaper.** The concentric rings around the sun are gone. They came from the flat
+  plateaus that "blur + 8-bit quantisation" leaves behind; the gradients are now dithered and
+  stored losslessly, taking the plateau count from 10,062 pixels to 884.
+- **Light-theme sidebar.** The workspace list no longer competes with the cloud imagery
+  behind it: the backdrop's standard deviation drops from 21.7 to 11.7 and the worst row's
+  contrast rises from 6.35:1 to 9.48:1.
 
 ## Highlights
 
@@ -31,36 +50,47 @@ Bubbles: 6 per 500px tile, fixed pixel radii (44–92px), single-layer gradients
 | `preview/light.jpg` / `preview/dark.jpg` | Gallery previews |
 | `LICENSE` | MIT |
 
-## Frosted glass and performance
+## Glass and performance
 
-Frost is applied through the structural regions' real CSS-Module class names
-(matched with `[class*=]`, since the hash prefix changes between builds):
+Since 1.1.0 the panels carry no live frost. The reason is in the table below: the bubbles
+never stop rising behind the panels, so the backdrop changes every frame and the browser has
+to re-read and re-blur the whole surface every frame.
 
-| Region | Selector | Radius |
+Conditions: Intel Iris Xe, 1920×1200 maximised, window focused, blank session, dark theme,
+per-sample averaging.
+
+| Configuration | GPU 3D | Visual difference |
 | --- | --- | --- |
-| Left workspace column | `[class*="sidebarCol"]` | none (clear glass) |
-| Centre chat column | `[class*="centerCol"]` | 2px |
-| Right workspace column | `[class*="rightbarCol"]` | 3px |
-| Top titlebar strip | `[class*="_frame"]::before` | 2px |
+| 1.0.0 (four live frost layers, blur 2/3/2/4px + saturate) | **82.33%** | — |
+| Blur radius halved | 73.30% | 0.70 levels |
+| Bubble update rate cut to 36 Hz | 81.45% | 0 levels |
+| Bubble update rate cut to 12 Hz | 34.59% | visible stepping |
+| Bubbles frozen | 6.50% | bubbles stop |
+| All `backdrop-filter` removed, no colour compensation | 22.97% | 4.89 levels |
+| **1.1.0: pre-baked asset + clear-glass panels** | **22.79%** | **2–3 levels** |
 
-Visible seams come from neighbouring regions carrying *different* blur radii, so
-the spread is kept as small as possible (3px at most in the table above) and none
-of the three seams reads as a step.
+Freezing the bubbles alone takes the figure from 82.33% to 6.50%, so those 59 points are
+almost entirely the per-frame recomputation itself. Blur radius, wallpaper and translucency
+were each tested on their own, and none of them is the cause.
 
-The left workspace column carries no frost: it contains the sidebar's
-collapse/expand button, and `backdrop-filter` makes an element a containing block
-for its descendants, which would re-base that absolutely positioned button from
-the window onto the sidebar column — dropping it onto the sidebar heading when
-expanded, and clipping it away behind `overflow:hidden` when collapsed. The
-column therefore uses clear glass, and the material difference is expressed
-through the `--dsw-specific-sidebar-fill` alpha instead.
+What 1.1.0 does instead: "2px softening + saturation 1.06" is baked into
+`assets/aero-sky.webp` (±0.5 levels of dither on top; the sun-glow plateau ratio is 1.9%),
+and the four `backdrop-filter` declarations become `var(--aero-frost, none)`. To bring live
+frost back, set `--aero-frost` in `skin.css` to `blur(1px) saturate(1.10)`.
 
-On an Intel Iris Xe iGPU, with the animated bubble field running behind all of
-these surfaces, GPU 3D engine utilisation stays **below 0.3%**.
+The left workspace column has never used `backdrop-filter`: it contains the sidebar's
+collapse/expand button, and `backdrop-filter` would turn the column into a containing block
+for its descendants, re-basing that absolutely positioned button from the window onto the
+column — about 48px lower when expanded, and clipped away by `overflow:hidden` when
+collapsed.
 
-The one expensive pattern is a window-level blur: `backdrop-filter: blur(16px)`
-on the huge `[data-dsh-part="dialog"]` layer costs roughly **+22%** GPU. That
-declaration is deliberately absent.
+Light-theme sidebar: clear glass puts the workspace list straight onto the cloud imagery, so
+the upper sidebar carries a very light cool-white gradient and its text a faint white halo.
+Both are light-theme only, and neither uses `backdrop-filter`. The backdrop behind the text
+goes from 21.7 to 11.7 standard deviation, and the worst row from 6.35:1 to 9.48:1.
+
+No blur on the window-level `[data-dsh-part="dialog"]` layer either: `blur(16px)` there costs
+about 22% on its own.
 
 ### Glass edges
 

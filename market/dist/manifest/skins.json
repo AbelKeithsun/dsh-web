@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-15",
+  "generated": "2026-10-16",
   "items": [
     {
       "id": "frutiger-aero",
@@ -20,7 +20,7 @@
         "css-only",
         "dual-theme"
       ],
-      "version": "1.0.0",
+      "version": "1.1.0",
       "accent": "#3FB8E8",
       "preview": {
         "light": "assets/skins/frutiger-aero/preview/light.jpg",
@@ -3502,6 +3502,72 @@
             "type": "image",
             "src": "assets/skins/whale-maid/assets/whale-night.webp",
             "scrim": "linear-gradient(106deg, rgba(5,14,32,0.52) 0%, rgba(5,14,32,0.26) 34%, rgba(5,14,32,0.06) 64%, rgba(5,14,32,0) 100%)"
+          }
+        }
+      }
+    },
+    {
+      "id": "endfield-baker",
+      "name": "终末地 · BAKER",
+      "nameEn": "Endfield Baker",
+      "author": "Yuji6278（基于 blue-fantasy / powerdog996 DreamSkin 社区作品改作）",
+      "rank": 1052,
+      "tagline": "《明日方舟：终末地》工业终端 · BAKER 会话界面 · 信号青与警示黄",
+      "description": "把 dsh Web GUI 改造成终末地现场终端：会话区按 BAKER 通讯界面重做（青色标头竖条、信号黄选中行、切角控制台卡片、白色胶囊输入条、磨砂灰聊天底板），其余壳层用终末地的工业语汇补齐——细网格与斜纹信号条、等宽微标签、单像素浅灰描边。浅色与深色模式共用同一套终端配色。",
+      "tags": [
+        "endfield",
+        "arknights",
+        "industrial",
+        "baker",
+        "terminal",
+        "cyan"
+      ],
+      "version": "0.9.1",
+      "accent": "#17c3e6",
+      "preview": {
+        "light": "assets/skins/endfield-baker/preview/light.jpg",
+        "dark": "assets/skins/endfield-baker/preview/light.jpg"
+      },
+      "files": [
+        "LICENSE",
+        "NOTICE",
+        "README.md",
+        "README.zh.md",
+        "assets/baker-card-btn-arrow.png",
+        "assets/baker-card-btn-circle.png",
+        "assets/baker-card-corner.png",
+        "assets/baker-card-faint.png",
+        "assets/baker-card-texture.png",
+        "assets/baker-card-underline.png",
+        "assets/baker-chat.jpg",
+        "assets/baker-header.png",
+        "assets/baker-sub-arrow.png",
+        "assets/baker-sub-badge.png",
+        "assets/baker-sub-faint.png",
+        "assets/baker-sub-icon-dark.svg",
+        "assets/baker-sub-icon.svg",
+        "assets/baker-sub-wing.png",
+        "assets/endfield-dark.jpg",
+        "assets/new-session.png",
+        "patches.css",
+        "preview/light.jpg",
+        "skin.css",
+        "skin.json"
+      ],
+      "repo": "https://github.com/Yuji6278/endfield-skin-release",
+      "contributes": {
+        "stylesheet": "skin.css",
+        "patches": "patches.css",
+        "backgroundMedia": {
+          "light": {
+            "type": "image",
+            "src": "assets/skins/endfield-baker/assets/endfield-dark.jpg",
+            "scrim": "linear-gradient(rgba(8, 10, 12, 0.30) 0%, rgba(10, 13, 16, 0.42) 60%, rgba(12, 16, 19, 0.50) 100%)"
+          },
+          "dark": {
+            "type": "image",
+            "src": "assets/skins/endfield-baker/assets/endfield-dark.jpg",
+            "scrim": "linear-gradient(rgba(8, 10, 12, 0.30) 0%, rgba(10, 13, 16, 0.42) 60%, rgba(12, 16, 19, 0.50) 100%)"
           }
         }
       }

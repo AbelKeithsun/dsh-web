@@ -312,6 +312,11 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://dsh-market.com/tryon/?skin=endfield-baker</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://dsh-market.com/tryon/?skin=midnight-contract</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>

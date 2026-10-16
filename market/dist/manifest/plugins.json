@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-15",
+  "generated": "2026-10-16",
   "items": [
     {
       "id": "dsh-quick-ask",
@@ -1694,9 +1694,22 @@
       "subcategory": "stats"
     },
     {
+      "id": "dsh-breadboard",
+      "name": "dsh-breadboard",
+      "rank": 133,
+      "nameEn": "dsh-breadboard",
+      "author": "Noob-stupid",
+      "description": "DSH 嵌入式硬件沙盒插件：在 3D 面包板场景里摆放 ESP32 / BME280 / PIR / LED 等器件、按协议与电压校验接线，再让真实 Python 项目代码在环运行、经 Python shim 读虚拟 I2C/GPIO 的寄存器级读数；支持故障注入（断线 / NACK / busy / 强制读数）验证异常处理。另有第二类虚拟硬件——联网设备，主动向真实 HTTP 后端周期上报（已在真实智能选座系统全链路验证）。随插件带 13 个 hw_* 工具与一份 SKILL.md。",
+      "descriptionEn": "A DSH embedded hardware sandbox plugin: place ESP32 / BME280 / PIR / LED components on a 3D breadboard scene, wire ports with protocol and voltage checks, then run real Python project code in the loop, reading register-level virtual I2C/GPIO readings through a Python shim; fault injection (disconnect, NACK, busy, forced readings) validates exception handling. A second class of virtual hardware — networked devices — reports periodically over HTTP to a real backend (validated full-chain against a live seat-reservation system). Ships 13 hw_* agent tools and a bundled SKILL.md.",
+      "repo": "https://github.com/Noob-stupid/dsh-breadboard",
+      "npm": "@noob-stupid/dsh-breadboard",
+      "category": "tools",
+      "subcategory": "dev"
+    },
+    {
       "id": "dsh-url-router",
       "name": "地址栏深链",
-      "rank": 133,
+      "rank": 134,
       "nameEn": "URL Router",
       "author": "DDDMUC",
       "description": "给 DSH Web 的每个界面一个自己的链接：会话、面板、设置（小节与页签）、会话内视图、轨迹行、轮次、右栏 pane 都写进地址栏。侧边栏会话行变成真链接，浏览器原生的右键菜单、中键与 Cmd 点击都能用；点击某一行或某一轮只把位置反映进地址栏，不拦截点击、不碰交互元素。粘贴链接会打开对应界面，轮次链接还会先把历史翻页回那一轮、再滚到它。检测到别的插件写的 fragment 时只报告一次且绝不覆盖；路由健康报告见 window.__dshUrlRouter.report()。只写 fragment、只用 replaceState，任何一步都不抛异常。",
@@ -1709,7 +1722,7 @@
     {
       "id": "dsh-flash-presets",
       "name": "DSH Flash 精简预设",
-      "rank": 134,
+      "rank": 135,
       "nameEn": "DSH Flash Lean Presets",
       "author": "LarryE135",
       "description": "面向 flash 级路由的两个 token 效率优化 agent 预设：flash-lean-ptc-v2（现行推荐）与 flash-lean-ptc-v1。PTC 工具面（run_code 为唯一直接可调用工具）加行为硬约束，压缩阈值等参数写在补丁层；以 DSH 组合包（dsh.bundle）形式随 profile 一键安装，README 附 BENCH-STD 基准数据（8 用例同批对照）与 scripts/selftest.sh 端到端自测。宿主侧纯配置补丁，无浏览器半区。",
@@ -1721,7 +1734,7 @@
     {
       "id": "dsh-connection-card-host",
       "name": "连接卡片宿主",
-      "rank": 135,
+      "rank": 136,
       "nameEn": "Connection Card Host",
       "author": "Noob-stupid",
       "description": "把「连接」做成 DSH 里的一等对象：会话是节点，连接是容器，卡片按连接挂载。一条连接连接两个会话，两端可以互相读取对方的工作状态、共用一份记录接口与分工的「公约盒」，并按四档紧急度互发消息；权限分方向（只读／建议／写入），两个方向互不影响。卡片是挂在连接上的连接级插件：卡片注册的工具只有这条连接上的会话能通过一个常驻桥接工具调用，可见范围可以按端限定；卡片自带依赖、装在独立目录，不写入 DSH profile。连接、权限与已安装卡片都保存在 $DSH_HOME/connection-cards/ 下，重启后连接会恢复。",
@@ -1734,7 +1747,7 @@
     {
       "id": "dsh-trae-relay",
       "name": "TRAE CN 反代与控制台",
-      "rank": 136,
+      "rank": 137,
       "nameEn": "TRAE CN Relay and Console",
       "author": "FuSheng-cs",
       "description": "TRAE CN 反代与内嵌控制台，支持自动签到、多账号管理和轮询、模型发现、思考档位及模型显示/隐藏。自动签到与轮询默认关闭；仅限有权使用且服务方允许的账号与功能，详见仓库免责声明。",
@@ -1746,7 +1759,7 @@
     {
       "id": "dsh-web-start-ui",
       "name": "dsh web start ui · 启动动画",
-      "rank": 137,
+      "rank": 138,
       "nameEn": "dsh web start ui (Launch Video)",
       "author": "stushansusu",
       "description": "打开 DSH 时的全屏启动动画（视频皮肤）：宿主半区在界面首绘之前就把视频起播，浏览器半区接管同一个 <video>（不重播），视频播完才落帘。包内自带一段皮肤（青花瓷 · 水墨，12.3s），设置页可选皮肤、上传与删除自定义皮肤（存 $DSH_HOME/launch-animations）、即时预览、播放频率与点击跳过；资产路由带 ETag 与 Range，二次启动走 304 不再重下。独立插件，不并入全家桶。",
@@ -1754,6 +1767,19 @@
       "repo": "https://github.com/stushansusu/dsh-web-start-ui",
       "category": "ui",
       "subcategory": "render"
+    },
+    {
+      "id": "dsh-workspace-activity",
+      "name": "侧边栏工作区运行标记",
+      "rank": 139,
+      "nameEn": "Sidebar Workspace Activity",
+      "author": "charliesbyte",
+      "description": "在侧边栏的工作区行上显示其下会话的运行状态：有会话运行时显示与产品状态点同几何的转圈，全部停止后短暂保留一个已完成圆点，折叠时把文件夹图标染成产品「所在分组」的蓝色。只贡献一张样式表，不替换侧边栏组件。",
+      "descriptionEn": "Shows activity on each sidebar workspace row: a spinner drawn with the product's own status-dot geometry while any of its sessions are running, a short-lived finished dot after they all stop, and the product's blue folder tint while collapsed. Contributes one stylesheet and never replaces the sidebar.",
+      "repo": "https://github.com/charliesbyte/dsh-workspace-activity",
+      "npm": "dsh-workspace-activity",
+      "category": "ui",
+      "subcategory": "panel"
     }
   ]
 }
