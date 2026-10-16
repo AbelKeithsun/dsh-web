@@ -15,7 +15,7 @@ DeepSeek 模型的后训练以 bash 工具面为主，Windows 会话只有 pwsh 
 - 载荷钉死：随包携带 Git for Windows MinGit v2.56.0.windows.2 的裁剪提取（89 个文件，15.99 MiB，含 22 份许可证文本与 PROVENANCE.md），`checksums.sha256` 记录每个文件的 SHA256，**挂载前整体验证**，摘要不符拒绝挂载；shell 只按包内绝对路径解析，绝无 PATH 回退。OpenSSH/Heimdal/OpenSSL 家族经 PE 导入分析证明无人引用后剔除。
 - 工具名 `win_bash` 而非 `bash`：避免与宿主/第三方同名工具互相静默替换。行 id `dsh-win-bash`、行 name 恰好等于包名，POSIX 上 `disabled: !!js process.platform !== 'win32'`。
 - 帧协议：nonce 标记的引用 heredoc 经 `.` 源入——brace 组遇语法错误会吞掉结束标记永久卡壳，heredoc 则作为单个解析单元报错后继续，实测未闭合引号的下一次调用在同一进程正常返回。stdout 取自解析后的帧而非原始流，分帧标记永不到达模型。
-- 权限：策略经 `sandboxPolicy` 服务解析，受限模式经 `sandbox.confine()` 派生；受限而无 confinement provider 的部署直接拒绝，绝不裸跑。受限路径在本机（danger-full-access）只做了结构化测试，**真实 ACL 令牌下的受限探测是遗留验证项**。
+- 权限：策略经 `sandboxPolicy` 服务解析，受限模式经 `sandbox.confine()` 派生；受限而无 confinement provider 的部署直接拒绝，绝不裸跑。该契约钉了两次：`tests/confinement.spec.ts` 结构性钉住（注入 provider 的 argv 才是被派生的那个，前台后台皆是），`tests/confinement-live.spec.ts` 则对**真实** ACL restricted-token runner 再钉一次——该 runner 随 DSH 宿主分发而不在本仓依赖树里，故由两个 `DSH_WIN_BASH_ACL_*` 环境变量指路；不给变量时那些测试如实 skip，绝不静默通过。**这次真跑查出本注此前只能回避的一条边界**：受限令牌下随包 MSYS 载荷根本起不来——`bash.exe`/`sh.exe`/`dash.exe`/`echo.exe` 都在 main 之前死亡，报 `NtCreateDirectoryObject(\BaseNamedObjects\msys-2.0S5-<hash>): 0xC0000022`（退出码 3221225794），系统 Git for Windows 同样失败（`couldn't create signal pipe, Win32 error 5`），故这是 MSYS/Cygwin 运行时对受限令牌的要求，不是本包裁剪所致。同一宿主上 `cmd.exe`/`node.exe`/`powershell.exe` 均能受限运行，所以 runner 与本包的 argv 接线是好的；**未证的仍是受限模式下任何 bash 命令**。第二条实测缺口：该 rung 的 denial 签名是英文的，非英文主机上被真实拒绝的 `cmd.exe` 越界写入会被归类成普通非零退出——同一条 live spec 把这条缺口钉住而非粉饰。
 - 恢复对外可见：shell 退出、超时、中止都会销毁该 shell 并在下一次调用里说明状态已丢失，绝不静默换壳；shell 随 agent disposed 与插件卸载回收。
 
 ## Alternatives considered
@@ -34,5 +34,5 @@ DeepSeek 模型的后训练以 bash 工具面为主，Windows 会话只有 pwsh 
 
 ## Testing
 
-- 包内 49 个测试（协议帧、注册表恢复、载荷校验、配置、挂载门控、vendored bash 实跑）；验收期间修复的四个真实缺陷（双流共享游标、帧重复解析、stdout 误读原始累加器、begin 标记未锁存）各有回归测试。
+- 包内 119 个测试（协议帧、注册表恢复、载荷校验、配置、挂载门控、vendored bash 实跑、confinement 结构性契约与对真实 ACL runner 的 confinement）；验收期间修复的四个真实缺陷（双流共享游标、帧重复解析、stdout 误读原始累加器、begin 标记未锁存）各有回归测试。其中 8 条受限真跑测试仅在 `DSH_WIN_BASH_ACL_RUNNER`（端到端那条另需 `DSH_WIN_BASH_ACL_PROVIDER`）指向真实安装时执行，否则带明确前置条件断言地 skip——绿色的测试套件绝不意味着真检查被静默跳过。
 - 独立复跑：`pnpm --filter @linxin666/dsh-win-bash build/test/typecheck` 全绿；`verify-docs`、`emoji-audit`、`test-standards`、`aggregate --check`、`sync-shared --check`、`runtime-deps-check`、`family-dsh-engines` 通过；载荷 89/89 摘要核验一致，bash 实跑报告 5.3.15(2)-release。

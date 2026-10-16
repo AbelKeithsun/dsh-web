@@ -52,7 +52,31 @@ packages/AGENTS.md 的全局/包级规则。
 - **受限模式对前台与后台一视同仁**：两条路径都必须经 `sandbox.confine()`，并且真正被派生
   的必须是它返回的**受限 argv**（`ConfinedArgv.argv`，而不是载荷自己的 argv——只算不用，
   等于命令仍在边界之外运行）；没有 provider 时两边都以 `SANDBOX_UNAVAILABLE` 拒绝。
-  这条契约由 `tests/confinement.spec.ts` 结构性地钉住。
+  这条契约由 `tests/confinement.spec.ts` 结构性地钉住，并由 `tests/confinement-live.spec.ts`
+  对**真实** ACL runner 再钉一次。
+- **受限路径的真实验证**（`tests/confinement-live.spec.ts`）：真实 ACL restricted-token
+  runner 不在本仓依赖树里（它随 DSH 宿主分发），所以真跑要显式指路：
+
+  ```sh
+  DSH_WIN_BASH_ACL_RUNNER=<DSH checkout>/packages/sandbox/sandbox-windows-acl/lib/runner.js \
+  DSH_WIN_BASH_ACL_PROVIDER=<DSH checkout>/packages/sandbox/sandbox-local/lib/index.js \
+    pnpm --filter @linxin666/dsh-win-bash test
+  ```
+
+  两个变量缺任一时对应测试**如实 skip**（另有一条断言确保 skip 不是静默通过），绝不伪造
+  通过；变量给错路径同样走 skip。不给变量就是本仓的常规门禁形态。
+- **已测得的载荷边界：受限模式下 MSYS 载荷根本起不来**。win32 x64 / Windows 10.0.26200 上，
+  `bash.exe`/`sh.exe`/`dash.exe`/`echo.exe` 在 restricted token 下都在 main 之前死亡：
+  `NtCreateDirectoryObject(\BaseNamedObjects\msys-2.0S5-<hash>): 0xC0000022`，退出码
+  3221225794（0xC0000142）；系统 Git for Windows 同样失败（`couldn't create signal pipe,
+  Win32 error 5`），故这是 MSYS/Cygwin 运行时对受限令牌的要求，不是本包裁剪造成的。
+  `cmd.exe`/`node.exe`/`powershell.exe` 在同一 runner 下均正常，所以 runner 与本包的 argv
+  接线是好的，**未证的是受限模式下任何 bash 命令**。这条事实不得被写成「已通过」。
+- **denial 签名是英文的，而 cmd.exe 用系统显示语言报错**：非英文主机上 cmd.exe 的越界写入
+  被真实拒绝，却匹配不到 runner 的英文 `denialSignatures`，于是被归类成普通非零退出
+  （`tests/confinement-live.spec.ts` 把这条缺口钉住，而不是粉饰）。需要一条可靠 denied
+  证据时用 `node.exe`（报自己的英文 `EPERM`）或 MSYS 工具。修上游 rung 的签名表时，
+  该测试必须翻转。
 
 ## 提交前检查
 
@@ -60,4 +84,11 @@ packages/AGENTS.md 的全局/包级规则。
 pnpm --filter @linxin666/dsh-win-bash typecheck
 pnpm --filter @linxin666/dsh-win-bash test
 pnpm --filter @linxin666/dsh-win-bash build
+```
+
+改动了受限路径或本包文档时，另跑：
+
+```sh
+pnpm test:standards    # 新增测试的 BDD/Given-When-Then/无 sleep 纪律
+pnpm docs:check        # owning note 及其 zh/i18n 侧车一致
 ```
