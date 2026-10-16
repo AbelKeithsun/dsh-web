@@ -138,9 +138,13 @@ reachability is the whole signal and no response body is needed.
 - **Re-using the pairing token to enter the LAN origin.** Rejected: the token was
   already spent at `/pair-accept`, and spending it again mints a second device
   session for one phone. A fresh grant bound to the existing device is exact.
-- **Keeping the panel's `lanAddresses` response field.** Rejected: it existed so
-  the picker could switch without a round trip, and nothing reads it once the
-  picker is gone.
+- **Removing the panel's `lanAddresses` response field.** Rejected for now: it
+  existed so the picker could switch without a round trip, and the panel no longer
+  reads it, but it remains the endpoint's own statement of what this host
+  advertises and a scripted caller's way to build a literal-specific link without
+  a second round trip. Deleting it would churn the wire contract and its
+  assertions for no behavioural gain; the per-request `address` payload it pairs
+  with is kept for the same reason.
 
 ## Consequences
 
