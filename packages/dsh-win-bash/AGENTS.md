@@ -49,22 +49,24 @@ packages/AGENTS.md 的全局/包级规则。
   （`BACKGROUND_UNAVAILABLE`），绝不静默退化到前台执行——那会让调用方等到命令结束，
   然后随那个 shell 一起死。`enableRunInBackground` 与「是否有 registry」共同决定该参数是否
   被声明：声明一个部署无法兑现的能力，就是在教模型错的事实。
-- **受限模式对前台与后台一视同仁**：两条路径都必须经 `sandbox.confine()`，并且真正被派生
-  的必须是它返回的**受限 argv**（`ConfinedArgv.argv`，而不是载荷自己的 argv——只算不用，
-  等于命令仍在边界之外运行）；没有 provider 时两边都以 `SANDBOX_UNAVAILABLE` 拒绝。
-  这条契约由 `tests/confinement.spec.ts` 结构性地钉住，并由 `tests/confinement-live.spec.ts`
-  对**真实** ACL runner 再钉一次。
-- **受限路径的真实验证**（`tests/confinement-live.spec.ts`）：真实 ACL restricted-token
-  runner 不在本仓依赖树里（它随 DSH 宿主分发），所以真跑要显式指路：
-
-  ```sh
-  DSH_WIN_BASH_ACL_RUNNER=<DSH checkout>/packages/sandbox/sandbox-windows-acl/lib/runner.js \
-  DSH_WIN_BASH_ACL_PROVIDER=<DSH checkout>/packages/sandbox/sandbox-local/lib/index.js \
-    pnpm --filter @linxin666/dsh-win-bash test
-  ```
-
-  两个变量缺任一时对应测试**如实 skip**（另有一条断言确保 skip 不是静默通过），绝不伪造
-  通过；变量给错路径同样走 skip。不给变量就是本仓的常规门禁形态。
+- **本工具只支持 `danger-full-access`，且这是声明而不是限制实现**：任何其他模式在任何
+  进程启动之前以 `SANDBOX_UNSUPPORTED` 拒绝（`src/tool.ts` 的 `assertUnconfined`）。
+  **不要**为了「支持受限」把 `confine()` 重新接回来——受限下这个载荷起不来，接回来只会
+  得到一个每条命令都死在 main 之前的 shell，并让工具声称一个从未拦住任何命令的边界。
+  契约由 `tests/sandbox-mode.spec.ts` 钉住，前台与后台两条路径都在内。
+- **策略读必须带上调用会话**：`sandboxPolicy.resolve({ session })`。会话自身的
+  `sandbox/mode` 优先于部署默认；不带会话去读，用户已限制的会话就会经由部署默认摸到这个
+  shell。`tests/sandbox-mode.spec.ts` 有一条用例专门钉这个（部署默认 full-access + 会话
+  覆盖 read-only → 必须被拒）。
+- **回退契约：win_bash 是首选 shell，不是唯一 shell**。凡是它服务不了的场合，都必须有一条
+  通往该平台原生 shell 工具的可见退路，两层都要守：
+  ① **能力层**——pwsh 的撤下必须跟随「win_bash 是否真能服务这个会话」，而不是「是否已
+  挂载」；受限会话必须**保留** pwsh（`src/pwsh-replacement.ts`），否则会话会既看不到 pwsh
+  又用不了 win_bash，一个 shell 都没有。
+  ② **消息层**——每一条模型可见的拒绝/失败（`SANDBOX_UNSUPPORTED`、
+  `BACKGROUND_UNAVAILABLE`、无策略服务、`ShellUnavailableError` 的握手类）都必须指明退路
+  （`src/shell.ts` 的 `NATIVE_FALLBACK_HINT`），否则模型会反复重试一个不会恢复的 shell。
+  Windows 上原生 shell 是 `pwsh`：写「bash/pwsh」是错的，宿主在 Windows 上只有 pwsh。
 - **已测得的载荷边界：受限模式下 MSYS 载荷根本起不来**。win32 x64 / Windows 10.0.26200 上，
   `bash.exe`/`sh.exe`/`dash.exe`/`echo.exe` 在 restricted token 下都在 main 之前死亡：
   `NtCreateDirectoryObject(\BaseNamedObjects\msys-2.0S5-<hash>): 0xC0000022`，退出码
@@ -72,11 +74,11 @@ packages/AGENTS.md 的全局/包级规则。
   Win32 error 5`），故这是 MSYS/Cygwin 运行时对受限令牌的要求，不是本包裁剪造成的。
   `cmd.exe`/`node.exe`/`powershell.exe` 在同一 runner 下均正常，所以 runner 与本包的 argv
   接线是好的，**未证的是受限模式下任何 bash 命令**。这条事实不得被写成「已通过」。
-- **denial 签名是英文的，而 cmd.exe 用系统显示语言报错**：非英文主机上 cmd.exe 的越界写入
-  被真实拒绝，却匹配不到 runner 的英文 `denialSignatures`，于是被归类成普通非零退出
-  （`tests/confinement-live.spec.ts` 把这条缺口钉住，而不是粉饰）。需要一条可靠 denied
-  证据时用 `node.exe`（报自己的英文 `EPERM`）或 MSYS 工具。修上游 rung 的签名表时，
-  该测试必须翻转。
+- **不要为「受限支持」重造被删掉的验证**：`tests/confinement.spec.ts` 与
+  `tests/confinement-live.spec.ts` 曾验证「spawn 的是 confine() 返回的受限 argv」，随受限
+  支持一起删除。若将来真要在受限下服务会话，前提是先解决 MSYS 在受限令牌下起不来这件事
+  （上游 `dsh-sandbox-windows-acl` 的令牌/SID 列表），再重建那两条验证；在那之前任何
+  「受限已验证」的说法都是错的。
 
 ## 提交前检查
 

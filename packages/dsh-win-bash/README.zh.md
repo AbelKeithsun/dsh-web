@@ -147,9 +147,8 @@ bundle patch 把本包的行在非 Windows 宿主上标为 disabled，因此 POS
 - **同一份环境契约。** `PATH` 以载荷的 `usr/bin` 打头，`MSYSTEM=MSYS`、
   `TERM=dumb`、`--norc --noprofile`，且 `TMPDIR`/`TMP`/`TEMP` 指向该任务私有的
   目录。
-- **同一套受限逻辑。** 受限模式下该进程与前台调用一样经 sandbox provider 的
-  `confine` 启动；没有可用 provider 的组合会以同一条 `SANDBOX_UNAVAILABLE` 错误被
-  拒绝，而不是不受限地跑起来。
+- **同一套模式规则。** 受限会话会以与前台调用相同的 `SANDBOX_UNSUPPORTED` 被拒绝，
+  且发生在任何进程启动、任何任务注册之前。
 - **没有超时。** 任务注册完成即返回；命令的寿命由 `job_kill` 与会话结束界定。
 - **绝不静默退化。** 在没有组合 job registry 的部署上，该调用会以
   `BACKGROUND_UNAVAILABLE` 被拒绝并说明原因；绝不会悄悄改成前台执行——那会让调用方
@@ -157,10 +156,29 @@ bundle patch 把本包的行在非 Windows 宿主上标为 disabled，因此 POS
 
 ## 权限
 
-本工具从宿主的 sandbox-policy 服务解析会话的有效沙箱策略——与宿主自己的执行族
-读的是同一个来源。受限模式下，shell 的 argv 会先经过 sandbox provider 的 `confine`
-再派生；如果组合声明了受限模式却没有可用的 provider，本工具拒绝执行，而不是悄悄
-不受限地跑起来。
+本工具从宿主的 sandbox-policy 服务解析**调用会话**的有效沙箱策略——与宿主自己的执行族
+读的是同一个来源，且**带上该会话**：会话自身的模式优先于部署默认，因此用户已限制的会话
+无法经由部署默认摸到这个 shell。
+
+**本工具只在 `danger-full-access` 下运行。** 其他模式一律在任何进程启动之前以
+`SANDBOX_UNSUPPORTED` 拒绝：随包的 MSYS2 bash 在受限令牌下无法启动，所以受限在此
+不可能产出一个可用的 shell。在 win32 x64（Windows 10.0.26200）上对真实受限令牌 runner
+实测：`bash.exe`、`sh.exe`、`dash.exe`、`echo.exe` 全部在 `main` 之前死亡，报
+
+```text
+NtCreateDirectoryObject(\BaseNamedObjects\msys-2.0S5-<hash>): 0xC0000022
+```
+
+（退出码 3221225794 / 0xC0000142）；系统 Git for Windows 同样失败（`couldn't create signal
+pipe, Win32 error 5`）。同一 runner 下 `cmd.exe`、`node.exe`、`powershell.exe` 均正常，
+故 runner 本身是好的，限制属于 MSYS 运行时。
+
+拒绝才是诚实的答案，而不是保守的答案：一个每条命令都在 `main` 之前死掉的 shell，会被
+报告成「跑在某个边界内」，而那个边界从未真正拦住任何命令。
+
+**win_bash 是首选 shell，不是唯一 shell。** 它服务不了某个会话时，就退到该平台的原生
+shell 工具：受限会话里的 pwsh 会被保留在工具面上（见 `src/pwsh-replacement.ts`），
+每一条拒绝与失败信息也都会指明这个去处，避免模型反复重试一个不会恢复的 shell。
 
 本工具不提供单次调用提权参数。
 

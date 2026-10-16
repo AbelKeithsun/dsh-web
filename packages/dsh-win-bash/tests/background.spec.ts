@@ -402,47 +402,35 @@ describe('background refusal and cancellation', () => {
   })
 })
 
-describe('a confined background command', () => {
-  it('operator on a restricted session sees the background process started through the confinement provider', async () => {
-    // Given a session under a restricted mode and a confinement provider,
-    const confined: string[][] = []
-    const sandbox = {
-      confine: async (argv: readonly string[]) => {
-        confined.push([...argv])
-        return {
-          argv: ['C:/runner.exe', '--profile', ...argv],
-          enforcement: 'full' as const,
-          denialSignatures: ['access is denied'],
-          runnerFailureRules: [],
-        }
-      },
-    }
-    const { registry } = fakeRegistry()
-    const subprocess = fakeSubprocess()
-    // When the model runs one command in the background,
-    const { value, error } = await runBackground(
-      { jobs: registry, subprocess: subprocess.runtime, sandbox, mode: 'read-only' },
-    )
-    // Then the confinement step saw the payload argv and the process was
-    // spawned with the CONFINED argv, so the job runs inside the same boundary
-    // as a foreground call rather than beside it.
-    expect(error).toBeUndefined()
-    expect(confined).toEqual([['C:/payload/bash.exe', '--norc', '--noprofile', '-s']])
-    expect(subprocess.spawns[0].spec.argv[0]).toBe('C:/runner.exe')
-    expect(value?.sandbox).toMatchObject({ mode: 'read-only', denied: false })
-  })
-
-  it('operator on a restricted session with no confinement provider is refused before any process starts', async () => {
-    // Given a session under a restricted mode and no confinement provider,
-    const { registry } = fakeRegistry()
+describe('a background command in a restricted session', () => {
+  it('operator on a restricted session is refused before any process starts', async () => {
+    // Given a session under a restricted mode and a working job registry,
+    const { registry, registrations } = fakeRegistry()
     const subprocess = fakeSubprocess()
     // When the model runs one command in the background,
     const { error } = await runBackground(
+      { jobs: registry, subprocess: subprocess.runtime, mode: 'read-only' },
+    )
+    // Then the refusal names the unsupported mode, and nothing was spawned and
+    // no job was registered: the mode is refused, never silently confined or
+    // silently run unconfined.
+    expect(error).toContain('SANDBOX_UNSUPPORTED')
+    expect(error).toContain('read-only')
+    expect(subprocess.spawns).toEqual([])
+    expect(registrations).toEqual([])
+  })
+
+  it('operator on a workspace-write session is refused by the same rule', async () => {
+    // Given a session in the other restricted mode,
+    const { registry } = fakeRegistry()
+    const subprocess = fakeSubprocess()
+    // When a background command is asked for,
+    const { error } = await runBackground(
       { jobs: registry, subprocess: subprocess.runtime, mode: 'workspace-write' },
     )
-    // Then the refusal is the same SANDBOX_UNAVAILABLE one the foreground call
-    // raises, and nothing was spawned and nothing registered.
-    expect(error).toContain('SANDBOX_UNAVAILABLE')
+    // Then it is refused for the same measured reason, not a different one.
+    expect(error).toContain('SANDBOX_UNSUPPORTED')
+    expect(error).toContain('0xC0000022')
     expect(subprocess.spawns).toEqual([])
   })
 })

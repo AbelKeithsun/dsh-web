@@ -61,7 +61,7 @@ export const TEMP_ENV_KEYS = ['TMPDIR', 'TMP', 'TEMP'] as const
  * every background job — is built from this one function so the two can never
  * drift into different shells.
  * @param runtime - the verified payload paths.
- * @returns the argv to spawn, or to hand to the confinement provider.
+ * @returns the argv to spawn.
  */
 export function shellArgv(runtime: { bash: string }): string[] {
   return [runtime.bash, '--norc', '--noprofile', '-s']
@@ -134,6 +134,17 @@ export interface ShellResult {
   readonly frameOverflow: boolean
 }
 
+/**
+ * The fallback every failure here points at.
+ *
+ * win_bash is the PREFERRED shell on Windows, not the only one: whenever it
+ * cannot serve a call the native shell tool takes over, and a failure that did
+ * not say so would leave the model retrying a shell that is not coming back
+ * instead of switching to the one that works.
+ */
+export const NATIVE_FALLBACK_HINT = ' Use the host pwsh tool instead: it is the native shell for this platform'
+  + ' and remains available whenever win_bash cannot serve a call.'
+
 /** Failure raised when the shell cannot serve a call. */
 export class ShellUnavailableError extends Error {
   /** Stable machine-readable reason. */
@@ -179,21 +190,6 @@ interface ShellCursor {
   stdout: number
   /** Bytes of stderr already consumed by earlier calls. */
   stderr: number
-}
-
-/**
- * How one {@link ShellRegistry.run} call starts a shell it does not have yet.
- *
- * `argv` is supplied by the caller because confinement is a per-call decision
- * made outside this registry: under a restricted session mode the sandbox
- * provider wraps the exact argv about to be spawned, and a registry that
- * spawned the payload's own argv anyway would run every command outside the
- * boundary the user selected. Omitted starts the payload's unconfined shell,
- * which is the correct shape for danger-full-access.
- */
-export interface ShellLaunch {
-  /** The executable and arguments to spawn; defaults to the payload's own bash. */
-  readonly argv?: readonly string[]
 }
 
 /** Budgets and deadline for one {@link ShellRegistry.run} call. */
@@ -348,8 +344,6 @@ export class ShellRegistry {
    * @param cwd - the session workspace a newly started shell begins in.
    * @param command - the command to run.
    * @param budget - output budgets and the call deadline.
-   * @param launch - the argv a shell started by this call must use (the
-   *   confined argv under a restricted mode).
    * @returns the command's complete result.
    */
   async run(
@@ -358,9 +352,8 @@ export class ShellRegistry {
     cwd: string,
     command: string,
     budget: RunBudget,
-    launch: ShellLaunch = {},
   ): Promise<ShellResult> {
-    const shell = await this.ensure(owner, runtime, cwd, budget.signal, launch.argv)
+    const shell = await this.ensure(owner, runtime, cwd, budget.signal)
     const marker = markerFor(randomUUID())
     const stdout = new StreamTail('stdout', shell.cursor.stdout)
     const stderr = new StreamTail('stderr', shell.cursor.stderr)
@@ -456,7 +449,6 @@ export class ShellRegistry {
    * @param runtime - absolute shell and payload paths.
    * @param cwd - the session workspace a new shell starts in.
    * @param signal - cancellation while the shell starts.
-   * @param argv - the argv to spawn; omitted uses the payload's own bash.
    * @returns the live shell record.
    */
   private async ensure(
@@ -464,13 +456,12 @@ export class ShellRegistry {
     runtime: { bash: string, bin: string },
     cwd: string,
     signal?: AbortSignal,
-    argv?: readonly string[],
   ): Promise<LiveShell> {
     const existing = this.shells.get(owner)
     if (existing !== undefined && !existing.exited) return existing
     if (existing !== undefined) this.shells.delete(owner)
     const handle = this.subprocess.spawn({
-      argv: argv === undefined ? shellArgv(runtime) : [...argv],
+      argv: shellArgv(runtime),
       cwd,
       stdio: {
         stdin: 'pipe',
@@ -502,7 +493,12 @@ export class ShellRegistry {
     shell.handle.stdin?.write(buildFrame('printf %s "$BASH_VERSION"', marker))
     const deadline = this.now() + HANDSHAKE_TIMEOUT_MS
     for (;;) {
-      if (shell.exited) throw new ShellUnavailableError('shell-exited', 'The vendored bash exited during startup.')
+      if (shell.exited) {
+        throw new ShellUnavailableError(
+          'shell-exited',
+          'The vendored bash exited during startup, so win_bash cannot run commands in this session.' + NATIVE_FALLBACK_HINT,
+        )
+      }
       if (signal?.aborted === true) {
         throw new ShellUnavailableError('aborted', 'The win_bash call was aborted while the persistent shell was starting.')
       }
@@ -512,7 +508,7 @@ export class ShellRegistry {
         if (outcome.exitCode !== 0 || !/^\d+(\.\d+)?/.test(outcome.stdout)) {
           throw new ShellUnavailableError(
             'handshake-failed',
-            'The vendored bash did not report a version (exit ' + outcome.exitCode.toString() + ').',
+            'The vendored bash did not report a version (exit ' + outcome.exitCode.toString() + ').' + NATIVE_FALLBACK_HINT,
           )
         }
         // The handshake's own bytes are consumed here too: the first real
@@ -521,7 +517,10 @@ export class ShellRegistry {
         return
       }
       if (this.now() > deadline) {
-        throw new ShellUnavailableError('handshake-timeout', 'The vendored bash did not answer its startup handshake in time.')
+        throw new ShellUnavailableError(
+          'handshake-timeout',
+          'The vendored bash did not answer its startup handshake in time.' + NATIVE_FALLBACK_HINT,
+        )
       }
       await new Promise<void>(resolve => { setTimeout(resolve, POLL_INTERVAL_MS) })
     }

@@ -61,6 +61,7 @@ export const DEFAULT_DESCRIPTION = [
   'Long output is kept as its TAIL and the result says it was truncated, naming the file holding the complete stream when one exists.',
   'Set run_in_background to start the command in its own process and return a job id at once: collect that job with job_output and stop it with job_kill.',
   'Use this instead of PowerShell when the command is bash or Unix syntax (pipes, $VAR, globs, single quotes, here-documents).',
+  'It runs only in a danger-full-access session: in a restricted session it refuses the call rather than confining the shell, because the pinned MSYS2 bash cannot start under a restricted token. Use the host bash/pwsh tools there.',
 ].join(' ')
 
 /**

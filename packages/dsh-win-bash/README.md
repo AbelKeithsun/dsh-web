@@ -148,8 +148,8 @@ so a POSIX profile can carry the same composition without mounting anything.
 The result carries `stdout`, `stderr`, the command's `exitCode`, the
 truncation facts for both streams (`stdoutTruncated`, `stderrTruncated`,
 `stdoutLostHead`, `stderrLostHead`, `frameOverflow`, and the
-`stdoutSpillPath`/`stderrSpillPath` files holding a complete stream), and the
-sandbox facts for the call.
+`stdoutSpillPath`/`stderrSpillPath` files holding a complete stream), and
+`jobId` when the call started a background job.
 
 When a stream was cut, the model-facing text ends with a line such as:
 
@@ -178,10 +178,9 @@ therefore owns its own process and outlives the call that started it.
 - **Same environment contract.** `PATH` with the payload's `usr/bin` first,
   `MSYSTEM=MSYS`, `TERM=dumb`, `--norc --noprofile`, and `TMPDIR`/`TMP`/`TEMP`
   pointing at a private directory owned by that job.
-- **Same confinement.** Under a restricted mode the process is started through
-  the sandbox provider's `confine` step exactly as a foreground call is, and a
-  composition with no usable provider is refused with the same
-  `SANDBOX_UNAVAILABLE` error rather than run unconfined.
+- **Same mode rule.** A restricted session is refused with the same
+  `SANDBOX_UNSUPPORTED` error a foreground call raises, before any process is
+  started and before any job is registered.
 - **No timeout.** The call returns as soon as the job is registered; the
   command's own lifetime is bounded by `job_kill` and by the session ending.
 - **No silent downgrade.** On a deployment that composes no job registry the
@@ -191,11 +190,31 @@ therefore owns its own process and outlives the call that started it.
 
 ## Permissions
 
-The tool resolves the session's effective sandbox policy from the same
-sandbox-policy service the host's own enforcing families use. Under a
-confined mode the shell's argv goes through the sandbox provider's `confine` step
-before it is spawned, and a composition that reports a confined mode without
-a usable provider is refused rather than quietly run unconfined.
+The tool resolves the calling session's effective sandbox policy from the same
+sandbox-policy service the host's own enforcing families use, and it resolves it
+FOR THAT SESSION — a session's own mode outranks the deployment default, so a
+session the user restricted cannot reach this shell through the default.
+
+**This tool runs only under `danger-full-access`.** Any other mode is refused
+with `SANDBOX_UNSUPPORTED`, before a process is spawned: the pinned MSYS2 bash
+cannot start under a restricted token, so confinement cannot produce a working
+shell here. Measured on win32 x64 (Windows 10.0.26200) against the real
+restricted-token runner: `bash.exe`, `sh.exe`, `dash.exe` and `echo.exe` all die
+before `main` with
+
+```text
+NtCreateDirectoryObject(\BaseNamedObjects\msys-2.0S5-<hash>): 0xC0000022
+```
+
+(exit 3221225794 / 0xC0000142), and system Git for Windows fails identically
+(`couldn't create signal pipe, Win32 error 5`). `cmd.exe`, `node.exe` and
+`powershell.exe` run confined on that same runner, so the runner is sound and the
+limitation belongs to the MSYS runtime.
+
+Refusing is the honest answer, not the cautious one: a shell whose every command
+dies before `main` would still be reported as running inside a boundary that
+never actually held a command. The refusal names the host's `bash`/`pwsh` tools,
+which ARE confined, so a restricted session keeps a route rather than losing one.
 
 This tool offers no per-call escalation argument.
 

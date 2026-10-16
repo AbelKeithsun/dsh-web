@@ -6,12 +6,10 @@
  * duplicate-registration failure or, worse, silently replace the host's tool.
  * This tool is additional capability, not a replacement.
  *
- * Permission resolution follows the host's enforcing families: the effective
- * sandbox policy comes from the sandbox-policy service for the calling
- * session, and a confined session's shell is spawned through the sandbox
- * provider's confine step so the payload never runs outside the boundary the
- * user selected. A composition that reports a confined mode without a usable
- * confinement provider is refused rather than quietly run unconfined.
+ * Permission: the sandbox-policy service is read for the CALLING SESSION, since
+ * a session's own mode log outranks the deployment default. A session in a
+ * restricted mode is refused outright rather than confined — see
+ * {@link assertUnconfined} for the measured reason.
  * @module @linxin666/dsh-win-bash/tool
  */
 
@@ -22,7 +20,7 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { JobRegistryLike } from './background.ts'
 import { BACKGROUND_STDERR_BYTES, BACKGROUND_STDOUT_BYTES, startBackgroundJob } from './background.ts'
 import type { WinBashConfig } from './config.ts'
-import { shellArgv, shellEnvironment, shellTempDir, type ShellRegistry, type ShellResult } from './shell.ts'
+import { shellArgv, shellEnvironment, shellTempDir, type ShellRegistry } from './shell.ts'
 
 /** The registered tool name. Deliberately not bash. */
 export const WIN_BASH_TOOL = 'win_bash'
@@ -30,65 +28,45 @@ export const WIN_BASH_TOOL = 'win_bash'
 /** Every sandbox mode a session may run under. */
 const SANDBOX_MODES: readonly SandboxMode[] = ['read-only', 'workspace-write', 'danger-full-access']
 
+/** The only mode this tool runs under; every other mode is refused. */
+const SUPPORTED_MODE: SandboxMode = 'danger-full-access'
+
 /** The policy read this tool consumes from the sandbox-policy service. */
 interface PolicyResolver {
   resolve(request?: { session?: unknown, mode?: SandboxMode }): SandboxExecutionPolicy
 }
 
-/** One runner-failure rule, structurally mirroring the sandbox seam's shape. */
-interface RunnerFailureRuleLike {
-  allowedExitCodes?: readonly number[]
-  fatalSignatures: readonly string[]
-  informationalLines?: readonly string[]
-}
-
-/** The confinement result this tool consumes, structurally. */
-interface ConfinedArgvLike {
-  argv: string[]
-  enforcement: 'full' | 'partial'
-  denialSignatures: readonly string[]
-  runnerFailureRules: readonly RunnerFailureRuleLike[]
-}
-
-/** The confine read this tool consumes from the sandbox service. */
-interface ConfinerLike {
-  confine(argv: readonly string[], policy: SandboxExecutionPolicy, signal?: AbortSignal): Promise<ConfinedArgvLike>
-}
-
 /**
- * Resolve the argv a shell for this call must be spawned with.
+ * Refuse every session mode but danger-full-access.
  *
- * A restricted session's command may only run inside the boundary the user
- * selected, so the payload's argv goes through the provider's confine step and
- * the CONFINED argv is what gets spawned — for the foreground shell and for a
- * background job alike. A composition that reports a confined mode with no
- * usable provider is refused by the caller rather than run unconfined, so this
- * function is only ever reached with a provider present.
- * @param confiner - the session's sandbox provider, absent under danger-full-access.
- * @param policy - the effective policy.
- * @param argv - the unconfined argv about to be spawned.
- * @param signal - the call's cancellation.
- * @returns the argv to spawn and the confinement it was wrapped with.
- * @throws when the provider's answer is unusable.
+ * WHY REFUSAL RATHER THAN CONFINEMENT. A restricted session would have to spawn
+ * this payload through the sandbox provider's confine step, and the pinned MSYS2
+ * bash cannot start that way. Measured on win32 x64 (Windows 10.0.26200) against
+ * the real restricted-token runner: bash.exe, sh.exe, dash.exe and echo.exe all
+ * die BEFORE main with
+ *   NtCreateDirectoryObject(\BaseNamedObjects\msys-2.0S5-<hash>): 0xC0000022
+ * (exit 3221225794 / 0xC0000142), and system Git for Windows fails identically
+ * ('couldn't create signal pipe, Win32 error 5'). cmd.exe, node.exe and
+ * powershell.exe run confined on that same runner, so the runner is sound and
+ * the limitation belongs to the MSYS runtime.
+ *
+ * So confinement here cannot produce a working shell, and a shell whose every
+ * command dies before main is worse than an honest refusal: it would report a
+ * boundary that never actually held any command. The refusal names the other
+ * shells, which ARE confined, so the caller is not left without a route.
+ * @param policy - the session's effective policy.
+ * @throws when the session runs under any other mode.
  */
-async function confineArgv(
-  confiner: ConfinerLike | undefined,
-  policy: SandboxExecutionPolicy,
-  argv: readonly string[],
-  signal: AbortSignal | undefined,
-): Promise<{ argv: readonly string[], confinement: ConfinedArgvLike | undefined }> {
-  if (policy.mode === 'danger-full-access') return { argv, confinement: undefined }
-  if (confiner === undefined || typeof confiner.confine !== 'function') {
-    throw new Error(
-      'SANDBOX_UNAVAILABLE: the session runs under a confined mode and the deployment serves no confinement provider, '
-      + 'so win_bash will not start an unconfined shell. Ask the user to switch this session to danger-full-access, or load the sandbox provider.',
-    )
-  }
-  const confinement = await confiner.confine(argv, policy, signal)
-  if (!['full', 'partial'].includes(confinement.enforcement) || confinement.argv.length === 0) {
-    throw new Error('SANDBOX_UNAVAILABLE: the confinement provider returned an unusable result, so no shell was started.')
-  }
-  return { argv: confinement.argv, confinement }
+function assertUnconfined(policy: SandboxExecutionPolicy): void {
+  if (policy.mode === SUPPORTED_MODE) return
+  throw new Error(
+    'SANDBOX_UNSUPPORTED: win_bash runs only under ' + SUPPORTED_MODE + ', and this session is in ' + policy.mode
+    + ' mode. The pinned MSYS2 bash cannot start under a restricted token (it dies before main with'
+    + ' NtCreateDirectoryObject 0xC0000022), so no bash command can run inside that boundary.'
+    + ' Run the command with the host pwsh tool instead: it is the native shell for this platform, it IS confined, and it'
+    + ' stays on this session surface whenever win_bash cannot serve the session. win_bash is the preferred shell, not the'
+    + ' only one. Switching this session to ' + SUPPORTED_MODE + ' brings win_bash back.',
+  )
 }
 
 /** One agent session's working directory, read structurally. */
@@ -133,51 +111,6 @@ export function clampTimeout(requested: number | undefined, configured: number):
   return Math.min(requested, configured)
 }
 
-/** How one settled run classifies against its confinement. */
-interface SandboxFacts {
-  mode: SandboxMode
-  denied: boolean
-  enforcement?: 'full' | 'partial'
-  runnerFailed?: boolean
-}
-
-/**
- * Classify a settled run against the confinement it ran under.
- *
- * Runner failure and policy denial are different facts (the seam keeps them
- * apart for exactly this reason): a runner that failed proves the command
- * never ran, while a denial proves confinement worked and blocked it. Neither
- * may be reported as an ordinary non-zero exit.
- * @param result - the settled shell result.
- * @param policy - the policy the run was resolved under.
- * @param confinement - the confine result, when one was used.
- * @returns the sandbox facts recorded on the tool output.
- */
-export function classifySandbox(
-  result: ShellResult,
-  policy: SandboxExecutionPolicy,
-  confinement: ConfinedArgvLike | undefined,
-): SandboxFacts {
-  if (policy.mode === 'danger-full-access' || confinement === undefined) {
-    return { mode: policy.mode, denied: false }
-  }
-  const text = (result.stderr + '\n' + result.stdout).toLowerCase()
-  const runnerFailed = result.exitCode !== 0 && confinement.runnerFailureRules.some(rule => {
-    if (rule.allowedExitCodes !== undefined && !rule.allowedExitCodes.includes(result.exitCode)) return false
-    const lines = result.stderr.split(/\r?\n/)
-      .filter(line => !(rule.informationalLines ?? []).includes(line))
-    return lines.some(line => rule.fatalSignatures.some(sig => line.toLowerCase().includes(sig.toLowerCase())))
-  })
-  const denied = !runnerFailed && result.exitCode !== 0
-    && confinement.denialSignatures.some(sig => text.includes(sig.toLowerCase()))
-  return {
-    mode: policy.mode,
-    denied,
-    enforcement: confinement.enforcement,
-    ...(runnerFailed ? { runnerFailed: true } : {}),
-  }
-}
-
 /** The truncation facts a rendered result reports to the model. */
 export interface RenderFacts {
   /** Visible stdout, already cut to its byte budget. */
@@ -186,8 +119,6 @@ export interface RenderFacts {
   stderr: string
   /** The command's exit status. */
   exitCode: number
-  /** Sandbox classification for the call. */
-  sandbox?: { mode: string, denied: boolean, runnerFailed?: boolean }
   /** True when visible stdout hit its byte budget. */
   stdoutTruncated?: boolean
   /** True when visible stderr hit its byte budget. */
@@ -249,9 +180,9 @@ export function renderResult(value: RenderFacts): string {
   }
   if (body === '') body = '(no output)'
   const parts = [body]
-  // The truncation notices come FIRST, before the sandbox and exit lines: a
-  // model that reads only the head of a long result still learns that the
-  // output was cut, which is the one fact it cannot recover from the text.
+  // The truncation notices come FIRST, before the exit line: a model that reads
+  // only the head of a long result still learns that the output was cut, which
+  // is the one fact it cannot recover from the text.
   const outNotice = truncationNotice('stdout', value.stdout, {
     truncated: value.stdoutTruncated === true,
     lostHead: value.stdoutLostHead === true,
@@ -264,11 +195,6 @@ export function renderResult(value: RenderFacts): string {
     overflow: false,
   }, value.stderrSpillPath)
   if (errNotice !== undefined) parts.push(errNotice)
-  if (value.sandbox?.runnerFailed === true) {
-    parts.push('[sandbox: the confinement runner failed under ' + value.sandbox.mode + ' mode, so the command did not run]')
-  } else if (value.sandbox?.denied === true) {
-    parts.push('[sandbox: the command was denied a file effect under ' + value.sandbox.mode + ' mode]')
-  }
   if (value.exitCode !== 0) parts.push('[exit code: ' + value.exitCode.toString() + ']')
   return parts.join('\n')
 }
@@ -293,11 +219,22 @@ export function readJobRegistry(ctx: Context): JobRegistryLike | undefined {
   return candidate as JobRegistryLike
 }
 
-/** The session's effective policy, or undefined when the service is absent. */
-function resolvePolicy(ctx: Context): SandboxExecutionPolicy | undefined {
+/**
+ * The calling session's effective policy, or undefined when the service is absent.
+ *
+ * The SESSION goes into the request on purpose: the service resolves a session's
+ * own mode log before the deployment default, so a read without it answers for
+ * the deployment and would let a session the user restricted run here.
+ * @param ctx - the plugin context.
+ * @param agent - the calling agent, carrying the session whose mode applies.
+ * @returns the policy, or undefined when no service is composed.
+ * @throws when the service answers with a policy this tool cannot read.
+ */
+function resolvePolicy(ctx: Context, agent: unknown): SandboxExecutionPolicy | undefined {
   const service = ctx.get('sandboxPolicy') as PolicyResolver | undefined
   if (service === undefined || typeof service.resolve !== 'function') return undefined
-  const policy = service.resolve({ session: undefined })
+  const session = (agent as { session?: unknown } | undefined)?.session
+  const policy = service.resolve(session === undefined ? {} : { session })
   if (!SANDBOX_MODES.includes(policy.mode) || typeof policy.workspaceRoot !== 'string') {
     throw new Error('win_bash: the sandbox policy service returned an invalid policy; no command was started.')
   }
@@ -306,7 +243,7 @@ function resolvePolicy(ctx: Context): SandboxExecutionPolicy | undefined {
 
 /**
  * Build the win_bash tool bound to one payload and one shell registry.
- * @param ctx - host context carrying the optional sandbox services.
+ * @param ctx - host context carrying the optional sandbox and job services.
  * @param config - the resolved plugin configuration.
  * @param runtime - absolute shell and payload paths.
  * @param shells - the registry owning this plugin instance's shells.
@@ -373,16 +310,6 @@ export function buildWinBashTool(
           stdoutSpillPath: { type: 'string' },
           stderrSpillPath: { type: 'string' },
           jobId: { type: 'string' },
-          sandbox: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              mode: { type: 'string', required: true },
-              denied: { type: 'boolean', required: true },
-              enforcement: { type: 'string' },
-              runnerFailed: { type: 'boolean' },
-            },
-          },
         },
       },
       render: (_args, value) => [{
@@ -402,17 +329,21 @@ export function buildWinBashTool(
       if (cwd === undefined) {
         throw new Error('win_bash needs a calling session with a working directory.')
       }
-      const policy = resolvePolicy(ctx)
+      const policy = resolvePolicy(ctx, agent)
       if (policy === undefined) {
         throw new Error(
-          'win_bash: the deployment serves no sandbox policy service, so this command has no authoritative permission mode and will not run.',
+          'win_bash: the deployment serves no sandbox policy service, so this command has no authoritative permission mode'
+          + ' and will not run. Use the host pwsh tool instead: it is the native shell for this platform and remains available'
+          + ' whenever win_bash cannot serve a call.',
         )
       }
+      // Before anything is spawned or registered: a restricted session is told
+      // so, rather than handed a shell that dies before running its command.
+      assertUnconfined(policy)
       const timeoutMs = clampTimeout(args.timeoutMs, config.timeoutMs)
       const command = args.workdir === undefined || args.workdir === ''
         ? args.command
         : 'cd ' + shellQuote(normalizeWorkdir(args.workdir)) + ' && ' + args.command
-      const confiner = ctx.get('sandbox') as ConfinerLike | undefined
 
       // A background job owns its own pinned process. It must be refused
       // BEFORE any decision to run it in the foreground: silently running the
@@ -430,48 +361,32 @@ export function buildWinBashTool(
         if (registry === undefined) {
           throw new Error(
             'BACKGROUND_UNAVAILABLE: this deployment composes no background job registry (ctx.jobs), so win_bash cannot'
-            + ' register a background command. This call was not run in the foreground instead. Ask the user to load'
-            + ' @deepseek-ai/dsh-jobs and @deepseek-ai/dsh-tool-jobs, or run this command without run_in_background.',
+            + ' register a background command. This call was not run in the foreground instead. Run it without'
+            + ' run_in_background, or start it in the background with the host pwsh tool, which is the native shell for'
+            + ' this platform and stays available whenever win_bash cannot serve a call.',
           )
         }
-        const confined = await confineArgv(confiner, policy, shellArgv(runtime), exec.signal)
         const jobId = startBackgroundJob({
           subprocess: ctx.subprocess,
           jobs: registry,
           owner: agent.id,
           script: command,
-          argv: confined.argv,
+          argv: shellArgv(runtime),
           cwd,
           env: shellEnvironment(runtime, shellTempDir()),
           label: args.command,
           stdoutBytes: BACKGROUND_STDOUT_BYTES,
           stderrBytes: BACKGROUND_STDERR_BYTES,
         })
-        return {
-          stdout: '',
-          stderr: '',
-          exitCode: 0,
-          jobId,
-          sandbox: { mode: policy.mode, denied: false },
-        }
+        return { stdout: '', stderr: '', exitCode: 0, jobId }
       }
-
-      const confined = await confineArgv(confiner, policy, shellArgv(runtime), exec.signal)
 
       const result = await shells.run(agent, runtime, cwd, command, {
         stdoutBytes: config.maxStdoutBytes,
         stderrBytes: config.maxStderrBytes,
         timeoutMs,
         signal: exec.signal,
-      }, { argv: confined.argv })
-      const sandbox = classifySandbox(result, policy, confined.confinement)
-      if (sandbox.runnerFailed === true) {
-        throw new Error(
-          'EXECUTOR_UNAVAILABLE: the DSH confinement runner failed under ' + policy.mode
-          + ' mode, so the command did not run. This is a sandbox problem, neither a user denial nor a command failure; '
-          + 'do not retry the same command and do not attempt to bypass confinement.',
-        )
-      }
+      })
       return {
         stdout: result.stdout,
         stderr: result.stderr,
@@ -483,7 +398,6 @@ export function buildWinBashTool(
         frameOverflow: result.frameOverflow,
         ...(result.stdoutSpillPath === undefined ? {} : { stdoutSpillPath: result.stdoutSpillPath }),
         ...(result.stderrSpillPath === undefined ? {} : { stderrSpillPath: result.stderrSpillPath }),
-        sandbox: { mode: sandbox.mode, denied: sandbox.denied, ...(sandbox.enforcement === undefined ? {} : { enforcement: sandbox.enforcement }) },
       }
     },
     presentCall: (args) => args.run_in_background === true

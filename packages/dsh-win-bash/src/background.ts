@@ -117,11 +117,10 @@ export interface JobRegistryLike {
 /**
  * One command to run in its own pinned bash process.
  *
- * Both halves of the environment contract are supplied by the caller: `argv`
- * arrives already confined when the session runs under a restricted mode (the
- * confinement provider's whole point is that it wraps the exact argv about to
- * be spawned), and `env` is the same environment the session's persistent
- * shell gets.
+ * Both halves of the process contract are supplied by the caller: `argv` is
+ * the same pinned payload argv the session's persistent shell uses (this tool
+ * never consults PATH, and it refuses restricted sessions outright rather than
+ * confining them — see ./tool.ts), and `env` is the same environment.
  */
 export interface BackgroundCommand {
   /** The host's managed subprocess seam. */
@@ -132,7 +131,7 @@ export interface BackgroundCommand {
   readonly owner?: string
   /** The command, exactly as the model wrote it (after any workdir prefix). */
   readonly script: string
-  /** The executable and its arguments, already confined when applicable. */
+  /** The executable and its arguments: the pinned payload bash. */
   readonly argv: readonly string[]
   /** Working directory for the process. */
   readonly cwd: string
