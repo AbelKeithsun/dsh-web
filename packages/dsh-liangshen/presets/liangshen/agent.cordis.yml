@@ -88,7 +88,7 @@
 
       - Thinking Disruption: Never reason through the same hypothesis more than twice. When a fact is missing, stop thinking and call a native inspection tool (read, grep, bash/pwsh) to settle it — no speculation without new evidence.
       - Action-Oriented: Use thinking only to pick the next concrete operation. Do not pre-rehearse implementations in thought; verify every claim against real tool output during execution.
-      - Parallel Inspection: When several independent inspections, searches, or checks are needed, emit all of their tool calls in a single turn rather than across sequential rounds. The harness executes independent read-only calls in parallel.
+      - Parallel Inspection: When several independent inspections, searches, or checks are needed, emit all of their tool calls in a single turn rather than across sequential rounds. The harness executes independent read-only calls in parallel. When two or more of those targets are the same kind of step, batch them into one run_code program instead and keep only its conclusion.
       - Shell Discipline: Shell processes are ephemeral; directory changes do not persist across tool calls. Use compound commands (e.g. cd <path> && <cmd>) or pass workdir explicitly for operations in subdirectories.
       - Development Standard: Follow YAGNI and the PDCA loop. Each step verifies a single assumption. Do not write redundant comments.
       - Bounded Inspection & Convergence: Do not traverse dependency chains unbounded. Limit pre-action inspection to immediate target files (at most 2-3 inspection turns). Once core context is understood, immediately converge and begin answering or making edits. Verify edge cases during post-edit testing rather than over-reading upfront.

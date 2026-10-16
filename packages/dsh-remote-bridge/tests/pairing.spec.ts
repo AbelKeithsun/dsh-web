@@ -154,13 +154,19 @@ describe('pairing: bootstrap tokens, nonces and the device roster', () => {
     const roster = new DeviceRoster({ file })
     await roster.enroll(p256().spki)
     // When the file and its directory are inspected
-    const fileMode = (await stat(file)).mode & 0o777
-    const directoryMode = (await stat(dirname(file))).mode & 0o777
     const entries = await readdir(dirname(file))
-    // Then the file is 0600 inside a 0700 directory, and the temporary file was renamed away
-    expect(fileMode).toBe(0o600)
-    expect(directoryMode).toBe(0o700)
+    // Then the temporary file was renamed away
     expect(entries).toEqual(['devices.json'])
+    // POSIX privacy bits: on win32 stat.mode cannot observe them (Node maps
+    // chmod onto the read-only attribute alone), so the 0600/0700 assertion
+    // only runs where permission bits exist.
+    if (process.platform !== 'win32') {
+      const fileMode = (await stat(file)).mode & 0o777
+      const directoryMode = (await stat(dirname(file))).mode & 0o777
+      // Then the file is 0600 inside a 0700 directory
+      expect(fileMode).toBe(0o600)
+      expect(directoryMode).toBe(0o700)
+    }
   })
 
   it('operator finds a corrupt roster and it is moved aside instead of being emptied', async () => {

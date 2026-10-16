@@ -1373,6 +1373,9 @@ importers:
       '@linxin666/dsh-usage':
         specifier: workspace:*
         version: link:../dsh-usage
+      '@linxin666/dsh-win-bash':
+        specifier: workspace:*
+        version: link:../dsh-win-bash
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.4
@@ -1504,6 +1507,39 @@ importers:
       vitest:
         specifier: ^4.1.1
         version: 4.1.11(@types/node@22.20.4)(@vitest/coverage-v8@4.1.11)(jsdom@26.1.0(supports-color@7.2.0))(yaml@2.9.1)
+
+  packages/dsh-win-bash:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: ^4.0.4
+        version: 4.0.4(@deepseek-ai/cordis-plugin-loader@1.0.5)
+      '@deepseek-ai/dsh-agent':
+        specifier: ^0.2.0-rc.2
+        version: 0.2.0-rc.2(1f5b3eaff720545de683c70681c937f6)
+      '@deepseek-ai/dsh-sandbox':
+        specifier: ^0.2.0-rc.2
+        version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-llm@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-session@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-scope@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.2.0-rc.2(@deepseek-ai/cordis@4.0.4))))
+      '@deepseek-ai/dsh-subprocess':
+        specifier: ^0.2.0-rc.2
+        version: 0.2.0-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-tools':
+        specifier: ^0.2.0-rc.2
+        version: 0.2.0-rc.2(e281582c3655c6eddd873bc3a767de16)
+      '@deepseek-ai/schemastery':
+        specifier: ^3.18.4
+        version: 3.18.4
+      '@types/node':
+        specifier: ^22.20.0
+        version: 22.20.4
+      tsdown:
+        specifier: 0.22.2
+        version: 0.22.2(@typescript/native-preview@7.0.0-dev.20260707.2)(typescript@5.7.3)
+      typescript:
+        specifier: ~5.7.2
+        version: 5.7.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.11(@types/node@22.20.4)(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1)(yaml@2.9.1)
 
   shared:
     devDependencies:

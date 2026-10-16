@@ -336,8 +336,12 @@ function parsePatchBlocks(patchPath, errors) {
         j++
       }
     }
-    // Top-level patch rows may carry scalar keys besides name/config (for
-    // example `disabled: true`); preserve them verbatim.
+    // Rows of both kinds may carry keys besides name/config — a patch row's
+    // scalar overrides (`disabled: true`), or an insert row's own row options
+    // (`disabled: !!js process.platform !== 'win32'`, the platform guard a
+    // host-only child ships). They are preserved verbatim, subtree included:
+    // a key whose value is a nested block must move as a whole, or the
+    // aggregate patch would carry a truncated mapping and fail to parse.
     while (j < significant.length) {
       const candidate = significant[j]
       const indent = candidate.text.length - candidate.text.trimStart().length
@@ -355,9 +359,16 @@ function parsePatchBlocks(patchPath, errors) {
           }
           continue
         }
-        if (block.kind === 'patch' && !/^name:/.test(payload)) {
+        if (!/^name:/.test(payload)) {
           block.extraLines.push(candidate.text)
           j++
+          while (j < significant.length) {
+            const nested = significant[j]
+            const nestedIndent = nested.text.length - nested.text.trimStart().length
+            if (nestedIndent <= subIndent) break
+            block.extraLines.push(nested.text)
+            j++
+          }
           continue
         }
       }
@@ -508,6 +519,13 @@ function renderPatch(blocks, externalRows, ownPatches, inactiveRows, retireRows,
           lines.push(`      name: '${AGGREGATE_SHELL_PACKAGE}/${shellSubpath(id)}'`)
           pushShellConfig(lines, row)
         }
+        // The child's own row options, verbatim and AFTER the name/config pair:
+        // a host-only child ships a platform guard this way
+        // (`disabled: !!js process.platform !== 'win32'`), and dropping it would
+        // mount that row on a host the package refuses. Emitting last keeps the
+        // "`name:` then `config:`" adjacency every row parser in this repository
+        // (and the settings surface's config-root contract) already relies on.
+        for (const extra of row.extraLines ?? []) lines.push(extra)
       }
     }
     for (const row of patchRows) {

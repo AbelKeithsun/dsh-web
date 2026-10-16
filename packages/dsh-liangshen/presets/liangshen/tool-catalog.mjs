@@ -10,7 +10,8 @@
  *   other tool is reached from inside the program through the generated SDK;
  * - `both` (default): the full native roster plus the `run_code` transport
  *   co-resident on the wire — native calls carry ordinary work, `run_code`
- *   covers programmatic batch computation and overlapped fan-out.
+ *   covers batch computation, overlapped fan-out, and the calls whose large
+ *   raw output only a conclusion is needed from.
  *
  * The declaration happens once per agent scope (agent.ctx.tools.presentAs) as
  * early as the scope exists — there is no turn-boundary staging: the retired
@@ -71,6 +72,11 @@
  * namespaces with their activation pointer. Under 'both' the catalog lists
  * `run_code` like any other tool and notes the programmatic-escape hatch; the
  * 'ptc' program contract only ships when the wire actually collapsed to it.
+ * A tool the catalog curates renders the hand-written line from
+ * {@link CURATED_TOOL_SUMMARIES}; only an uncurated tool falls back to the
+ * mechanical `descriptionMaxLength` truncation of its own schema description,
+ * because a character-count cut can slice off exactly the sentence that says
+ * what the tool is for.
  * The catalog republishes only when its content changes or the published copy
  * left the visible surface (compaction, resume).
  *
@@ -225,6 +231,112 @@ function validateRetiredAnchorTools(value) {
 }
 
 /**
+ * The batching pointer the SHELL tools carry when `run_code` is co-resident
+ * ('both'), appended to the curated line below.
+ *
+ * It lives in its own table rather than inside {@link CURATED_TOOL_SUMMARIES}
+ * because the curated table renders under EVERY presentation, and under
+ * `native` this deployment carries no program at all: a shell line that named
+ * `run_code` there would announce a transport the request does not open — the
+ * exact claim the declare-only-what-the-request-opens contract forbids, and a
+ * claim the native catalog tests already pin. Gating the suffix on the same
+ * flag that puts `run_code` on the wire keeps one fact in one place: the shell
+ * line points at a program exactly when a program exists.
+ *
+ * Kept inside the same one-line budget as the curated table, and countable for
+ * the same reason the contract's triggers are: a vague "for long outputs"
+ * leaves the boundary to the model's judgement.
+ */
+const CO_RESIDENT_SHELL_HINTS = new Map([
+  ['bash', ' 2+ commands or long output: `run_code`.'],
+  ['pwsh', ' 2+ commands or long output: `run_code`.'],
+])
+
+/**
+ * Curated one-line summaries, one per host builtin tool this preset can put on
+ * a wire. Each line says what the tool is FOR and names the arguments that
+ * decide how it is called, kept well inside {@link DEFAULT_DESCRIPTION_MAX_LENGTH}.
+ *
+ * PRECEDENCE: a tool named here renders THIS line; every other tool keeps the
+ * mechanical cap — its own schema description, whitespace collapsed and cut to
+ * `descriptionMaxLength`. Curation therefore wins over truncation and never
+ * replaces it: a tool the table does not name (a paged MCP namespace's tool, a
+ * plugin-registered tool, a tool the harness adds later) still reaches the
+ * model, just at whatever the cap leaves of its own description. A character
+ * count is a poor editor — it slices off the sentence that says what the tool
+ * is for — so the tools this session mounts on every request get a hand-written
+ * line instead.
+ *
+ * SCOPE: exactly the host builtins the preset's own `agent.cordis.yml` rows
+ * mount for a session, which is the surface the paging wildcard leaves resident
+ * (`pagedToolPatterns` defaults to `mcp__*`, so no host builtin is ever paged
+ * out):
+ * - the shell (one of bash / pwsh per platform), the filesystem and discovery
+ *   tools, the background-job controls, and the editor;
+ * - the prompt/skill surface, the todo list, the user question tool, and
+ *   `web_search` (the preset's own `tool-web` row configures `fetch: false`,
+ *   so the session opens the search tool alone);
+ * - the preset's own `tool_activate` and `fact_register`;
+ * - the READ-ONLY MCP resource tools, which the base composition mounts and
+ *   which are reachable whenever the deployment registers an MCP server — even
+ *   though a configured `mcp__*` server's tools are the ones paging withholds.
+ *
+ * Three names a reader might expect are deliberately ABSENT, because this
+ * composition mounts no row that registers them and curating them would write a
+ * catalog line for a tool surface the request never opens — exactly the claim
+ * the declare-exactly-what-the-request-opens contract forbids:
+ * - `present`: only the builtin Standard / PTC / Cordis compositions mount the
+ *   `@deepseek-ai/dsh-tool-present` row, and the web app disables the host one;
+ * - `web_fetch`: the per-session `tool-web` row below sets `fetch: false`,
+ *   so this session opens `web_search` alone;
+ * - `workflow`: the delegation group ships that row `disabled: true` so no
+ *   second model-authored orchestration surface sits beside `run_code`.
+ * The goal tools and `exit_plan_mode` ARE here, because the `tool-goal` and
+ * `plan-mode` rows below mount them.
+ *
+ * Adding a tool the preset mounts is the one edit an entry needs, and no test
+ * pins the exact text of any line: an operator reword is not a behavior change.
+ * That is why the table is exported — a test can prove every key is a tool name
+ * and every value is a single bounded line, without freezing the prose.
+ */
+
+export const CURATED_TOOL_SUMMARIES = new Map([
+  ['run_code', 'Execute a TypeScript program (`code`, `description`) reaching tools as `await tools.<name>(args)`; use it for two or more independent targets, or one large output needed only as a conclusion.'],
+  ['bash', 'Run a command in a fresh bash shell (`command`, optional `timeoutMs`, `workdir`, `run_in_background`).'],
+  ['pwsh', 'Run a command in a fresh PowerShell process (`command`, optional `timeoutMs`, `workdir`, `run_in_background`); native Windows paths and `$env:NAME` variables.'],
+  ['read', 'Read one UTF-8 text file as line-numbered content (`file_path`, optional `offset` and `limit`).'],
+  ['read_image', 'Read a PNG/JPEG/WebP/GIF image file and return the image itself (`file_path`); large images are downscaled automatically.'],
+  ['write', 'Create or fully replace one UTF-8 text file (`file_path`, `content`).'],
+  ['edit', 'Replace literal text in one existing file (`file_path`, `old_string`, `new_string`, optional `replace_all`).'],
+  ['str_replace_editor', 'View, create, and edit files through one command tool (`command`, `path`, plus `file_text`, `old_str` / `new_str`, `insert_line`, `view_range`).'],
+  ['glob', 'Find files whose paths match a glob pattern (`pattern`, optional `path`); up to 100 paths in modification-time order.'],
+  ['grep', 'Search file contents with a ripgrep expression (`pattern`, optional `path`, optional `include`); matching lines with line numbers.'],
+  ['job_output', 'Read a background job: output since the previous read, or the finished result (`job_id`, optional `wait`, `timeout_ms`).'],
+  ['job_list', 'List the background jobs started by this session with their ids, kinds, and statuses.'],
+  ['job_kill', 'Request cancellation of a running background job (`job_id`, optional `reason`).'],
+  ['todo_write', 'Record and update the plan as one todo per concrete step (`todos`: content and status); skip it for trivial single-step work.'],
+  ['create_goal', 'Create a persisted goal that keeps this session working across automatic continuation rounds (`objective`, optional `max_goal_rounds`).'],
+  ['get_goal', 'Read the current session goal, including the id and revision that update_goal requires.'],
+  ['update_goal', 'Change one goal: edit, pause, resume, complete or blocked (`goal_id`, `revision`, `action`, plus `objective`, `max_goal_rounds`, `blocked_reason`).'],
+  ['exit_plan_mode', 'Present the completed plan for user review (`plan`, markdown starting with a title); approval is the only way out of plan mode.'],
+  ['subagent', 'Delegate a self-contained task to a subagent that works in its own context and returns its result, not its steps (`description`, `prompt`, optional `provider` / `model` / `reasoning_effort`).'],
+  ['subagent_fork', 'Delegate a task to a subagent seeded with this conversation (`description`, `prompt`); it inherits the parent route, so route fields are not accepted.'],
+  ['list_subagent_models', 'Discover the subagent routes this session authorizes (`provider`, optional `model`); the returned ids feed the delegation tools.'],
+  ['send_message', 'Send a message to a subagent started from this session (`agent_id`, `message`); the call confirms delivery, not the answer.'],
+  ['list_agents', 'List the subagents started from this session with their ids, labels, and status (`scope`).'],
+  ['interrupt_agent', 'Ask a subagent to stop its current work (`agent_id`); the call returns without waiting for it to settle.'],
+  ['ask_user_question', 'Ask the user a concise question and wait for the answer (`questions`: id, question, optional header, options, and custom input).'],
+  ['web_search', 'Search the web for current information (one to four `queries`); returns a merged summary and its source URLs.'],
+  ['skill', 'Load the full instructions of one session skill (`name`); call it before acting on a task that names or matches a skill.'],
+  ['tool_activate', 'Load one paged tool namespace back onto the wire and into the generated SDK (`namespace`, exactly as the catalog names it).'],
+  ['fact_register', 'Pin one key fact into the working context (`fact`, optional `tag`), or unpin with `revoke`; at most twelve short facts stay pinned.'],
+  ['ralph', 'Run a foreground fresh-agent Ralph loop toward one immutable objective (`objective`, optional `maxRounds`); only when the human explicitly asks for it.'],
+  ['list_mcp_resources', 'List the resources an MCP server exposes (`server`, optional `cursor`).'],
+  ['list_mcp_resource_templates', 'List the parameterized resource URI templates of one MCP server (`server`, optional `cursor`).'],
+  ['read_mcp_resource', 'Read one MCP resource by URI from the named server (`server`, `uri`).'],
+])
+
+/**
  * One-line model-facing summary of a tool description: whitespace collapsed,
  * truncated with an ellipsis when maxLength is specified.
  */
@@ -232,6 +344,29 @@ export function catalogDescription(value, maxLength) {
   const normalized = String(value ?? '').replaceAll(/\s+/g, ' ').trim()
   if (maxLength === undefined || maxLength <= 0 || normalized.length <= maxLength) return normalized
   return `${normalized.slice(0, maxLength - 3)}...`
+}
+
+/**
+ * The one-line summary one entry renders for a tool: the curated line when the
+ * table names it, otherwise the mechanically capped schema description. The
+ * order is the whole point — curation first, truncation only as the fallback
+ * for a tool nobody has written a line for yet.
+ * @param {{ name?: unknown, description?: unknown }} schema - one tool definition.
+ * @param {number} maxLength - the schema-description cap, in characters.
+ * @param {{ coResident?: boolean }} [options] - whether `run_code` shares this
+ *   request's wire, which is what lets a shell line point at a program.
+ * @returns the summary text for the catalog entry.
+ */
+export function toolSummary(schema, maxLength, options) {
+  const name = schema?.name
+  if (typeof name === 'string' && CURATED_TOOL_SUMMARIES.has(name)) {
+    const line = CURATED_TOOL_SUMMARIES.get(name)
+    // The shell pointer only ships where a program does: see
+    // {@link CO_RESIDENT_SHELL_HINTS}.
+    const hint = options?.coResident === true ? CO_RESIDENT_SHELL_HINTS.get(name) : undefined
+    return hint === undefined ? line : `${line}${hint}`
+  }
+  return catalogDescription(schema?.description, maxLength)
 }
 
 /** One scalar literal as TypeScript-ish text; non-JSON scalars degrade to the broad type. */
@@ -292,7 +427,11 @@ export function renderSignature(parameters) {
  * Catalog entries for one tool surface, sorted by name so an unchanged surface
  * renders byte-identical text across assemblies. Nameless definitions are
  * skipped; the `run_code` transport is listed only when the presentation puts
- * it on the wire beside the native tools ('both').
+ * it on the wire beside the native tools ('both'). Each entry's summary is
+ * resolved by {@link toolSummary}: the curated line where the table has one,
+ * the capped schema description otherwise. `includeRunCode` is also what lets
+ * a curated SHELL line carry its batching pointer, so the pointer and the
+ * transport it names always travel together.
  */
 export function catalogEntries(schemas, maxLength, options) {
   const includeRunCode = options?.includeRunCode === true
@@ -309,7 +448,7 @@ export function catalogEntries(schemas, maxLength, options) {
     entries.push({
       name: toolName,
       signature: renderSignature(schema.parameters),
-      description: catalogDescription(schema.description, maxLength),
+      description: toolSummary(schema, maxLength, { coResident: includeRunCode }),
       ...(namespace === undefined ? {} : { namespace }),
     })
   }
@@ -336,17 +475,21 @@ const PTC_PROGRAM_LINES = [
 /**
  * The short note the catalog carries when `run_code` sits on the wire beside
  * the native roster ('both'): native calls are the primary surface, and the
- * transport covers programmatic batch work. The trigger is countable, because a
- * shape rule alone leaves the boundary to the model's judgement. Paged-out
- * namespaces stay reachable through the SDK inside a program even before
- * activation — the native wire carries every registered tool and 'both' leaves
- * the scope's registry unrestricted, so nothing removed them from the program's
- * own surface.
+ * transport covers batch work and context economy. Both triggers are countable,
+ * because a shape rule alone leaves the boundary to the model's judgement: two
+ * or more independent targets in one intent, and a single call whose raw output
+ * is expected to be large while the next step needs only a conclusion. The
+ * second trigger is context economics rather than capability — the program is
+ * how a large raw output is kept out of the conversation instead of being
+ * carried in it. Paged-out namespaces stay reachable through the SDK inside a
+ * program even before activation — the native wire carries every registered
+ * tool and 'both' leaves the scope's registry unrestricted, so nothing removed
+ * them from the program's own surface.
  */
 const BOTH_PROGRAM_LINES = [
-  'Prefer calling the tools above directly by name: ordinary single-step work (read, edit, bash, one search) goes through the native call, never through `run_code`. Reserve `run_code` for what a direct call cannot do — an async TypeScript body (`code`, with a short `description`) that reaches tools as `await tools.<name>({ ... })`, overlaps independent read-only calls under `Promise.all`, and catches `ToolCallError` to continue: programmatic batch computation, wide fan-out, or multi-step data shaping.',
+  'Prefer calling the tools above directly by name: ordinary single-step work (read, edit, bash, one search) goes through the native call, never through `run_code`. Reach for `run_code` when a direct call cannot do the job as well — an async TypeScript body (`code`, with a short `description`) that reaches tools as `await tools.<name>({ ... })`, overlaps independent read-only calls under `Promise.all`, and catches `ToolCallError` to continue: batch computation, wide fan-out, multi-step data shaping, or keeping a large raw output out of the conversation.',
   '',
-  'The trigger is countable: one intent with three or more independent targets, or intermediate results that do not belong in the conversation. Below that, call the tools directly. Every call inside a program must handle its own failure with `try/catch`, so the error chain a program produces is longer than a direct call — wrapping one-step work in a program to save a call pays that cost for nothing.',
+  'Two countable triggers, either one sufficient. (1) Two or more independent targets in one intent: two reads, two searches, two commands. (2) Context economy: one call whose raw output is expected to be large — a long log, bulk file contents, a whole table — while the next step needs only a conclusion, a summary, or a count; the program then returns that conclusion and the raw output never enters the conversation. Below both, call the tools directly: one target whose output the next step reads in full stays a native call. Every call inside a program must handle its own failure with `try/catch`, so the error chain a program produces is longer than a direct call — wrapping one-step work in a program to save a call pays that cost for nothing.',
   '',
   'Paged-out namespaces stay off the NATIVE direct-call surface but stay reachable through the SDK inside a program even before activation — the native wire carries every registered tool and nothing removes the paged ones from the scope registry, so this is the reachability the wire itself carries rather than an exemption paging grants — and activating one also puts its tools back on the direct surface.',
 ]

@@ -5,12 +5,14 @@ import {
   catalogDescription,
   catalogEntries,
   createCatalogMessage,
+  CURATED_TOOL_SUMMARIES,
   estimateSurfaceTokens,
   name,
   PRESENTATION_MODES,
   renderCatalogText,
   renderJsonSchemaType,
   renderSignature,
+  toolSummary,
 } from '../presets/liangshen/tool-catalog.mjs'
 
 type Listener = (first: any, second: any, third: any) => Promise<any>
@@ -54,6 +56,16 @@ const SDK_SURFACE = [
   },
   { name: 'read', description: 'Read a UTF-8 text file and return line-numbered content.' },
 ]
+
+/**
+ * The exact summary a curated SHELL tool renders when `run_code` is
+ * co-resident. Reads the table line and the render-time pointer through the
+ * same public `toolSummary` the catalog uses, so the assertion cannot pass
+ * against a hand-copied string the renderer never produces.
+ */
+function coResidentShellLine(shell: string) {
+  return toolSummary({ name: shell, description: 'schema description curation replaces' }, 200, { coResident: true })
+}
 
 /** The run_code transport schema the harness adds for code presentations. */
 const RUN_CODE = {
@@ -247,8 +259,10 @@ describe('liangshen-tool-catalog', () => {
     const catalog = catalogOf(result.messages)
     expect(catalog.role).toBe('user')
     expect(catalog.content[0].text).toContain('The following tools are available in this session:')
-    expect(catalog.content[0].text).toContain('- `bash({ command: string, timeoutMs?: number })`: Run commands in a bash shell * State is persistent across command calls.')
-    expect(catalog.content[0].text).toContain('- `read`: Read a UTF-8 text file and return line-numbered content.')
+    // bash and read are curated host builtins, so both render their hand-written
+    // line instead of the schema description WIRE_SDK_SURFACE carries.
+    expect(catalog.content[0].text).toContain(`- \`bash({ command: string, timeoutMs?: number })\`: ${CURATED_TOOL_SUMMARIES.get('bash')}`)
+    expect(catalog.content[0].text).toContain(`- \`read\`: ${CURATED_TOOL_SUMMARIES.get('read')}`)
   })
 
   test("default presentation is 'ptc': the wire collapses to the run_code transport", async () => {
@@ -268,7 +282,7 @@ describe('liangshen-tool-catalog', () => {
     const agent = agentOf()
     await assemble(harness, agent)
     const text = catalogText((await preStep(harness, agent)).messages)
-    expect(text).toContain('- `run_code({ code: string, description: string })`: Execute a TypeScript program against the available tools.')
+    expect(text).toContain(`- \`run_code({ code: string, description: string })\`: ${CURATED_TOOL_SUMMARIES.get('run_code')}`)
     expect(text).toContain('- `bash')
     expect(text).toContain('Prefer calling the tools above directly by name')
     expect(text).toContain('`await tools.<name>({ ... })`')
@@ -415,7 +429,7 @@ describe('liangshen-tool-catalog', () => {
     await assemble(harness, history, [...WIRE, { name: 'edit', description: 'Edit one file.' }])
     const second = await preStep(harness, history)
     const update = catalogOf(second.messages)
-    expect(update.content[0].text).toContain('- `edit`: Edit one file.')
+    expect(update.content[0].text).toContain(`- \`edit\`: ${CURATED_TOOL_SUMMARIES.get('edit')}`)
     expect(update.content[0].text).toContain('replaces any earlier available-tools list')
   })
 
@@ -740,6 +754,73 @@ describe('liangshen-tool-catalog', () => {
     expect(catalogEntries(undefined, 200)).toEqual([])
   })
 
+  test('operator gets the curated line ahead of the mechanical cap', () => {
+    // Given one curated host builtin, one uncurated tool and one cap far below
+    // both texts, When each renders its summary, Then the curated name renders
+    // the table line verbatim - never truncated, however small the cap - while
+    // the uncurated name keeps the existing mechanical cap.
+    const curated = new Map(CURATED_TOOL_SUMMARIES)
+    expect(curated.size).toBeGreaterThan(0)
+    expect([...curated.keys()].every(tool => typeof tool === 'string' && tool !== '')).toBe(true)
+
+    const cap = 12
+    for (const [tool, line] of curated) {
+      expect(toolSummary({ name: tool, description: 'a schema description long enough to be cut down' }, cap)).toBe(line)
+    }
+
+    // The fallback survives curation: a tool the table does not name is still
+    // capped the way it always was, and no curated key is truncated.
+    const uncurated = 'An uncurated tool description that outruns any short cap'
+    expect(toolSummary({ name: 'not_a_curated_tool', description: uncurated }, cap))
+      .toBe(catalogDescription(uncurated, cap))
+    expect(toolSummary({ name: 'not_a_curated_tool', description: uncurated }, cap).endsWith('...')).toBe(true)
+    expect([...curated.values()].every(line => line.length <= 200)).toBe(true)
+  })
+
+  test('operator gets curated entries from catalogEntries while uncurated tools still cap', () => {
+    // Given one curated host builtin, one uncurated tool and one cap far below
+    // both texts, When the entries are built, Then the curated name renders the
+    // whole table line and the uncurated name still truncates at the same cap.
+    const entries = catalogEntries([
+      { name: 'read', description: 'Read a UTF-8 text file and return line-numbered content.' },
+      { name: 'vendor_tool', description: 'A'.repeat(60) },
+    ], 20)
+    const byName = new Map(entries.map((entry: any) => [entry.name, entry]))
+    const curatedLine = CURATED_TOOL_SUMMARIES.get('read')!
+    // A curated name ignores the cap entirely: the line ships whole.
+    expect(curatedLine.length).toBeGreaterThan(20)
+    expect(byName.get('read')).toEqual({ name: 'read', signature: '', description: curatedLine })
+    // An uncurated name still truncates at the same cap.
+    expect(byName.get('vendor_tool')).toEqual({ name: 'vendor_tool', signature: '', description: `${'A'.repeat(17)}...` })
+  })
+
+  test('operator gets a curated table covering exactly the host builtins this preset opens', () => {
+    // Given the roster the preset's own rows register for a session, When the
+    // curated table is inspected, Then its key set is exactly that roster: a
+    // tool dropped from the table would silently fall back to the cap, and a
+    // tool added for a row this composition does not mount would announce a
+    // surface the request never opens. Every curated key also wins over a
+    // hostile one-character cap, and every line stays one printable ASCII
+    // line well inside the shipped 200-character summary budget.
+    const hostBuiltins = [
+      'run_code', 'bash', 'pwsh', 'read', 'read_image', 'write', 'edit', 'str_replace_editor',
+      'glob', 'grep', 'job_output', 'job_list', 'job_kill', 'todo_write',
+      'create_goal', 'get_goal', 'update_goal', 'exit_plan_mode',
+      'subagent', 'subagent_fork', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
+      'ask_user_question', 'web_search', 'skill', 'tool_activate', 'fact_register', 'ralph',
+      'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource',
+    ].sort()
+    expect([...CURATED_TOOL_SUMMARIES.keys()].sort()).toEqual(hostBuiltins)
+
+    for (const tool of hostBuiltins) {
+      expect(toolSummary({ name: tool, description: 'x' }, 1)).toBe(CURATED_TOOL_SUMMARIES.get(tool))
+    }
+    for (const line of CURATED_TOOL_SUMMARIES.values()) {
+      expect(/^[\x20-\x7e]+$/u.test(line)).toBe(true)
+      expect(line.length).toBeLessThanOrEqual(200)
+    }
+  })
+
   test('renderCatalogText frames a list, the contracts, and the paged summary', () => {
     const list = renderCatalogText([{ name: 'read', signature: '()', description: 'Read a file.' }], 'native')
     expect(list).toContain('<available_tools>')
@@ -762,6 +843,107 @@ describe('liangshen-tool-catalog', () => {
     expect(paged).toContain('This is the current on-wire list')
   })
 
+  test('operator reads the both-contract trigger as two countable conditions', () => {
+    // Given the 'both' presentation, whose program note is the model's only
+    // statement of WHEN to reach for run_code.
+    const text = renderCatalogText([], 'both')
+    // When the contract renders, Then it states both triggers countably: the
+    // lowered independent-target threshold and the context-economy condition.
+    // A soft word like 'several' or 'when large' would leave the boundary to
+    // the model's judgement, which is exactly what the note exists to remove.
+    expect(text).toContain('Two countable triggers, either one sufficient.')
+    expect(text).toContain('(1) Two or more independent targets in one intent')
+    expect(text).toContain('(2) Context economy')
+    expect(text).toContain('only a conclusion, a summary, or a count')
+    // The retired threshold is gone, so a model cannot read three as the bar.
+    expect(text).not.toContain('three or more')
+    expect(text).not.toContain('Below that, call the tools directly')
+    // The unchanged halves survive: direct calls first, and the per-call
+    // ToolCallError discipline that makes a one-step program a bad trade.
+    expect(text).toContain('Prefer calling the tools above directly by name')
+    expect(text).toContain('try/catch')
+    expect(text).toContain('wrapping one-step work in a program to save a call pays that cost for nothing')
+  })
+
+  test('operator sees the canonical both-contract statement stay byte-stable', () => {
+    // Given the program note the shipped 'both' session reads, When it renders
+    // twice, Then the bytes match: the note is part of the durable message and
+    // its republish rule compares text.
+    const first = renderCatalogText([], 'both')
+    expect(renderCatalogText([], 'both')).toBe(first)
+    // The lowered threshold and the economy clause are both reachable from the
+    // ONE note the catalog ships, so neither can drift out of the contract.
+    expect(first).toContain('Two or more independent targets')
+    expect(first).toContain('Context economy')
+  })
+
+  test('operator sees the three shell-family curated lines state the batch split', () => {
+    // Given the curated table, When the run_code, bash and pwsh lines are read,
+    // Then each names its side of the split the both-contract states: run_code
+    // carries two or more independent targets or a conclusion-only output, and
+    // each shell points at run_code for two or more commands or a long output.
+    // The lines are what the catalog renders, so a shell entry that does not
+    // point at the transport leaves the model with the old one-call habit.
+    const runCode = CURATED_TOOL_SUMMARIES.get('run_code')!
+    expect(runCode).toContain('two or more independent targets')
+    expect(runCode).toContain('one large output needed only as a conclusion')
+    expect(runCode).toContain('`await tools.<name>(args)`')
+    // The shell lines are presentation-NEUTRAL in the table, because the same
+    // table renders under `native` where no program exists. Their batching
+    // pointer is added at render time, and only when run_code is co-resident.
+    const shell = coResidentShellLine('bash')
+    const winShell = coResidentShellLine('pwsh')
+    expect(shell).toContain('2+ commands or long output')
+    expect(shell).toContain('`run_code`')
+    expect(winShell).toContain('2+ commands or long output')
+    expect(winShell).toContain('`run_code`')
+    // Each line still says what its own tool IS and how it is called, so the
+    // batching pointer was added without displacing the signature.
+    expect(shell).toContain('`command`')
+    expect(winShell).toContain('native Windows paths')
+  })
+
+  test('operator sees the shell batching pointer gated on the co-resident transport', () => {
+    // Given the shared curated table, which renders under EVERY presentation,
+    // When each shell line is resolved with and without run_code co-resident,
+    // Then the pointer appears exactly when a program exists. Under `native`
+    // the line must stay silent about run_code: naming a transport the request
+    // does not open is the one claim this catalog contract forbids.
+    for (const shell of ['bash', 'pwsh']) {
+      const base = CURATED_TOOL_SUMMARIES.get(shell)!
+      expect(base).not.toContain('run_code')
+      const coResident = toolSummary({ name: shell, description: 'x' }, 200, { coResident: true })
+      expect(coResident).toContain('run_code')
+      expect(coResident.startsWith(base)).toBe(true)
+      // Native resolution is the table line byte for byte: no pointer at all.
+      expect(toolSummary({ name: shell, description: 'x' }, 200, { coResident: false })).toBe(base)
+      expect(toolSummary({ name: shell, description: 'x' }, 200)).toBe(base)
+    }
+    // An uncurated tool is unaffected by the flag either way.
+    const vendor = 'A'.repeat(60)
+    expect(toolSummary({ name: 'vendor_tool', description: vendor }, 20, { coResident: true }))
+      .toBe(catalogDescription(vendor, 20))
+  })
+  test('operator sees the curated lines reach the rendered catalog entry', () => {
+    // Given the 'both' presentation, whose catalog lists run_code beside the
+    // native roster, When the entries render, Then the batching split is
+    // visible in the model-facing text rather than only in the table.
+    const entries = catalogEntries([
+      { name: 'run_code', description: 'schema description that curation replaces' },
+      { name: 'bash', description: 'schema description that curation replaces' },
+    ], 200, { includeRunCode: true })
+    const text = renderCatalogText(entries, 'both')
+    expect(text).toContain(`- \`run_code\`: ${CURATED_TOOL_SUMMARIES.get('run_code')}`)
+    expect(text).toContain(`- \`bash\`: ${coResidentShellLine('bash')}`)
+    expect(text).toContain(' 2+ commands or long output: `run_code`.')
+    // Rendering the SAME surface without the transport drops the pointer: the
+    // shell line must not name a program the request never opens.
+    const nativeEntries = catalogEntries([
+      { name: 'bash', description: 'schema description that curation replaces' },
+    ], 200, { includeRunCode: false })
+    const nativeText = renderCatalogText(nativeEntries, 'native')
+    expect(nativeText).not.toContain('run_code')
+  })
   test('operator sees the paged summary state its reachability per presentation', () => {
     // Given one paged-out namespace and the three presentations, When the
     // operator's catalog renders each of them, Then every presentation names

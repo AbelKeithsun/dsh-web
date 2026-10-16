@@ -24,6 +24,7 @@
 | packages/dsh-update | @linxin666/dsh-update | 0.4.6 | public |
 | packages/dsh-usage | @linxin666/dsh-usage | 0.4.6 | public |
 | packages/dsh-web-all | @linxin666/dsh-web-all | 0.4.6 | public |
+| packages/dsh-win-bash | @linxin666/dsh-win-bash | 0.4.6 | public |
 | packages/dsh-web-settings | @linxin666/dsh-client-ui-web-ui-settings | 0.4.6 | public |
 
 ## 外部依赖与迁移说明

@@ -28,6 +28,7 @@ Status: implemented
 - 不恢复 `reasoning-effort.mjs` 与其设置卡控件；
 - 在 `presets/liangshen/guard.mjs` 内实现「熔断触发 → 注入熔断消息，并在停摆信号（成因为推理预算过剩）下经 `agent/request` 水位把 reasoningEffort 降一档（max→high，阶梯终点），窗口 3 个请求」；空转信号只注入消息。收窄后的降档目标与信号分派由 [2026-10-10 note](../../bug-fix/2026-10-10-liangshen-guard-thresholds-and-stepdown.zh.md) 拥有；
 - guard 对请求的改写严格限于已触发熔断的 episode 窗口内，无信号时为纯 pass-through，满足原 note 对前缀缓存与用户显式档位的约束。
+- guard 此后增加第三个信号 **misuse**（呈现误用）：同一 shell 类工具（`bash`/`pwsh`/`win_bash` 白名单）的模型直调连续成功达到阈值（`DEFAULT_SHELL_BATCH_STEPS` = 4，随 guardSensitivity 缩放为 6/4/2）且期间没有任何 `run_code` 调用时，经同一 pre-step 通道注入一次「打包进程序、只回结论」的提示。它刻意不是退化信号：不降档、不改写请求、不带 stop-re-deriving 收尾，且与退化冷却隔离（绝不延误停摆/空转熔断）。重置条件：任何 `run_code` 调用、任何非 shell 工具、失败的 shell 调用、任何 `tool/ptc-dispatch`（程序内子调用不算模型直调）；每 episode 一次由事件流折叠出的 generation 计数承载，压缩与恢复可重放。wire 上没有 `run_code`（native 呈现）时整个信号静默。
 
 ## Consequences
 

@@ -83,6 +83,13 @@ describe('liangshen preset composition', () => {
     expect(persona).toContain('stop thinking and call a native inspection tool')
     expect(persona).toContain('Action-Oriented: Use thinking only to pick the next concrete operation')
     expect(persona).toContain('Parallel Inspection: When several independent inspections, searches, or checks are needed')
+    // The same discipline line carries the batching pointer: two or more targets
+    // of the same kind belong in one run_code program. It rides the SAME line so
+    // the discipline block does not grow a bullet, and it is the only place the
+    // persona names the transport — the contract text lives in the catalog.
+    expect(persona).toContain('batch them into one run_code program instead and keep only its conclusion')
+    const discipline = persona.split('\n').filter(line => line.trim().startsWith('- '))
+    expect(discipline).toHaveLength(7)
     expect(persona).toContain('Follow YAGNI and the PDCA loop')
     expect(persona).toContain('Do not write redundant comments.')
     expect(persona).toContain('Bounded Inspection & Convergence: Do not traverse dependency chains unbounded')

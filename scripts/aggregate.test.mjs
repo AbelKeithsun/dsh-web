@@ -249,6 +249,39 @@ test('familyIds overrides keep the aggregate row id off the child id derivation'
   }
 })
 
+test('a host-only child row keeps its platform guard in the aggregate patch', () => {
+  // dsh-win-bash is a host-only family package whose own patch row carries
+  // `disabled: !!js process.platform !== 'win32'`: the vendored payload is a
+  // Windows x64 build and the tool never falls back to a bash found on PATH, so
+  // the row must cost nothing on POSIX. The generator used to preserve scalar
+  // row options for PATCH rows only, which silently dropped this guard and
+  // mounted a Windows-only row on every host. The child's row options are
+  // carried verbatim, after name/config so every row parser in the repository
+  // still finds them adjacent.
+  const patch = readFileSync(join(ROOT, 'packages/dsh-web-all/cordis.patch.yml'), 'utf8')
+  assert.match(
+    patch,
+    /- id: web-ui-win-bash\n {6}name: '@linxin666\/dsh-web-all\/win-bash'\n {6}config:\n {8}plugin: '@linxin666\/dsh-win-bash'\n {6}disabled: !!js process\.platform !== 'win32'\n/u,
+    'the win-bash family row must carry the child platform guard verbatim',
+  )
+  const child = readFileSync(join(ROOT, 'packages/dsh-win-bash/cordis.patch.yml'), 'utf8')
+  assert.match(child, /disabled: !!js process\.platform !== 'win32'/u, 'the child keeps its own guard')
+})
+
+test('the win-bash family row and subpath use the short family name', () => {
+  // The child id names its package (\`dsh-win-bash\`, pinned by that package's
+  // AGENTS.md), so deriving the aggregate id would produce
+  // \`web-ui-dsh-win-bash\` and the subpath \`dsh-win-bash\`. Family subpaths are
+  // the short names (ssh / usage / liangshen), so familyIds pins the pair at
+  // \`web-ui-win-bash\` / \`win-bash\` from the first release.
+  const patch = readFileSync(join(ROOT, 'packages/dsh-web-all/cordis.patch.yml'), 'utf8')
+  assert.match(patch, /^ {4}- id: web-ui-win-bash$/mu, 'the family row id is the short web-ui-win-bash')
+  assert.doesNotMatch(patch, /web-ui-dsh-win-bash/u, 'the derived package-prefixed id must not appear')
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'packages/dsh-web-all/package.json'), 'utf8'))
+  assert.equal(pkg.exports['./win-bash'], './lib/shells/shell.js', 'the short family subpath must resolve to the shell')
+  assert.equal(pkg.dependencies['@linxin666/dsh-win-bash'], 'workspace:*', 'the aggregate pulls the child as a workspace dep')
+})
+
 test('the plugin-manager family row id and subpath survive its standalone row rename', () => {
   // Published identifiers: the aggregate row id `web-ui-plugin-manager`, the
   // family subpath `@linxin666/dsh-web-all/plugin-manager` and the matching
