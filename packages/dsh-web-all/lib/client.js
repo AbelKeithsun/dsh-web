@@ -8502,6 +8502,8 @@ window.__ModuleLoader__.load({
 			"settings.maxSubtaskDepth": "子任务深度上限",
 			"settings.maxSubtaskDepthHint": "默认 1：一个任务只允许一层子任务，子任务不能再创建或关联子任务。最大 3。执行父任务会并发执行它的整棵子任务树，层级越深，一次执行开启的会话越多。",
 			"settings.maxSubtaskDepthOption": "{depth} 层",
+			"settings.runLaunchWidth": "并发启动上限",
+			"settings.runLaunchWidthHint": "默认 3。一次执行会开启整棵子任务树，但同一刻最多只有这么多个成员在创建会话并入队 Prompt，其余成员排队等待——全部都会启动，只是分批进入运行列。默认值取自本仓「重型实施子代理并发 ≤ 3」的实测纪律。取值 1–16：越大启动越快，Host 的内存与 swap 压力越高。执行中修改只影响尚未入列的启动。",
 			"settings.runBehaviorTitle": "运行行为",
 			"settings.runBehaviorCardHint": "全局原生 /goal 执行开关（总开关，默认关闭）。",
 			"settings.goalRunGlobal": "全局启用 DSH 原生 /goal 执行",
@@ -8939,6 +8941,8 @@ window.__ModuleLoader__.load({
 			"settings.maxSubtaskDepth": "Subtask depth limit",
 			"settings.maxSubtaskDepthHint": "Default 1: a task may carry one level of subtasks, and a subtask cannot create or link further subtasks. Maximum 3. Running a task also runs its whole subtask tree concurrently, and every extra level opens more sessions per run.",
 			"settings.maxSubtaskDepthOption": "{depth} levels",
+			"settings.runLaunchWidth": "Concurrent run launches",
+			"settings.runLaunchWidthHint": "Default 3. A run opens its whole subtree, but only this many members create their session and queue their prompt at the same time; the rest wait their turn. Every member still starts, entering the running column in batches. The default comes from this repository's measured guidance for heavy implementation subagents (at most three). Range 1 to 16: a larger width starts runs sooner and costs the Host more memory and swap. Edited during a run, it bounds the launches that have not been admitted yet.",
 			"settings.runBehaviorTitle": "Run behavior",
 			"settings.runBehaviorCardHint": "The global native /goal switch (master control, off by default).",
 			"settings.goalRunGlobal": "Global: run tasks with dsh native /goal",
@@ -16905,6 +16909,28 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			};
 		}
 		/**
+		* The run-launch width field: a whole number of concurrent launches inside the
+		* supported range, because the Host schema (`runLaunchWidth`) is numeric. A
+		* draft outside the range blocks the save instead of staging a value the Host
+		* would clamp behind the user's back.
+		*/
+		function runLaunchWidthField() {
+			return {
+				field: "runLaunchWidth",
+				format: (value) => typeof value === "number" && Number.isInteger(value) ? String(value) : "",
+				parse: (text) => {
+					const trimmed = text.trim();
+					if (trimmed === "") return { kind: "clear" };
+					if (!/^\d+$/.test(trimmed)) return void 0;
+					const width = Number(trimmed);
+					return width >= 1 && width <= 16 ? {
+						kind: "set",
+						value: width
+					} : void 0;
+				}
+			};
+		}
+		/**
 		* The judge-model field: blank inherits the host model catalog default, and a
 		* non-blank draft must be a qualified provider/model route. An unparseable
 		* draft blocks the save instead of storing a route nothing can resolve.
@@ -16941,6 +16967,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					booleanField$3("preventIdleSleep"),
 					subtaskDepthField(),
 					sessionPollField(),
+					runLaunchWidthField(),
 					booleanField$3("goalRunEnabled"),
 					booleanField$3("goalVerification"),
 					modelRouteField("goalVerificationModel"),
@@ -16960,6 +16987,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					preventIdleSleep: this.form.field("preventIdleSleep"),
 					maxSubtaskDepth: this.form.field("maxSubtaskDepth"),
 					sessionPollSeconds: this.form.field("sessionPollSeconds"),
+					runLaunchWidth: this.form.field("runLaunchWidth"),
 					goalRunEnabled: this.form.field("goalRunEnabled"),
 					goalVerification: this.form.field("goalVerification"),
 					goalVerificationModel: this.form.field("goalVerificationModel"),
@@ -17227,6 +17255,20 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 									},
 									onReset: () => {
 										props.resetField("maxSubtaskDepth");
+									}
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$2, {
+									id: "settings-task-board-run-launch-width",
+									label: t("settings.runLaunchWidth"),
+									hint: t("settings.runLaunchWidthHint"),
+									numeric: true,
+									...fieldProps,
+									...state.runLaunchWidth,
+									onEdit: (text) => {
+										props.edit("runLaunchWidth", text);
+									},
+									onReset: () => {
+										props.resetField("runLaunchWidth");
 									}
 								})
 							]

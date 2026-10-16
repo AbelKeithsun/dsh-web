@@ -22,6 +22,7 @@ import { parseTaskDraft, TaskParseError } from './host-ai.ts'
 import { TASK_PERMISSIONS, isTaskPermission, type TaskPermission } from './core/tasks.ts'
 import { DEFAULT_SUBTASK_DEPTH, SUBTASK_DEPTH_MAX, SUBTASK_DEPTH_MIN } from './core/subtask.ts'
 import { DEFAULT_SESSION_POLL_SECONDS, SESSION_POLL_MAX_SECONDS, SESSION_POLL_MIN_SECONDS } from './core/poll-cadence.ts'
+import { DEFAULT_RUN_LAUNCH_WIDTH, RUN_LAUNCH_WIDTH_MAX, RUN_LAUNCH_WIDTH_MIN } from './core/launch-width.ts'
 import {
   DEFAULT_VERIFICATION_BUDGET_SECONDS,
   DEFAULT_VERIFICATION_CALL_TIMEOUT_SECONDS,
@@ -107,6 +108,17 @@ export interface Config {
    * at all, so this cadence only bounds how quickly a running card settles.
    */
   sessionPollSeconds?: Volatile<number>
+  /**
+   * How many run launches this board may have in flight at once (1..16,
+   * default 3). One run opens its whole subtree, so without a bound the Host
+   * asks DSH for every member's session in the same tick; this is the mechanism
+   * that enforces the repository's measured guidance for heavy implementation
+   * subagents. Members wait their turn instead of being dropped: the subtree
+   * still opens completely, they only enter the running column in batches. Read
+   * at each admission, so an edit bounds the next launch of a run that is still
+   * queueing.
+   */
+  runLaunchWidth?: Volatile<number>
   /**
    * Continuable-subagent provider the Agent Teams service uses to compose a
    * teammate. Matches the Agent Teams tool plugin's `freshProvider` default;
@@ -233,6 +245,8 @@ export interface ConfigInput {
   maxSubtaskDepth?: number
   /** Roster-poll cadence in seconds while the board has work to reconcile. */
   sessionPollSeconds?: number
+  /** Concurrent run launches allowed at once, 1..16. */
+  runLaunchWidth?: number
   /** Continuable-subagent provider the Agent Teams service composes a teammate from. */
   teamProvider?: string
   /** Global native /goal switch; default off, frozen per execution. */
@@ -266,6 +280,7 @@ export const Config: z<ConfigInput, Config> = z.object({
   sessionDefaultPermission: z.union(TASK_PERMISSIONS),
   maxSubtaskDepth: z.number().min(SUBTASK_DEPTH_MIN).max(SUBTASK_DEPTH_MAX).default(DEFAULT_SUBTASK_DEPTH).volatile(),
   sessionPollSeconds: z.number().min(SESSION_POLL_MIN_SECONDS).max(SESSION_POLL_MAX_SECONDS).default(DEFAULT_SESSION_POLL_SECONDS).volatile(),
+  runLaunchWidth: z.number().min(RUN_LAUNCH_WIDTH_MIN).max(RUN_LAUNCH_WIDTH_MAX).default(DEFAULT_RUN_LAUNCH_WIDTH).volatile(),
   teamProvider: z.string().min(1).default(DEFAULT_TEAM_PROVIDER),
   goalRunEnabled: z.boolean().default(false).volatile(),
   cardDefaultMode: z.string().default('').volatile(),
@@ -596,6 +611,12 @@ function applyImpl(ctx: Context, config?: Config): void {
   /** Current roster-poll cadence in seconds (read live: the settings card edits it in place). */
   const sessionPollSeconds = (): number => readConfigField(config?.sessionPollSeconds, DEFAULT_SESSION_POLL_SECONDS)
   /**
+   * Current run-launch admission width. Read live on every admission, so the
+   * settings card bounds the next launch of a run that is still queueing without
+   * remounting the row; the Host clamps a hand-edited value into the schema range.
+   */
+  const runLaunchWidth = (): number => readConfigField(config?.runLaunchWidth, DEFAULT_RUN_LAUNCH_WIDTH)
+  /**
    * The baseline the permission confirmation gate judges against: the row's own
    * `sessionDefaultPermission` when the deployment pins one, otherwise the Host's
    * default preset. Read per call through the ledger, so a Host Settings change
@@ -653,6 +674,7 @@ function applyImpl(ctx: Context, config?: Config): void {
     sessionDefaultPermission,
     maxSubtaskDepth: maxSubtaskDepth(),
     goalRunEnabled,
+    runLaunchWidth,
     cardDefaults,
     verificationSettings,
     verificationCatalog,

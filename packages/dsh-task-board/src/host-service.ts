@@ -1,6 +1,8 @@
 import type { TypertGateway } from '@deepseek-ai/dsh-api-gateway'
+import { DEFAULT_RUN_LAUNCH_WIDTH, normalizeRunLaunchWidth } from './core/launch-width.ts'
 import { DEFAULT_SESSION_POLL_SECONDS, normalizeSessionPollSeconds, sessionPollMs } from './core/poll-cadence.ts'
 import { reusableSessionId } from './core/session-reuse.ts'
+import { LaunchAdmissionQueue, type QueuedLaunch } from './host/launch-admission.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference } from './host-ledger.ts'
 import { HostExecutionRunner, SessionLaunchError, promptText, type SessionCommandDispatcher, type SessionSummary, type TaskBoardWorkspaceRegistry } from './host-runner.ts'
 import { teammateName } from './core/subtask.ts'
@@ -65,6 +67,35 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647
  * out of the running column, which nothing else can rescue.
  */
 const UNREADABLE_SETTLE_POLLS = 24
+
+/**
+ * Why a member of a run never started: the Host stopped while its launch was
+ * still waiting for an admission slot. Recorded rather than left open, so the
+ * card leaves the running column instead of waiting for the next Host start's
+ * interrupted-start recovery.
+ */
+const ABANDONED_LAUNCH_REASON = 'host stopped before this execution started'
+
+/**
+ * The acceptance contract one run group freezes, read once for the whole group.
+ *
+ * The board freezes an execution's acceptance contract BEFORE its session is
+ * prompted. Admission delays the launch, so reading these per execution would
+ * let a settings edit made while later members wait reach some members of one
+ * run and not others. Reading them once per run group — at the group's first
+ * admission, which is its root's — keeps the whole group on one contract and
+ * still freezes it before any member's session is prompted.
+ */
+interface FrozenRunContract {
+  settings: VerificationSettings
+  /** The GLOBAL native-/goal switch, resolved exactly once for the run group. */
+  globalGoalEnabled: boolean
+  /** The host model catalog the group's contracts resolve their route from. */
+  catalog: ModelCatalogView | undefined
+}
+
+/** Reads (or returns the already-read) contract of one run group. */
+type RunContractFreezer = () => Promise<FrozenRunContract>
 
 /**
  * Why an enforced goal execution settled failed while its acceptance DID run:
@@ -187,6 +218,12 @@ export class TaskBoardHostService {
   private pollInFlight = false
   private active = true
   /**
+   * Admission control for the session-creating half of a run: one board action
+   * opens a whole subtree, and this is what keeps the Host from asking DSH for
+   * every member's session at once (see {@link LaunchAdmissionQueue}).
+   */
+  private readonly launches: LaunchAdmissionQueue
+  /**
    * Consecutive unreadable-history polls per open execution (see
    * {@link noteUnreadableInspection}). Cleared as soon as an inspection
    * resolves, so a transient reader failure never fails a card.
@@ -201,6 +238,12 @@ export class TaskBoardHostService {
   private readonly goalRunEnabled: () => boolean
   /** Live reader of the deployment's new-card defaults (published and applied per create). */
   private readonly cardDefaults: () => CardDefaults
+  /**
+   * Live reader of the run-launch admission width: how many launches may be in
+   * flight at once. Read at every admission, so a settings edit bounds the next
+   * launch without remounting the row. Absent means the default.
+   */
+  private readonly runLaunchWidth: () => number
   private lastPowerJson = ''
   private readonly now: () => number
   /** The deployment's workspaces, consulted to resolve a card that pins none. */
@@ -249,6 +292,13 @@ export class TaskBoardHostService {
     verificationSettings?: () => VerificationSettings
     /** The host model catalog the acceptance contract resolves its route from. */
     verificationCatalog?: () => Promise<ModelCatalogView | undefined>
+    /**
+     * Live admission width for run launches: the number of launches (one
+     * session creation and its prompt each) that may be in flight at once. Read
+     * per admission, so editing the setting bounds the next launch of a run that
+     * is still queueing. Absent means the default width.
+     */
+    runLaunchWidth?: () => number
   } = {}) {
     this.ledger = options.ledger ?? new HostTaskLedger(undefined, undefined, {
       sessionDefaultPermission: options.sessionDefaultPermission,
@@ -263,6 +313,8 @@ export class TaskBoardHostService {
     this.now = options.now ?? Date.now
     this.goalRunEnabled = options.goalRunEnabled ?? (() => false)
     this.cardDefaults = options.cardDefaults ?? (() => ({}))
+    this.runLaunchWidth = options.runLaunchWidth ?? (() => DEFAULT_RUN_LAUNCH_WIDTH)
+    this.launches = new LaunchAdmissionQueue(() => normalizeRunLaunchWidth(this.runLaunchWidth()))
     this.verificationSettings = options.verificationSettings ?? (() => ({ enabled: false, model: '', reasoningEffort: '' }))
     this.verificationCatalog = options.verificationCatalog ?? (async () => undefined)
     this.extensions = new TaskBoardExtensionRegistry({
@@ -524,6 +576,14 @@ export class TaskBoardHostService {
 
   dispose(): void {
     this.disposed = true
+    // Launches still waiting for a slot can never start now: settle them so
+    // their cards leave the running column here, instead of waiting for the
+    // next Host start's interrupted-start recovery. Launches already in flight
+    // are left to finish — their session may already exist.
+    const abandoned = this.launches.drain()
+    if (abandoned.length > 0) {
+      safeConsoleError(`[dsh-task-board] ${abandoned.length} run member(s) were still waiting for a launch slot when the Host stopped; each is settled as cancelled`)
+    }
     this.extensions.dispose()
     this.clearScheduleTimer()
     this.clearPollBackoff()
@@ -534,7 +594,7 @@ export class TaskBoardHostService {
     this.listeners.clear()
   }
 
-  private async launch(opened: OpenedRun, others: readonly OpenedRun[] = [], schedule?: ScheduledRunContext): Promise<void> {
+  private async launch(opened: OpenedRun, others: readonly OpenedRun[] = [], schedule?: ScheduledRunContext, freezeContract?: RunContractFreezer): Promise<void> {
     /** The session this launch attached to the execution, once it exists. */
     let attached: string | undefined
     try {
@@ -562,21 +622,22 @@ export class TaskBoardHostService {
       // retrofit the rule that will judge it. A card that opted out resolves the
       // same contract from an OFF switch: the board-wide switch decides the
       // default, the card decides this execution, and both are read here.
-      const settings = this.verificationSettings()
-      // The GLOBAL native-/goal switch is read ONCE here and carried by value
-      // for the whole execution: a settings edit after this point can only
+      //
+      // The read is the run GROUP's when the queue handed one down: admission
+      // delays a member's launch, so a per-execution read would let a settings
+      // edit made while later members wait reach some members of one run and not
+      // others. One group, one contract — and still frozen before the group's
+      // first session is prompted.
+      const { settings, globalGoalEnabled, catalog } = await (freezeContract ?? (() => this.freezeRunContract()))()
+      // The GLOBAL native-/goal switch is read ONCE per run group and carried by
+      // value for the whole execution: a settings edit after this point can only
       // affect executions that start later.
-      const globalGoalEnabled = this.goalRunEnabled() === true
       // The card must ASK for the goal run: the option is off by default, so an
       // absent value is a plain turn exactly like an explicit false.
       const goalEnabled = globalGoalEnabled && opened.task.goalRun === true
       // The card's opt-out is a DISTINCT reason, not the board switch: the
       // report must be able to say which of the two turned the gate off.
       const skippedBy: ExecutionVerification['applicability'] = opened.task.skipVerification === true ? 'skipped' : 'disabled'
-      // ONE catalog read decides both this execution's acceptance contract and
-      // the reasoning effort its session may be given: the card's effort is sent
-      // only when the same snapshot declares it for the route the run uses.
-      const catalog = await this.verificationCatalog()
       const contract = resolveContract(
         { ...settings, enabled: settings.enabled && opened.task.skipVerification !== true },
         catalog,
@@ -629,21 +690,60 @@ export class TaskBoardHostService {
       // failed launch can never silently spend the user's run budget. A manual
       // run, and a launch that DID reach a session, are never refunded.
       if (schedule !== undefined && attached === undefined && launchedSession === undefined) {
-        this.ledger.refundScheduledOccurrence(opened.task.id, this.now())
-        // The refund runs after the fire already armed the next target, and a
-        // refunded occurrence can restore one the fire had just cleared (a rule
-        // that spent its last run). Re-arm so the restored occurrence is served
-        // at its own instant rather than lost until some unrelated write.
-        this.refreshSchedule()
+        this.refundUnstartedSchedule(opened.task.id)
       }
       this.settleAndNotify(opened.task.id, opened.execution.id, 'failed', error instanceof Error ? error.message : String(error))
     }
   }
 
+  /**
+   * Read the acceptance contract one run group freezes, in the order the board
+   * has always read it: the acceptance settings, then the global native-/goal
+   * switch, then the model catalog that both resolves the contract's route and
+   * decides the reasoning effort the session may be given.
+   */
+  private async freezeRunContract(): Promise<FrozenRunContract> {
+    const settings = this.verificationSettings()
+    const globalGoalEnabled = this.goalRunEnabled() === true
+    const catalog = await this.verificationCatalog()
+    return { settings, globalGoalEnabled, catalog }
+  }
+
+  /**
+   * A {@link RunContractFreezer} that reads once and hands the SAME value to
+   * every later caller of one run group. A read that fails is not cached: the
+   * next member reads again, exactly as a per-execution read would have.
+   */
+  private contractFreezerForRunGroup(): RunContractFreezer {
+    let pending: Promise<FrozenRunContract> | undefined
+    return () => {
+      pending ??= this.freezeRunContract().catch((error: unknown) => {
+        pending = undefined
+        throw error
+      })
+      return pending
+    }
+  }
+
+  /**
+   * Give back the occurrence a launch consumed, for a launch that never reached
+   * a session: a failed launch, or one the Host abandoned while it was still
+   * waiting for an admission slot. A manual run, and a launch that DID reach a
+   * session, are never refunded.
+   */
+  private refundUnstartedSchedule(taskId: string): void {
+    this.ledger.refundScheduledOccurrence(taskId, this.now())
+    // The refund runs after the fire already armed the next target, and a
+    // refunded occurrence can restore one the fire had just cleared (a rule
+    // that spent its last run). Re-arm so the restored occurrence is served
+    // at its own instant rather than lost until some unrelated write.
+    this.refreshSchedule()
+  }
+
   private scheduleTeammate(opened: OpenedRun, leadSessionId: string): void {
-    void this.spawnTeammate(opened, leadSessionId).catch(error => {
+    this.enqueueLaunch(opened, () => this.spawnTeammate(opened, leadSessionId).catch(error => {
       safeConsoleError('[dsh-task-board] teammate spawn settlement failed', error)
-    })
+    }))
   }
 
   /**
@@ -1027,14 +1127,22 @@ export class TaskBoardHostService {
    * member then launches on its own so one refused participant cannot hold the
    * others back. A team run's members are spawned inside the root's Lead
    * session instead, once that session exists.
+   *
+   * Every launch of one run set goes through the admission queue, which admits
+   * at most `runLaunchWidth` of them at a time — the whole subtree still opens,
+   * members just enter the running column in batches. Order inside the group is
+   * the order they are enqueued here, so the root's session always exists before
+   * any member's, and one member's launch settling (or failing) is what admits
+   * the next. All members share the one contract this group freezes.
    */
   private dispatchRuns(runs: readonly OpenedRun[], schedule?: ScheduledRunContext): void {
     if (runs.length === 0) return
     const root = runs.find(run => run.dispatch !== 'teammate') ?? runs[0]
     const others = runs.filter(run => run !== root)
-    this.scheduleLaunch(root, others, schedule)
+    const freezeContract = this.contractFreezerForRunGroup()
+    this.scheduleLaunch(root, others, schedule, freezeContract)
     for (const run of others) {
-      if (run.dispatch !== 'teammate') this.scheduleLaunch(run, [], schedule)
+      if (run.dispatch !== 'teammate') this.scheduleLaunch(run, [], schedule, freezeContract)
     }
   }
 
@@ -1048,10 +1156,58 @@ export class TaskBoardHostService {
     this.ledger.setVerification(taskId, executionId, { ...verification, applicability })
   }
 
-  private scheduleLaunch(opened: OpenedRun, others: readonly OpenedRun[] = [], schedule?: ScheduledRunContext): void {
-    void this.launch(opened, others, schedule).catch(error => {
+  private scheduleLaunch(opened: OpenedRun, others: readonly OpenedRun[] = [], schedule?: ScheduledRunContext, freezeContract?: RunContractFreezer): void {
+    this.enqueueLaunch(opened, () => this.launch(opened, others, schedule, freezeContract).catch(error => {
       safeConsoleError('[dsh-task-board] execution launch settlement failed', error)
-    })
+    }), schedule)
+  }
+
+  /**
+   * Hand one launch to the admission queue, or abandon it on the spot when the
+   * Host is already stopping: a queue entry created after {@link dispose} would
+   * otherwise never be drained, and its card would sit in the running column
+   * until the next Host start recovered it.
+   */
+  private enqueueLaunch(opened: OpenedRun, start: () => Promise<void>, schedule?: ScheduledRunContext): void {
+    const launch: QueuedLaunch = {
+      groupId: opened.execution.runGroupId ?? opened.task.id,
+      start: async () => {
+        // Waiting for a slot is time the execution can be settled in: a manual
+        // settle, or a team run folded onto its Lead's verdict, can close a
+        // member's execution before it ever started. Starting it then would
+        // create a session no execution is watching, so a launch whose
+        // execution is already closed is dropped instead.
+        if (!this.isExecutionOpen(opened)) return
+        await start()
+      },
+      abandon: () => this.abandonQueuedRun(opened, schedule),
+    }
+    if (this.disposed) {
+      launch.abandon()
+      return
+    }
+    this.launches.enqueue(launch)
+  }
+
+  /** Whether one opened execution is still open in the ledger. */
+  private isExecutionOpen(opened: OpenedRun): boolean {
+    const execution = this.ledger.getTask(opened.task.id)?.executions.find(entry => entry.id === opened.execution.id)
+    return execution !== undefined && execution.endedAt === undefined
+  }
+
+  /**
+   * Take one launch that never started out of the running column.
+   *
+   * Settled as CANCELLED, not failed: nothing about the run's work went wrong —
+   * the Host stopped before the launch got a slot, which is exactly what the
+   * next start's interrupted-start recovery records for an execution that never
+   * reached a session. A scheduled occurrence that never reached a session is
+   * refunded on the same terms as any other pre-session failure, so a run the
+   * Host never started cannot silently spend the user's run budget.
+   */
+  private abandonQueuedRun(opened: OpenedRun, schedule?: ScheduledRunContext): void {
+    if (schedule !== undefined) this.refundUnstartedSchedule(opened.task.id)
+    this.settleAndNotify(opened.task.id, opened.execution.id, 'cancelled', ABANDONED_LAUNCH_REASON)
   }
 
   private schedulePoll(): void {

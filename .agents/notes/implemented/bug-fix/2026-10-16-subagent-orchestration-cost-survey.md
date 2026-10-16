@@ -10,7 +10,7 @@ Using subagents was believed to drive CPU and memory up, and the obvious culprit
 
 The session-history rescan in `HostExecutionRunner.inspect` is the one measured fan-out cost in this repository, and it is fixed in the note that owns that memo: [history-head probe memo](2026-08-26-inspect-head-probe-memo.md).
 
-Everything else measured is left unchanged, each for a reason recorded below. In particular the task board's cascade fan-out **is not bounded by this change**: running one card still opens an execution per subtree member concurrently and unpaced, and no concurrency limit is added, because a limit changes contractual cascade semantics (a run group opens its whole subtree) and is a product decision rather than a defect fix. That gap is documented here with its evidence and left open.
+Everything else measured is left unchanged, each for a reason recorded below. The one gap this survey left open — the unpaced fan-out of a run group — is closed in its own record: [run launch admission](2026-10-16-task-board-run-launch-admission.md) bounds how many sessions one action asks DSH to create at once, without changing what a run group opens.
 
 ## Measurements
 
@@ -33,7 +33,7 @@ The chain is `core/subtask.ts:190-198` (`cascadeTargets` bounds depth, never wid
 
 ## Alternatives considered
 
-**Capping cascade fan-out at the launcher.** Rejected here as a product decision, not a fix: it changes the observable promise that a run group opens its whole subtree, and the right shape (reject, queue, or serialize behind a configurable width) depends on whether users want a partial run at all. Recorded as the open gap instead.
+**Capping cascade fan-out at the launcher inside this survey.** Deferred here as a product decision rather than a defect fix: the shape (reject, queue, or serialize behind a configurable width) changes the observable promise that a run group opens its whole subtree, so it needed the user's answer rather than an agent's. It was then settled as a batched queue and implemented in [run launch admission](2026-10-16-task-board-run-launch-admission.md); the reject shape stayed rejected for the reason given above.
 
 **Adding a `maxConcurrent` subagent setting.** Rejected: the repository does not own the subagent registry, which lives in the host, and inventing a local throttle would leave the documented discipline and the real mechanism disagreeing.
 
@@ -45,7 +45,7 @@ The chain is `core/subtask.ts:190-198` (`cascadeTargets` bounds depth, never wid
 
 ## Consequences
 
-The inspect fix removes the one fan-out cost that actually grew with teammate count. Everything else that grows with sessions is either negligible at measured scale or outside this repository. The task board can still be asked to open an arbitrary number of sessions in one action, with nothing but the dispatcher's own discipline preventing it; the return condition for acting is a workflow that runs tens of subtree members at once, which now has a counted reproduction instead of an assumption. The quadratic settle has a named return condition too: at the measured slope, card counts in the low thousands put it around 30 ms per tick.
+The inspect fix removes the one fan-out cost that actually grew with teammate count. Everything else that grows with sessions is either negligible at measured scale or outside this repository. The task board still opens a whole subtree for one card, but it no longer asks DSH for every session in the same tick: [run launch admission](2026-10-16-task-board-run-launch-admission.md) paces that burst, so the counted reproduction now guards a fix rather than describing an open hazard. The quadratic settle has a named return condition too: at the measured slope, card counts in the low thousands put it around 30 ms per tick.
 
 ## Testing
 

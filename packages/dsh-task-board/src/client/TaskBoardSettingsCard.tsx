@@ -26,6 +26,7 @@ import {
 } from './board/model-options.ts'
 import { SUBTASK_DEPTH_MAX, SUBTASK_DEPTH_MIN } from '../core/subtask.ts'
 import { SESSION_POLL_MAX_SECONDS, SESSION_POLL_MIN_SECONDS } from '../core/poll-cadence.ts'
+import { RUN_LAUNCH_WIDTH_MAX, RUN_LAUNCH_WIDTH_MIN } from '../core/launch-width.ts'
 import {
   CardForm,
   booleanField,
@@ -86,6 +87,28 @@ function subtaskDepthField(): FieldSpec {
 }
 
 /**
+ * The run-launch width field: a whole number of concurrent launches inside the
+ * supported range, because the Host schema (`runLaunchWidth`) is numeric. A
+ * draft outside the range blocks the save instead of staging a value the Host
+ * would clamp behind the user's back.
+ */
+function runLaunchWidthField(): FieldSpec {
+  return {
+    field: 'runLaunchWidth',
+    format: value => typeof value === 'number' && Number.isInteger(value) ? String(value) : '',
+    parse: (text) => {
+      const trimmed = text.trim()
+      if (trimmed === '') return { kind: 'clear' }
+      if (!/^\d+$/.test(trimmed)) return undefined
+      const width = Number(trimmed)
+      return width >= RUN_LAUNCH_WIDTH_MIN && width <= RUN_LAUNCH_WIDTH_MAX
+        ? { kind: 'set', value: width }
+        : undefined
+    },
+  }
+}
+
+/**
  * The judge-model field: blank inherits the host model catalog default, and a
  * non-blank draft must be a qualified provider/model route. An unparseable
  * draft blocks the save instead of storing a route nothing can resolve.
@@ -116,6 +139,12 @@ export interface TaskBoardSettings {
   maxSubtaskDepth?: number
   /** Roster-poll cadence in seconds while the board has work to reconcile. */
   sessionPollSeconds?: number
+  /**
+   * How many run launches may be in flight at once (1..16, default 3). One run
+   * opens its whole subtree, so this bounds the burst of sessions a single run
+   * action creates; members enter the running column in batches, none is dropped.
+   */
+  runLaunchWidth?: number
   /**
    * GLOBAL native /goal switch (default off): the master control over whether
    * this board starts a run with dsh's built-in /goal at all. Frozen per
@@ -156,6 +185,8 @@ export interface TaskBoardSettingsCardState extends CardShell {
   maxSubtaskDepth: CardFieldState
   /** Roster-poll cadence field. */
   sessionPollSeconds: CardFieldState
+  /** Run-launch admission width field. */
+  runLaunchWidth: CardFieldState
   /** GLOBAL native /goal switch. */
   goalRunEnabled: CardFieldState
   /** Goal-acceptance switch. */
@@ -205,6 +236,7 @@ export class TaskBoardSettingsCardController {
       booleanField('preventIdleSleep'),
       subtaskDepthField(),
       sessionPollField(),
+      runLaunchWidthField(),
       booleanField('goalRunEnabled'),
       booleanField('goalVerification'),
       modelRouteField('goalVerificationModel'),
@@ -228,6 +260,7 @@ export class TaskBoardSettingsCardController {
       preventIdleSleep: this.form.field('preventIdleSleep'),
       maxSubtaskDepth: this.form.field('maxSubtaskDepth'),
       sessionPollSeconds: this.form.field('sessionPollSeconds'),
+      runLaunchWidth: this.form.field('runLaunchWidth'),
       goalRunEnabled: this.form.field('goalRunEnabled'),
       goalVerification: this.form.field('goalVerification'),
       goalVerificationModel: this.form.field('goalVerificationModel'),
@@ -486,6 +519,16 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
             {...state.maxSubtaskDepth}
             onEdit={(text) => { props.edit('maxSubtaskDepth', text) }}
             onReset={() => { props.resetField('maxSubtaskDepth') }}
+          />
+          <ValueField
+            id="settings-task-board-run-launch-width"
+            label={t('settings.runLaunchWidth')}
+            hint={t('settings.runLaunchWidthHint')}
+            numeric
+            {...fieldProps}
+            {...state.runLaunchWidth}
+            onEdit={(text) => { props.edit('runLaunchWidth', text) }}
+            onReset={() => { props.resetField('runLaunchWidth') }}
           />
         </PluginSettingsCard>
 

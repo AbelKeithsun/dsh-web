@@ -41,8 +41,11 @@ afterEach(() => {
   delete globalWithEventSource.EventSource
 })
 
-/** One complete, writable card snapshot with no staged edits. */
-function cardState(): TaskBoardSettingsCardState {
+/**
+ * One complete, writable card snapshot with no staged edits.
+ * @param runLaunchWidth - stored value of the run-launch width field.
+ */
+function cardState(runLaunchWidth = ''): TaskBoardSettingsCardState {
   const field = { text: '', overridden: false, invalid: false }
   return {
     available: true,
@@ -57,6 +60,7 @@ function cardState(): TaskBoardSettingsCardState {
     preventIdleSleep: field,
     maxSubtaskDepth: field,
     sessionPollSeconds: field,
+    runLaunchWidth: { ...field, text: runLaunchWidth },
     goalRunEnabled: { ...field, text: 'false' },
     goalVerification: { ...field, text: 'true' },
     goalVerificationModel: field,
@@ -72,8 +76,8 @@ function cardState(): TaskBoardSettingsCardState {
 const PROVIDER_CARD_LABEL = 'Provider section'
 
 /** Render-ready props for the card: a fixed snapshot, an inert form, and optionally the provider seat. */
-function cardProps(withProvider = false): TaskBoardSettingsCardProps {
-  const state = cardState()
+function cardProps(withProvider = false, runLaunchWidth = ''): TaskBoardSettingsCardProps {
+  const state = cardState(runLaunchWidth)
   return {
     t: (key: string) => (zh as Record<string, string>)[key] ?? key,
     renderSlot: () => withProvider
@@ -203,6 +207,28 @@ describe('task-board settings card disclosure', () => {
     expect(container.querySelector('#settings-task-board-subtask-depth')?.textContent).toBe(zh['settings.inherit'])
     expect(container.querySelector('#settings-task-board-goal-verification')).toBeNull()
     expect(header(container, zh['settings.goalVerificationTitle']).getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('operator expanding the board topic reaches the run-launch width with its batch hint', () => {
+    // Given the expanded settings card with a stored admission width
+    const container = render(cardProps(false, '8'))
+    act(() => { header(container, zh['settings.title']).click() })
+    expect(container.querySelector('#settings-task-board-run-launch-width')).toBeNull()
+
+    // When the operator opens the board topic
+    act(() => { header(container, zh['settings.enabled']).click() })
+
+    // Then the width is editable beside the depth limit, shows the stored value,
+    // and explains that waiting members still start (they only start in batches)
+    const width = container.querySelector<HTMLInputElement>('#settings-task-board-run-launch-width')
+    expect(width?.type).toBe('text')
+    expect(width?.value).toBe('8')
+    expect(container.textContent).toContain(zh['settings.runLaunchWidth'])
+    expect(container.textContent).toContain(zh['settings.runLaunchWidthHint'])
+    // ...and it sits with the runtime-behavior field beside it, whose own
+    // rendered copy is what the operator reads there
+    const pollLabel = container.querySelector<HTMLLabelElement>('label[for="settings-task-board-session-poll"]')
+    expect(pollLabel?.textContent).toBe(zh['settings.sessionPollSeconds'])
   })
 
   it('operator expanding the acceptance topic reaches the judge settings and its resolved preview', () => {
