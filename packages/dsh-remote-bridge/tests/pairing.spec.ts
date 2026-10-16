@@ -223,4 +223,31 @@ describe('pairing: bootstrap tokens, nonces and the device roster', () => {
     // Then the signature belongs to the signer only
     expect(accepted).toBe(false)
   })
+
+  it('user pairing while the roster cannot be written is told the failure instead of hanging', async () => {
+    // Given a roster whose write path always fails (a read-only DSH home, a full disk)
+    const unwritable = {
+      load: async () => undefined,
+      devices: () => [],
+      authenticate: () => undefined,
+      touch: async () => undefined,
+      enroll: async () => { throw new Error('EACCES: the roster directory is not writable') },
+    } as unknown as DeviceRoster
+    const harness = makeConnection({ roster: unwritable })
+    const key = p256()
+    await harness.connection.handleText(requestFrame(1, 'pair.begin', { token: harness.pairing.issueToken().value }))
+    const nonce = (answerOf(harness, 1).r as { nonce: string }).nonce
+    // When the user finishes pairing and the enrollment throws
+    await harness.connection.handleText(requestFrame(2, 'pair.finish', {
+      devicePubKey: key.spki,
+      signature: es256(key.key, Buffer.from(nonce, 'base64url')),
+    }))
+    // Then the failure is answered as a refusal rather than leaving the client waiting
+    expect(answerOf(harness, 2).ok).toBe(false)
+    expect(answerOf(harness, 2).e?.code).toBe('internal')
+    expect(harness.logs.some(line => line.includes('EACCES'))).toBe(true)
+    // And the connection is still usable afterwards
+    await harness.connection.handleText(requestFrame(3, 'hello', { proto: 1 }))
+    expect(answerOf(harness, 3).ok).toBe(true)
+  })
 })

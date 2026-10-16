@@ -176,6 +176,8 @@ export interface HarnessOptions {
   readonly paired?: boolean
   /** Roster file path; a nonexistent path under a temp directory is enough. */
   readonly rosterFile?: string
+  /** Roster stand-in, for the failure paths a real file cannot be made to take. */
+  readonly roster?: DeviceRoster
   readonly heartbeatMs?: number
 }
 
@@ -184,7 +186,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
   const transport = new RecordingTransport()
   const gateway = new FakeGateway()
   const pairing = new PairingService()
-  const roster = new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' })
+  const roster = options.roster ?? new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' })
   const approvals = new ApprovalRegistry()
   const logs: string[] = []
   const settings: BridgeConnectionOptions = {
@@ -236,21 +238,35 @@ export interface HubHarness {
 
 /** Build one hub with one attached connection. */
 export function makeHub(options: HarnessOptions = {}): HubHarness {
+  const bare = makeBareHub(options)
+  const transport = new RecordingTransport()
+  const connection = bare.hub.attach(transport, options.paired === false ? undefined : { deviceId: 'dev_harness' })
+  return { ...bare, connection, transport }
+}
+
+/** Everything a hub was built with, before any connection is attached to it. */
+export interface BareHubHarness {
+  readonly hub: BridgeHub
+  readonly gateway: FakeGateway
+  readonly approvals: ApprovalRegistry
+  readonly logs: string[]
+}
+
+/** Build one hub with nothing attached, for suites that bring their own carrier. */
+export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
   const gateway = new FakeGateway()
   const approvals = new ApprovalRegistry()
   const logs: string[] = []
   const hub = new BridgeHub({
     gateway,
     pairing: new PairingService(),
-    roster: new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' }),
+    roster: options.roster ?? new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' }),
     approvals,
     now: () => Date.now(),
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },
   })
-  const transport = new RecordingTransport()
-  const connection = hub.attach(transport, options.paired === false ? undefined : { deviceId: 'dev_harness' })
-  return { hub, connection, transport, gateway, approvals, logs }
+  return { hub, gateway, approvals, logs }
 }
 
 /** One response frame's `ok`, `r` and `e`, exactly as the client reads them. */

@@ -11,8 +11,9 @@
 
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
-import type { BridgeTransport } from '../core/connection.ts'
+import type { BridgeTransport, ConnectionAuth } from '../core/connection.ts'
 import { MAX_FRAME_BYTES } from '../core/envelope.ts'
+import type { BridgeHub } from '../core/hub.ts'
 import {
   CLOSE_PROTOCOL_ERROR,
   CLOSE_TOO_LARGE,
@@ -32,6 +33,14 @@ import {
 
 /** Close code a well-behaved peer sends when it goes away. */
 const CLOSE_NORMAL = 1000
+
+/**
+ * Messages one carrier buffers while no handler is registered. The mounted
+ * wiring registers one synchronously, so this only ever absorbs bytes that were
+ * handed over before the handler existed; past it the socket is closed instead of
+ * buffering a conversation nobody is reading.
+ */
+export const PENDING_MESSAGE_LIMIT = 32
 
 /** @returns whether this request asks for a WebSocket upgrade. */
 export function isWebSocketUpgrade(req: IncomingMessage): boolean {
@@ -87,6 +96,44 @@ export function refuseUpgrade(socket: Duplex, status: number, reason: string): v
 }
 
 /**
+ * One accepted upgrade handed to the bridge.
+ */
+export interface UpgradeHandoff {
+  /** The upgraded socket; the carrier both reads from and writes to it. */
+  readonly socket: Duplex
+  /** The client's `Sec-WebSocket-Key`, already read from the handshake. */
+  readonly secWebSocketKey: string
+  /** Bytes that arrived with the upgrade request itself. */
+  readonly head: Buffer
+  readonly hub: BridgeHub
+  /** The device the handshake token proved, when it proved one. */
+  readonly auth?: ConnectionAuth
+}
+
+/**
+ * Hand one accepted upgrade to the hub, in the one order that is correct.
+ *
+ * Every step here is synchronous, which is what makes the carrier's own
+ * pre-handler buffer unnecessary in practice — and the buffer is there anyway,
+ * so the bytes of `head` (and anything that beats the handler) are delivered
+ * instead of dropped. The order is the point of this function: reading the
+ * socket without a handler, or attaching a connection whose carrier is never
+ * written to, both end in a client that waits forever.
+ * @param handoff - the socket, its handshake facts, and the hub to join.
+ * @returns the carrier, for a caller that needs to observe it.
+ */
+export function serveUpgrade(handoff: UpgradeHandoff): WebSocketCarrier {
+  const { socket, secWebSocketKey, head, hub, auth } = handoff
+  const carrier = new WebSocketCarrier(socket)
+  carrier.handshake(secWebSocketKey)
+  const connection = hub.attach(carrier, auth)
+  carrier.onMessage(text => { void connection.handleText(text) })
+  carrier.onClose(() => { hub.detach(connection) })
+  if (head.length > 0) carrier.feed(head)
+  return carrier
+}
+
+/**
  * One accepted socket, framed.
  *
  * Frames are buffered until a whole one has arrived; a fragmented message is
@@ -105,9 +152,17 @@ export class WebSocketCarrier implements BridgeTransport {
   #closed = false
   #onMessage: ((text: string) => void) | undefined
   #onClose: (() => void) | undefined
+  /** Messages that arrived before a handler was registered; see {@link deliver}. */
+  readonly #pending: string[] = []
 
   constructor(socket: Duplex) {
     this.#socket = socket
+    // The socket is this endpoint's ONLY source of bytes. Without this
+    // subscription every frame a client sends after the handshake sits in the
+    // socket's read buffer forever: the upgrade's leftover `head` is normally
+    // empty, so the frame loop would never see a single byte — the client sees a
+    // socket that stays open, answers nothing and never closes.
+    socket.on('data', (chunk: Buffer) => { this.feed(chunk) })
     socket.on('error', () => { this.#shut() })
     socket.on('close', () => { this.#shut() })
     socket.on('end', () => { this.#shut() })
@@ -130,6 +185,7 @@ export class WebSocketCarrier implements BridgeTransport {
   /** Register the handler for every complete text message. */
   onMessage(handler: (text: string) => void): void {
     this.#onMessage = handler
+    for (const text of this.#pending.splice(0)) handler(text)
   }
 
   /** Register the one teardown hook; it runs exactly once. */
@@ -225,7 +281,22 @@ export class WebSocketCarrier implements BridgeTransport {
       this.close(CLOSE_UNSUPPORTED_DATA, 'this endpoint carries text frames only')
       return false
     }
-    this.#onMessage?.(payload.toString('utf8'))
+    const text = payload.toString('utf8')
+    if (this.#onMessage === undefined) {
+      // The mounted wiring order (handshake → attach → onMessage → feed(head)) is
+      // synchronous, so this queue is never needed for it: `data` can only fire on
+      // a later turn. It is here so that guarantee does not rest on a caller's tick
+      // discipline — bytes the carrier is handed first are delivered the moment a
+      // handler arrives, instead of being dropped. The bound turns a carrier nobody
+      // ever wired into a closed socket rather than a growing buffer.
+      if (this.#pending.length >= PENDING_MESSAGE_LIMIT) {
+        this.close(CLOSE_TOO_LARGE, 'this connection has no message handler')
+        return false
+      }
+      this.#pending.push(text)
+      return true
+    }
+    this.#onMessage(text)
     return true
   }
 

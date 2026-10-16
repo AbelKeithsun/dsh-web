@@ -305,4 +305,17 @@ describe('session methods over protocol v1', () => {
     expect(attempts).toBe(5)
     expect(answerOf(harness, 21).r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 1, agentRunning: true }] })
   })
+
+  it('operator prompts a session whose stream cannot open and the connection stays usable', async () => {
+    // Given a host that refuses to open any follow stream
+    const harness = makeConnection({ paired: true })
+    harness.gateway.follow = () => { throw new Error('session service refuses follow') }
+    // When the user prompts without snapshotting first, so nothing ever awaits that stream
+    await harness.connection.handleText(requestFrame(22, 'session.prompt', { sessionId: 's-1', text: 'hi', requestId: 'r-9' }))
+    await settle()
+    // Then the prompt itself answered and the socket is still answering afterwards
+    expect(answerOf(harness, 22).r).toEqual({ accepted: true })
+    await harness.connection.handleText(requestFrame(23, 'hello', { proto: 1 }))
+    expect(answerOf(harness, 23).ok).toBe(true)
+  })
 })

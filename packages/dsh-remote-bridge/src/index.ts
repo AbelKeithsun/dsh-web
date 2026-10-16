@@ -35,7 +35,7 @@ import { PairingService } from './core/pairing.ts'
 import { WS_PATH } from './core/protocol.ts'
 import { dshHome } from './host/dsh-home.ts'
 import { makePairTokenRoute } from './host/routes.ts'
-import { WebSocketCarrier, isWebSocketUpgrade, presentedTokenOf, readSecWebSocketKey, refuseUpgrade } from './host/websocket.ts'
+import { isWebSocketUpgrade, presentedTokenOf, readSecWebSocketKey, refuseUpgrade, serveUpgrade } from './host/websocket.ts'
 
 /** Loader row identity of this plugin. */
 export const name = 'remote-bridge'
@@ -74,16 +74,26 @@ function makeUpgradeHandler(hub: BridgeHub, roster: DeviceRoster, log: (message:
       refuseUpgrade(socket, 400, 'Bad Request')
       return
     }
-    await roster.load()
+    try {
+      await roster.load()
+    } catch (error) {
+      // An unreadable roster leaves every candidate unpaired. Refusing the upgrade
+      // says so; letting the handler's promise reject instead would hand the host's
+      // upgrade dispatcher a failure it has no answer for and no client would ever see.
+      log(`could not read the device roster: ${String(error)}`)
+      refuseUpgrade(socket, 503, 'Service Unavailable')
+      return
+    }
     const token = presentedTokenOf(req)
     const device = token === undefined ? undefined : roster.authenticate(token)
     const auth: ConnectionAuth | undefined = device === undefined ? undefined : { deviceId: device.deviceId }
-    const carrier = new WebSocketCarrier(socket)
-    carrier.handshake(key)
-    const connection = hub.attach(carrier, auth)
-    carrier.onMessage(text => { void connection.handleText(text) })
-    carrier.onClose(() => { hub.detach(connection) })
-    if (head.length > 0) carrier.feed(head)
+    serveUpgrade({
+      socket,
+      secWebSocketKey: key,
+      head,
+      hub,
+      ...(auth === undefined ? {} : { auth }),
+    })
   }
 }
 

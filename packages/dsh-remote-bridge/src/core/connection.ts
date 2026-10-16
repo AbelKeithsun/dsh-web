@@ -182,6 +182,13 @@ export class BridgeConnection {
 
   /**
    * Handle one received text frame.
+   *
+   * This method NEVER rejects. Its caller in the mounted wiring is
+   * `void connection.handleText(text)`, so a rejection here would be dropped on
+   * the floor and the client would wait forever for an answer that is never
+   * coming — the same silent stall as a socket nobody reads. Any unexpected
+   * failure (a roster write that cannot complete, a carrier that throws) is
+   * answered as an `internal` refusal and logged.
    * @param text - the frame body as it crossed the wire.
    */
   async handleText(text: string): Promise<void> {
@@ -197,9 +204,14 @@ export class BridgeConnection {
       return
     }
     if (frame.t === 'pong') return
-    const answer = await this.#dispatch(frame)
-    if (answer.ok) this.#send(responseFrame(frame.id, answer.r))
-    else this.#send(errorFrame(frame.id, answer.code, answer.msg))
+    try {
+      const answer = await this.#dispatch(frame)
+      if (answer.ok) this.#send(responseFrame(frame.id, answer.r))
+      else this.#send(errorFrame(frame.id, answer.code, answer.msg))
+    } catch (error) {
+      this.#options.log(`${frame.m} failed unexpectedly: ${failureText(error)}`)
+      this.#send(errorFrame(frame.id, CODE_INTERNAL, failureText(error)))
+    }
   }
 
   /** Push one event to this connection, advancing its own sequence. */
@@ -410,6 +422,12 @@ export class BridgeConnection {
       opened: Promise.resolve({ cursor: 0, records: [], hasMore: false }),
     }
     subscription.opened = this.#openSubscription(subscription)
+    // A caller may subscribe without ever awaiting that opening frame:
+    // `session.prompt` does exactly that. An unobserved rejection would surface as
+    // an unhandled rejection and — under node's default `--unhandled-rejections=throw`
+    // — take the whole host process down. This second handler makes the rejection
+    // observed; `#awaitOpening` still awaits the original promise and still sees it.
+    subscription.opened.catch(() => undefined)
     this.#subscriptions.set(sessionId, subscription)
     return subscription
   }
@@ -521,14 +539,32 @@ export class BridgeConnection {
       this.#options.log(`dropped a ${topic} event past ${MAX_FRAME_BYTES} bytes`)
       return false
     }
-    this.#transport.send(text)
-    this.#lastSendAt = this.#options.now()
-    return true
+    return this.#write(text)
   }
 
   #send(frame: ServerFrame): void {
     if (this.#disposed) return
-    this.#transport.send(encodeFrame(frame))
+    this.#write(encodeFrame(frame))
+  }
+
+  /**
+   * Hand one encoded frame to the carrier.
+   *
+   * A carrier that throws must not take the process down with it: every write
+   * here happens either inside a socket `data` handler or inside the approval
+   * waterfall, where an escaping exception becomes an uncaught exception. A
+   * failure is logged and the frame is dropped — the socket is already gone by
+   * then, so there is nobody left to answer.
+   * @returns whether the frame was handed to the carrier.
+   */
+  #write(text: string): boolean {
+    try {
+      this.#transport.send(text)
+    } catch (error) {
+      this.#options.log(`could not write a frame: ${failureText(error)}`)
+      return false
+    }
     this.#lastSendAt = this.#options.now()
+    return true
   }
 }

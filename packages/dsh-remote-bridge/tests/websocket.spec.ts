@@ -1,9 +1,12 @@
 import type { IncomingMessage } from 'node:http'
-import { PassThrough } from 'node:stream'
-import { nextTurn } from './support/harness.ts'
+import { Duplex, PassThrough } from 'node:stream'
 import { describe, expect, it } from 'vitest'
 import { OPCODE_BINARY, OPCODE_CLOSE, OPCODE_TEXT } from '../src/core/ws-frames.ts'
-import { WebSocketCarrier, bearerTokenOf, isWebSocketUpgrade, presentedTokenOf, queryTokenOf } from '../src/host/websocket.ts'
+import { WebSocketCarrier, bearerTokenOf, isWebSocketUpgrade, presentedTokenOf, queryTokenOf, serveUpgrade } from '../src/host/websocket.ts'
+import { makeBareHub, nextTurn, requestFrame, settle } from './support/harness.ts'
+
+/** The handshake key of the WebSocket specification's own example. */
+const WEB_SOCKET_KEY = 'dGhlIHNhbXBsZSBub25jZQ=='
 
 const HANDSHAKE_END = Buffer.from('\r\n\r\n')
 
@@ -23,14 +26,46 @@ interface ServerFrame {
   readonly payload: Buffer
 }
 
-/** A socket pair standing in for the upgraded connection, handshake already written. */
-function openCarrier(): { carrier: WebSocketCarrier; socket: PassThrough; bytes: () => Buffer } {
-  const socket = new PassThrough()
+/** A socket pair carrying a real byte stream in both directions. */
+interface SocketPair {
+  /** The client end of the inbound direction: writing here is the client talking. */
+  readonly inbound: PassThrough
+  /** The server end of the outbound direction: reading here is the client listening. */
+  readonly outbound: PassThrough
+  /** The duplex the carrier is handed. */
+  readonly socket: Duplex
+  /** @returns everything the carrier has written. */
+  serverBytes: () => Buffer
+}
+
+/**
+ * A socket pair built from two real streams: the client's bytes enter through
+ * `inbound` and the carrier's bytes leave through `outbound`, exactly as on a TCP
+ * connection, with no shared read side.
+ *
+ * A bare `PassThrough` cannot stand in for a socket here: the carrier writes to
+ * the socket and reads from it, so a loopback stream would feed the carrier's own
+ * handshake bytes and frames back into its own frame loop.
+ */
+function socketPair(): SocketPair {
+  const inbound = new PassThrough()
+  const outbound = new PassThrough()
   const chunks: Buffer[] = []
-  socket.on('data', (chunk: Buffer) => { chunks.push(chunk) })
-  const carrier = new WebSocketCarrier(socket)
+  outbound.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+  return {
+    inbound,
+    outbound,
+    socket: Duplex.from({ readable: inbound, writable: outbound }) as unknown as Duplex,
+    serverBytes: () => Buffer.concat(chunks),
+  }
+}
+
+/** A carrier over a real socket pair, handshake already written. */
+function openCarrier(): { carrier: WebSocketCarrier; socket: Duplex; bytes: () => Buffer } {
+  const pair = socketPair()
+  const carrier = new WebSocketCarrier(pair.socket)
   carrier.handshake('dGhlIHNhbXBsZSBub25jZQ==')
-  return { carrier, socket, bytes: () => Buffer.concat(chunks) }
+  return { carrier, socket: pair.socket, bytes: pair.serverBytes }
 }
 
 /** Everything written before the handshake finished. */
@@ -183,3 +218,74 @@ describe('WebSocket carrier', () => {
     expect(verdicts).toEqual([true, false])
   })
 })
+
+describe('WebSocket carrier over a real socket', () => {
+  it('user connects over a socket and the greeting sent into it is answered', async () => {
+    // Given the production upgrade handoff over a real duplex
+    const pair = socketPair()
+    const bare = makeBareHub()
+    serveUpgrade({ socket: pair.socket, secWebSocketKey: WEB_SOCKET_KEY, head: Buffer.alloc(0), hub: bare.hub })
+    // When the client writes a hello frame into the socket, with nobody calling feed()
+    pair.inbound.write(maskedFrame(OPCODE_TEXT, Buffer.from(requestFrame(1, 'hello', { proto: 1 }))))
+    await nextTurn()
+    await settle()
+    // Then the answer travelled back out through the socket
+    const frames = serverFrames(pair.serverBytes())
+    expect(frames.map(frame => frame.opcode)).toEqual([OPCODE_TEXT])
+    expect(JSON.parse(frames[0]?.payload.toString('utf8') ?? '') as unknown).toEqual({
+      t: 'res',
+      id: 1,
+      ok: true,
+      r: { proto: 1, minor: 0, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' },
+    })
+  })
+
+  it('user whose greeting arrived with the upgrade request still receives the answer', async () => {
+    // Given a client whose first frame rode the upgrade request as leftover `head` bytes
+    const pair = socketPair()
+    const bare = makeBareHub()
+    const head = maskedFrame(OPCODE_TEXT, Buffer.from(requestFrame(2, 'hello', { proto: 1 })))
+    // When the upgrade is handed over with no further socket traffic at all
+    serveUpgrade({ socket: pair.socket, secWebSocketKey: WEB_SOCKET_KEY, head, hub: bare.hub })
+    await nextTurn()
+    await settle()
+    // Then the leftover bytes were parsed, not discarded
+    const answers = serverFrames(pair.serverBytes()).map(frame => JSON.parse(frame.payload.toString('utf8')) as { id: number; ok: boolean })
+    expect(answers).toEqual([{ t: 'res', id: 2, ok: true, r: { proto: 1, minor: 0, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' } }])
+  })
+
+  it('user writes two frames into the socket in one chunk and both are answered in order', async () => {
+    // Given the production handoff over a real duplex
+    const pair = socketPair()
+    const bare = makeBareHub()
+    serveUpgrade({ socket: pair.socket, secWebSocketKey: WEB_SOCKET_KEY, head: Buffer.alloc(0), hub: bare.hub })
+    // When two frames arrive in a single chunk of bytes
+    pair.inbound.write(Buffer.concat([
+      maskedFrame(OPCODE_TEXT, Buffer.from(requestFrame(1, 'hello', { proto: 1 }))),
+      maskedFrame(OPCODE_TEXT, Buffer.from(requestFrame(2, 'session.list'))),
+    ]))
+    await nextTurn()
+    await settle()
+    // Then both were parsed out of the stream and both were answered
+    const answers = serverFrames(pair.serverBytes()).map(frame => JSON.parse(frame.payload.toString('utf8')) as { id: number })
+    expect(answers.map(answer => answer.id)).toEqual([1, 2])
+  })
+
+  it('operator hands the carrier bytes before the message handler exists and they are still answered', async () => {
+    // Given bytes that reached the socket before any upgrade was handed over
+    const pair = socketPair()
+    const bare = makeBareHub()
+    pair.inbound.write(maskedFrame(OPCODE_TEXT, Buffer.from(requestFrame(3, 'hello', { proto: 1 }))))
+    await nextTurn()
+    // When the upgrade is wired up afterwards
+    serveUpgrade({ socket: pair.socket, secWebSocketKey: WEB_SOCKET_KEY, head: Buffer.alloc(0), hub: bare.hub })
+    await nextTurn()
+    await settle()
+    // Then the frame that arrived first is delivered instead of being dropped
+    const answers = serverFrames(pair.serverBytes()).map(frame => JSON.parse(frame.payload.toString('utf8')) as unknown)
+    expect(answers).toEqual([
+      { t: 'res', id: 3, ok: true, r: { proto: 1, minor: 0, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' } },
+    ])
+  })
+})
+
