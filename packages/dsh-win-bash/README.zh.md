@@ -1,0 +1,102 @@
+# @linxin666/dsh-win-bash
+
+[English](README.md) | 中文
+
+为 Windows x64 的 DSH 会话提供「钉死版本 + 摘要的私有 bash」。插件随包携带自己的
+Git for Windows MinGit 载荷，在 `win_bash` 工具背后为每个会话维持一个持久 bash 进程，
+且绝不回退到 `PATH` 上找到的 bash。
+
+## 为什么需要它
+
+模型习惯用 bash 语法写 shell 命令——管道、`$VAR`、单引号、here-document——而只有
+PowerShell 的 Windows 会话往往只回一句语法错误。每一次报错都要多一轮往返，而且
+并不会告诉模型正确的写法。本包用真实、版本与字节都被钉死的 MSYS2 bash 消除这个
+循环：模型写什么方言，跑的就是什么方言。
+
+shell 必须持久，因为 shell 是有状态的：一条命令 `cd` 过、export 过变量，下一条命令
+就该看得见。每个会话一个进程正是这一点的实现方式。
+
+## 是什么
+
+- 只注册一个模型可见工具 `win_bash`。名字刻意不叫 `bash`：宿主本来就挂了自家的
+  bash 系工具，同名要么覆盖别人、要么被别人覆盖，两种都是静默的。
+- 每个会话维持一个持久 `bash -s` 进程。当前目录、导出的变量、函数、别名和 shell
+  历史在该会话的多次调用之间保留，且不与其它会话共享。
+- 每次调用都是前台命令：stdout 与 stderr 分离、各有字节上限、返回命令真实的退出码。
+- 工具注册之前先按 SHA256 清单校验随包载荷；摘要不匹配即拒绝挂载。
+
+本包不注册设置分区、不注册 HTTP 路由、没有浏览器半区：宿主直接用它自己的 Config
+schema 渲染本行的配置表单。
+
+## 安装
+
+### 从仓库安装（开发调试）
+
+```sh
+git clone https://github.com/zhu1090093659/dsh-web.git
+cd dsh-web
+pnpm install
+pnpm --filter @linxin666/dsh-win-bash build
+dsh plugin --profile web add link:$(pwd)/packages/dsh-win-bash
+```
+
+bundle patch 把本包的行在非 Windows 宿主上标为 disabled，因此 POSIX 的 profile 可以
+照常携带同一份组合，只是什么都不挂载。
+
+## 配置
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `timeoutMs` | 300000 | 单次调用的墙钟上限（毫秒，1000..3600000）。超时会停掉该 shell，下一次调用起新 shell。 |
+| `maxStdoutBytes` | 131072 | stdout 可见字节上限（1024..1048576）。超出部分从前面丢弃，并在结果里标记被截断。 |
+| `maxStderrBytes` | 32768 | stderr 可见字节上限（1024..524288）。 |
+| `description` | 内置 | 面向模型的工具描述；部署可描述自己的环境。 |
+
+## 工具接口
+
+| 参数 | 必填 | 含义 |
+| --- | --- | --- |
+| `command` | 是 | 要执行的 bash 命令，可多行。 |
+| `workdir` | 否 | 本次命令的工作目录。省略则沿用 shell 当前目录。 |
+| `timeoutMs` | 否 | 单次上限，会被夹到配置的上限。 |
+
+结果包含 `stdout`、`stderr`、命令的 `exitCode`，以及本次调用的沙箱事实。
+
+## 权限
+
+本工具从宿主的 sandbox-policy 服务解析会话的有效沙箱策略——与宿主自己的执行族
+读的是同一个来源。受限模式下，shell 的 argv 会先经过 sandbox provider 的 `confine`
+再派生；如果组合声明了受限模式却没有可用的 provider，本工具拒绝执行，而不是悄悄
+不受限地跑起来。
+
+本工具不提供单次调用提权参数。
+
+## 载荷
+
+随包载荷是 Git for Windows MinGit `v2.56.0.windows.2`（官方上游 release，
+`MinGit-2.56.0.2-64-bit.zip`），裁剪为 shell、其 userland 以及精确的 DLL 闭包。每个
+文件都登记在 `runtime/win32-x64/checksums.sha256`，每个被再分发组件的许可证文本都
+随载荷保留。[PROVENANCE.md](PROVENANCE.md) 记录上游 URL、源 zip 摘要、裁剪规则、载荷
+清单与许可证对照表。
+
+## 已知限制
+
+- 仅支持 Windows x64。载荷是 Windows MSYS2 构建，工具在任何其它平台或架构上都拒绝
+  用 `PATH` 上的 bash 顶替。
+- 不携带 ssh 客户端。MinGit 树里的 OpenSSH 一族被刻意排除；远程操作用会话自己的
+  工具。
+- 每个会话一个 shell，并随会话结束而结束。shell 退出或卡死时下一次调用会换一个新的，
+  且那次调用会明确说明。
+- 命令输出超过可见上限时会丢掉前面的一段。保留的是尾部，结果里也会写明被截断。
+
+## 后续工作
+
+- 聚合接线：本包刻意尚未成为 `dsh-web-all` 聚合包的子包，根 `cordis.patch.yml`
+  也未被改动。
+- 打包期校验脚本：重新下载钉死的 MinGit 资产、重建载荷并与 `checksums.sha256` 对
+  比，使载荷刷新由机器校验而不是靠人工评审。
+
+## 许可证
+
+本包自身源码为 Apache-2.0。随包载荷保留自己的许可证（含 GPL-2.0-or-later 与
+GPL-3.0-or-later）；见 [PROVENANCE.md](PROVENANCE.md)。

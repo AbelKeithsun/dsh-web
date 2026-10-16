@@ -35,3 +35,10 @@ scripts/* text eol=lf
 # Windows 批处理脚本（如未来新增）保持 CRLF
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# dsh-win-bash 随包 bash 载荷：二进制不得被 text=auto 或换行转换改写，
+# MSYS 运行时的文本配置保持 LF，使 checksums.sha256 覆盖的字节在检出后不变。
+packages/dsh-win-bash/runtime/win32-x64/usr/bin/* binary
+packages/dsh-win-bash/runtime/win32-x64/licenses/* text eol=lf
+packages/dsh-win-bash/runtime/win32-x64/etc/** text eol=lf
+packages/dsh-win-bash/runtime/win32-x64/checksums.sha256 text eol=lf
