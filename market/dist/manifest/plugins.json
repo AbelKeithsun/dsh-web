@@ -1780,6 +1780,18 @@
       "npm": "dsh-workspace-activity",
       "category": "ui",
       "subcategory": "panel"
+    },
+    {
+      "id": "dsh-clear-usage",
+      "name": "DSH Token 用量统计",
+      "rank": 140,
+      "nameEn": "DSH Token Usage",
+      "author": "xgxx666",
+      "description": "本地会话历史用量面板，与 dsh-usage-panel 有部分功能重叠。本插件侧重 DSH 原生缓存命中口径、今天的小时活动与 Token 构成，并保留原版输入框状态栏和详情弹窗；还支持日历热力图、本地/API 筛选，不估算费用。需要 DSH 0.2.0-rc.2 或更高兼容版本。",
+      "descriptionEn": "Local historical usage in DSH Settings, with some overlap with dsh-usage-panel. This plugin focuses on DSH-native cache-hit accounting, today's hourly activity and token composition, while leaving the built-in composer status and details intact. It also has a calendar heatmap and local/API filters; no cost estimates. Requires DSH 0.2.0-rc.2 or newer.",
+      "repo": "https://github.com/xgxx666/dsh-clear-usage",
+      "category": "utility",
+      "subcategory": "stats"
     }
   ]
 }
