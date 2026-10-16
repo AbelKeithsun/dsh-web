@@ -21,10 +21,17 @@
  * registers. See ./gate.ts for the API the gate reads and the timing
  * constraints it satisfies.
  *
+ * Host shell replacement: once win_bash is registered, the host's own pwsh
+ * tool is withdrawn from each session's model-facing surface, so the session's
+ * command work goes to bash rather than to the shell a model already knows.
+ * Windows only, visibility only, and per agent scope; see ./pwsh-replacement.ts
+ * for why it is neither global nor an execution denial.
+ *
  * Lifecycle: one shell process per calling agent, released when that agent is
- * disposed and when the plugin fiber unloads. apply() returns as soon as the
- * plugin is configured: the gate decides in mountWithGate, whose promise is
- * deliberately NOT returned from apply (see that function).
+ * disposed and when the plugin fiber unloads. The pwsh restriction follows the
+ * same lifecycle, lifted with the agent and with the fiber. apply() returns as
+ * soon as the plugin is configured: the gate decides in mountWithGate, whose
+ * promise is deliberately NOT returned from apply (see that function).
  * @module @linxin666/dsh-win-bash
  */
 
@@ -35,13 +42,21 @@ import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-tools'
 import { Config, resolveConfig, type WinBashConfig, type WinBashConfigInput } from './config.ts'
 import { startLiangShenGate, LIANGSHEN_PRESET_ID, type GateOptions, type GateOutcome } from './gate.ts'
+import { installPwshReplacement } from './pwsh-replacement.ts'
 import { resolveRuntime, type RuntimeReady, type HostPlatform } from './runtime.ts'
 import { ShellRegistry } from './shell.ts'
 import { buildWinBashTool } from './tool.ts'
 
 export { Config }
 export type { WinBashConfig, WinBashConfigInput }
-export { CONFIG_DEFAULTS, DEFAULT_DESCRIPTION, DEFAULT_SYNC_WITH_LIANGSHEN, validateConfig } from './config.ts'
+export {
+  CONFIG_DEFAULTS,
+  DEFAULT_DESCRIPTION,
+  DEFAULT_REPLACE_PWSH,
+  DEFAULT_SYNC_WITH_LIANGSHEN,
+  validateConfig,
+} from './config.ts'
+export { HOST_PWSH_TOOL, installPwshReplacement, type PwshReplacementOptions } from './pwsh-replacement.ts'
 export { WIN_BASH_TOOL } from './tool.ts'
 export { ShellRegistry, ShellUnavailableError } from './shell.ts'
 export { buildFrame, markerFor, parseFrame } from './protocol.ts'
@@ -102,6 +117,12 @@ export function gateRefusalMessage(outcome: GateOutcome): string {
 /**
  * Register the win_bash tool and its per-session shell registry on the calling
  * fiber. Called only once per fiber: the caller decides whether to call at all.
+ *
+ * The host pwsh replacement is installed from HERE and not from the gate or
+ * apply, because its precondition is exactly "win_bash is now on the wire": a
+ * deployment whose gate refused, whose payload failed verification, or that
+ * runs on a POSIX host never reaches this function and therefore never touches
+ * the host's shell.
  * @param ctx - context carrying tools and subprocess.
  * @param config - the resolved configuration.
  * @param runtime - the verified payload paths.
@@ -126,6 +147,8 @@ export function registerWinBash(ctx: Context, config: WinBashConfig, runtime: Ru
   ctx.on('agent/disposed', ({ agent }) => {
     void shells.dispose(agent, 'the owning agent was disposed')
   })
+
+  if (config.replacePwsh) installPwshReplacement(ctx)
 }
 
 /**

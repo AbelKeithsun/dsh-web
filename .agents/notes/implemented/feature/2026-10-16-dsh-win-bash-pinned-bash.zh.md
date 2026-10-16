@@ -30,6 +30,7 @@ DeepSeek 模型的后训练以 bash 工具面为主，Windows 会话只有 pwsh 
 - 已接入 dsh-web-all 聚合家族（聚合行 `web-ui-win-bash`，家族子路径 `@linxin666/dsh-web-all/win-bash`，`familyIds` 显式映射锁定短名），随全家桶默认安装；根 patch 不接，profile 挂载由聚合承担。打包期的「重下载钉版资产并 diff checksums」校验脚本仍为后续任务。
 - **可用性跟随梁神开关**：挂载时经 `ctx.agentPresets.list()` 检查 `liangshen` 预设是否已声明，未声明即不注册 `win_bash`（绝不注册一个总会报错的工具）；`syncWithLiangShen: false` 为逃生口。门控不在 apply 里 await（注册表审计会 await 宿主 loader 树，互等即死锁），判定在挂载续延里完成，先等宿主树 settle、首读未命中再有界重读；注册表无声明变更事件，开关切换经插件管理器刷新行后生效。实现与约束见 [packages/dsh-win-bash/AGENTS.md](../../../packages/dsh-win-bash/AGENTS.md) 与 src/gate.ts 模块头。
 - 宿主对未声明 `isConcurrencySafe` 的工具一律按 exclusive 调度（fail-closed），同一持久 shell 不存在并发帧竞争。
+- **shell 阶梯（仅 Windows）**：win_bash 挂载成功后，宿主 pwsh 经 `agent.ctx.tools.restrict` 从各会话的模型可见面隐藏（src/pwsh-replacement.ts）——刻意只隐藏、不在执行层拒绝：刻意直调 pwsh 仍正常执行，这是阶梯的下层退路（win_bash 优先 → pwsh 承担 Windows 原生工作与 bash 失败后的兜底；本包不携带 PowerShell 载荷，该段归宿主）。`replacePwsh: false` 为并存逃生口。隐藏按 agent 作用域施加、随 agent disposed 与插件卸载逐条恢复；宿主 pwsh 行晚挂载时经 `tools/change` 补隐藏（restrict 对未知名抛错，不在场不是判定）；预占 lifts 槽位防 tools/change 自激。POSIX 为绝对 no-op（模块首行平台门，任何读取/监听/restrict 之前返回）。win_bash 的工具描述首句（目录截断窗口内）承载「Windows 命令工作优先于 pwsh」的行为指引，机制事实放在窗口外。
 
 ## Testing
 

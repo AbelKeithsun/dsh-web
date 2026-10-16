@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CONFIG_DEFAULTS,
+  DEFAULT_REPLACE_PWSH,
   DEFAULT_SYNC_WITH_LIANGSHEN,
   DEFAULT_TIMEOUT_MS,
   TIMEOUT_MAX_MS,
@@ -49,6 +50,25 @@ describe('configuration resolution', () => {
     // escape hatch is a deliberate opt-out rather than the shipped state.
     expect(config.syncWithLiangShen).toBe(DEFAULT_SYNC_WITH_LIANGSHEN)
     expect(config.syncWithLiangShen).toBe(true)
+  })
+
+  it('operator mounting the shipped default gets the host pwsh replacement on', () => {
+    // Given a profile row that supplies no config,
+    const config = resolveConfig(undefined)
+    // When the config is resolved,
+    // Then replacement ships ON: a session with two shells and no stated
+    // preference is the state this key exists to remove.
+    expect(config.replacePwsh).toBe(DEFAULT_REPLACE_PWSH)
+    expect(config.replacePwsh).toBe(true)
+  })
+
+  it('operator turning the replacement off gets the two shells listed side by side', () => {
+    // Given a row that opts out of replacing the host shell,
+    // When the config is resolved,
+    const config = resolveConfig({ replacePwsh: false })
+    // Then the opt-out survives resolution while the defaults hold elsewhere.
+    expect(config.replacePwsh).toBe(false)
+    expect(config.syncWithLiangShen).toBe(DEFAULT_SYNC_WITH_LIANGSHEN)
   })
 
   it('operator turning the escape hatch off gets that value through to the running config', () => {
@@ -110,6 +130,14 @@ describe('configuration rejection', () => {
     // When the config is validated,
     // Then each offending field is reported separately.
     expect(violations.map(v => v.field)).toEqual(['timeoutMs', 'maxStdoutBytes', 'maxStderrBytes'])
+  })
+
+  it('operator supplying a non-boolean replacement switch gets a rejection naming the field', () => {
+    // Given a row whose pwsh replacement switch is not a boolean,
+    // When the config is validated,
+    const violations = validateConfig({ ...CONFIG_DEFAULTS, replacePwsh: 'no' as unknown as boolean })
+    // Then the offending field is named, so an operator can fix the row.
+    expect(violations).toEqual([{ field: 'replacePwsh', message: 'must be a boolean' }])
   })
 
   it('operator supplying a non-boolean sync switch gets a rejection naming the field', () => {

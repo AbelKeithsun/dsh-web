@@ -43,17 +43,35 @@ export const STDERR_MAX_BYTES = 512 * 1024
 export const DEFAULT_SYNC_WITH_LIANGSHEN = true
 
 /**
- * Model-facing tool description. Active voice; states the persistence
- * guarantee and the two facts a model must know before choosing this tool
- * over the host's own shell: this is a real MSYS2 bash, and its state belongs
- * to this session.
+ * Model-facing tool description. Active voice; states the shell preference and
+ * the persistence guarantee, so a model knows which shell to reach for before
+ * it knows anything else about this tool.
+ *
+ * The preference is a TRUNCATION CONTRACT, not a flourish: a preset that
+ * curates its catalog caps each uncurated line at 200 characters, so whatever
+ * sentence states which shell to use must fit in that window. The first
+ * sentence therefore carries it alone, and the qualification that follows
+ * explains the ladder without restating it.
  */
 export const DEFAULT_DESCRIPTION = [
-  "Run a command in this session's persistent bash shell, a pinned MSYS2 bash shipped with the plugin.",
+  "Run a command in this session's persistent pinned bash shell, the shell to use for command work on Windows: prefer it over pwsh.",
+  "pwsh stays the only other shell here: use it for Windows-native work (cmdlets, the registry, services) and as the fallback when a command is not bash; where this plugin replaces it, it is withdrawn from this session's tool surface while win_bash serves it, which hides it rather than forbidding it.",
   'The working directory, exported variables, functions and shell history persist across win_bash calls in this session;',
   'each call is a foreground command with bounded stdout and stderr and a real exit code.',
-  'Use this instead of the host shell when the command is bash or Unix syntax (pipes, $VAR, globs, single quotes, here-documents).',
+  'Use this instead of PowerShell when the command is bash or Unix syntax (pipes, $VAR, globs, single quotes, here-documents).',
 ].join(' ')
+
+/**
+ * Whether the host's pwsh tool is withdrawn from a session this plugin serves,
+ * by default.
+ *
+ * The shipped setting is true: with win_bash registered the session's command
+ * work belongs to bash, and leaving pwsh on the wire beside it is what makes a
+ * model pick the shell it already knows. The withdrawal is visibility only (a
+ * deliberate pwsh call still runs), so false is the escape hatch for an
+ * operator who wants both shells listed.
+ */
+export const DEFAULT_REPLACE_PWSH = true
 
 /** Config shape a profile row may supply; every field is optional. */
 export interface WinBashConfigInput {
@@ -67,6 +85,8 @@ export interface WinBashConfigInput {
   description?: string
   /** Whether the tool's availability follows the LiangShen preset declaration. */
   syncWithLiangShen?: boolean
+  /** Whether the host's pwsh tool is hidden while win_bash is registered. */
+  replacePwsh?: boolean
 }
 
 /** Config shape the plugin runs with; every field resolved. */
@@ -81,6 +101,8 @@ export interface WinBashConfig {
   description: string
   /** Whether the tool's availability follows the LiangShen preset declaration. */
   syncWithLiangShen: boolean
+  /** Whether the host's pwsh tool is hidden while win_bash is registered. */
+  replacePwsh: boolean
 }
 
 /** Runtime configuration schema for the win_bash tool. */
@@ -90,6 +112,7 @@ export const Config: z<WinBashConfigInput, WinBashConfig> = z.object({
   maxStderrBytes: z.number().min(STDERR_MIN_BYTES).max(STDERR_MAX_BYTES).default(DEFAULT_MAX_STDERR_BYTES),
   description: z.string().default(DEFAULT_DESCRIPTION),
   syncWithLiangShen: z.boolean().default(DEFAULT_SYNC_WITH_LIANGSHEN),
+  replacePwsh: z.boolean().default(DEFAULT_REPLACE_PWSH),
 })
 
 /** The values an omitted field takes. */
@@ -99,6 +122,7 @@ export const CONFIG_DEFAULTS: WinBashConfig = {
   maxStderrBytes: DEFAULT_MAX_STDERR_BYTES,
   description: DEFAULT_DESCRIPTION,
   syncWithLiangShen: DEFAULT_SYNC_WITH_LIANGSHEN,
+  replacePwsh: DEFAULT_REPLACE_PWSH,
 }
 
 /** One rejected configuration field. */
@@ -154,6 +178,9 @@ export function validateConfig(config: WinBashConfig): ConfigViolation[] {
   }
   if (typeof config.syncWithLiangShen !== 'boolean') {
     violations.push({ field: 'syncWithLiangShen', message: 'must be a boolean' })
+  }
+  if (typeof config.replacePwsh !== 'boolean') {
+    violations.push({ field: 'replacePwsh', message: 'must be a boolean' })
   }
   return violations
 }

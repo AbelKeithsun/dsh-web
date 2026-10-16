@@ -24,9 +24,41 @@ shell 必须持久，因为 shell 是有状态的：一条命令 `cd` 过、expo
   历史在该会话的多次调用之间保留，且不与其它会话共享。
 - 每次调用都是前台命令：stdout 与 stderr 分离、各有字节上限、返回命令真实的退出码。
 - 工具注册之前先按 SHA256 清单校验随包载荷；摘要不匹配即拒绝挂载。
+- `win_bash` 注册期间，把宿主自带的 `pwsh` 工具从会话的模型可见面上替换掉，
+  使命令工作落到 bash，而不是落到模型本来就更熟的那个 shell。见
+  [该用哪个 shell](#该用哪个-shell)。
 
 本包不注册设置分区、不注册 HTTP 路由、没有浏览器半区：宿主直接用它自己的 Config
 schema 渲染本行的配置表单。
+
+## 该用哪个 shell
+
+本包安装的是一个优先阶梯，而且是一条 Windows 阶梯：
+
+1. **`win_bash`** 承担命令工作。它是钉死版本的 MSYS2 bash，状态跨调用保留，
+   模型写什么方言，跑的就是什么方言。
+2. **`pwsh`** 承担只有 PowerShell 才做的 Windows 原生工作——cmdlet、注册表、
+   Windows 服务——并作为命令不是 bash 时的退路。它由宿主解析：装了 PowerShell 7
+   的机器就是 `pwsh`，没装的则是平台自带的 Windows PowerShell。本包不携带任何
+   PowerShell 载荷。
+
+`win_bash` 注册期间，本插件把 `pwsh` 从会话的工具面上撤下——这正是第一级能站住
+的原因：同时看得见两个 shell 的模型会选自己本来就熟的那个，而工具 schema 里没有
+任何东西能推翻这个习惯。效果就是「会话里只列出一个 shell」，因此 `win_bash` 描述里
+的记法是「隐藏它而不是禁止它」。
+
+- **只管可见性。** 模型刻意发起的 `pwsh` 调用照常执行：这里没有执行层守卫，也没有
+  pre-execute 拒绝——直接把退路那一级拿掉，等于用能力损失换取一个偏好。
+- **按会话生效，绝不进程级。** 撤下是本插件所服务会话上的作用域工具限制；同一部署
+  里的其它部分保留自己组合出来的面。
+- **只在 `win_bash` 真的挂载成功时。** 可用性门控拒绝、载荷校验失败、非 Windows
+  宿主，或行里写了 `replacePwsh: false`，都会让 `pwsh` 原封不动。对最终没有替代
+  shell 的部署再撤掉它唯一可用的 shell，会让会话两个都没有。
+- **仅 Windows。** POSIX 上宿主 shell 是 bash，win_bash 不挂载，这套逻辑不产生任何
+  限制、监听器或副作用。
+- **可逆。** 每条限制都会在对应会话销毁时、以及插件卸载时被解除，且逐个隔离回调。
+
+把 `replacePwsh` 设为 false 即可让两个 shell 并排列出，只靠工具描述表达偏好。
 
 ## 可用性
 
@@ -72,6 +104,7 @@ bundle patch 把本包的行在非 Windows 宿主上标为 disabled，因此 POS
 | `maxStderrBytes` | 32768 | stderr 可见字节上限（1024..524288）。 |
 | `description` | 内置 | 面向模型的工具描述；部署可描述自己的环境。 |
 | `syncWithLiangShen` | true | 为 true 时仅在 `liangshen` agent preset 已声明时注册本工具；false 跳过该门控、总是注册。 |
+| `replacePwsh` | true | 本工具注册期间，把宿主的 `pwsh` 工具从每个会话的模型可见面上撤下。只管可见性：刻意发起的 `pwsh` 调用照常执行。false 则两个 shell 并列。 |
 
 ## 工具接口
 

@@ -31,9 +31,51 @@ session is what makes that true.
   separated streams, and the command's real exit code.
 - Verifies the vendored payload against its SHA256 manifest before the tool is
   registered at all; a mismatch refuses the mount.
+- Replaces the host's own `pwsh` tool on the session's model-facing surface
+  while `win_bash` is registered, so command work goes to bash instead of to
+  the shell a model already knows. See [Which shell to use](#which-shell-to-use).
 
 It adds no settings section, no HTTP route and no browser half: the Host
 renders this row's configuration form from the plugin's own Config schema.
+
+## Which shell to use
+
+The preference this plugin installs is a ladder, and it is a Windows ladder:
+
+1. **`win_bash`** for command work. It is the pinned MSYS2 bash, its state
+   survives across calls, and the dialect a model writes for it is the dialect
+   that runs.
+2. **`pwsh`** for the Windows-native work only PowerShell does - cmdlets, the
+   registry, Windows services - and as the fallback when a command is not bash.
+   The Host resolves it, so a machine with PowerShell 7 installed gets `pwsh`
+   and one without gets the Windows PowerShell the platform ships. This package
+   carries no PowerShell payload of its own.
+
+While `win_bash` is registered, this plugin withdraws `pwsh` from the
+session's tool surface, which is what makes the first rung stick: a model that
+can see both shells picks the one it already knows, and nothing in a tool
+schema outvotes that habit. The effect is exactly that - a session with one
+listed shell - so the mnemonic the `win_bash` description carries is
+"hides it rather than forbidding it".
+
+- **Visibility only.** A `pwsh` call a model makes deliberately still runs.
+  There is no execution guard and no pre-execute denial: withdrawing the
+  fallback rung outright would trade a preference for a capability loss.
+- **Per session, never process-wide.** The withdrawal is a scoped tool
+  restriction on the sessions this plugin serves. Anything else in the same
+  deployment keeps the surface it composed.
+- **Only while `win_bash` is actually mounted.** A refused availability gate,
+  a payload that fails verification, a non-Windows host, or a row with
+  `replacePwsh: false` leaves `pwsh` exactly where it was. Withdrawing the
+  only usable shell of a deployment that ends up with no replacement shell
+  would leave the session with neither.
+- **Windows only.** On POSIX the host shell is bash, win_bash does not mount,
+  and this logic produces no restriction, no listener and no effect at all.
+- **Reversible.** Every restriction is lifted when its session is disposed and
+  when the plugin unloads, one isolated callback at a time.
+
+Set `replacePwsh: false` to list both shells side by side and advertise the
+preference with the tool description alone.
 
 ## Availability
 
@@ -86,6 +128,7 @@ so a POSIX profile can carry the same composition without mounting anything.
 | `maxStderrBytes` | 32768 | Visible stderr byte budget (1024..524288). |
 | `description` | built-in | Model-facing tool description; deployments may describe their own environment. |
 | `syncWithLiangShen` | true | When true, the tool registers only while the `liangshen` agent preset is declared; false skips that gate and always registers. |
+| `replacePwsh` | true | While this tool is registered, withdraw the host's `pwsh` tool from each session's model-facing surface. Visibility only: a deliberate `pwsh` call still runs. False lists both shells. |
 
 ## Tool interface
 
