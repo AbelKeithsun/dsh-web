@@ -192,6 +192,41 @@ const OFFLINE_HTML = [
 ].join('')
 
 /**
+ * Build assets under `/assets/` carry a content hash in the file name
+ * (`index-5SrrfWpU.js`, `langs/cpp-DIPi6g--.js`,
+ * `fonts/KaTeX_AMS-Regular-DRggAlZN.ttf`), so their bytes and their URL move
+ * together and a one-year max-age is safe.
+ *
+ * The tunneled instance serves them without any Cache-Control / ETag /
+ * Last-Modified, and this hop passed the origin's response through verbatim —
+ * which left the client with nothing to cache against: it re-fetched the whole
+ * shell on every load (measured 237502 B at 1.3-2.3 s TTFB through the relay,
+ * byte-identical each time). Caching hashed assets here is what makes a
+ * phone's second load cheap. Every other path keeps the origin's headers.
+ */
+const IMMUTABLE_ASSET_RE = /^\/assets\/(?:[\w.-]+\/)*[\w.-]+-[\w-]{8,}\.[A-Za-z0-9]+$/
+const IMMUTABLE_ASSET_CACHE = 'public, max-age=31536000, immutable'
+
+/** Whether one relay path names a content-hashed build asset. Deliberately
+ * narrow: an unhashed name under `/assets/` (a favicon, a manifest) keeps the
+ * origin's headers, because caching it for a year would be wrong. */
+export function isImmutableAssetPath(pathname) {
+  return IMMUTABLE_ASSET_RE.test(pathname)
+}
+
+/** Add immutable caching to a hashed build asset. Everything else — `/api/*`,
+ * HTML, unhashed names, WebSocket upgrades (101) and non-200 responses — is
+ * returned exactly as the origin sent it. */
+function withImmutableAssetCache(response, pathname, method) {
+  if (method !== 'GET' && method !== 'HEAD') return response
+  if (response.status !== 200) return response
+  if (!isImmutableAssetPath(pathname)) return response
+  const headers = new Headers(response.headers)
+  headers.set('cache-control', IMMUTABLE_ASSET_CACHE)
+  return new Response(response.body, { status: 200, statusText: response.statusText, headers })
+}
+
+/**
  * Proxy one request for `<id>.dsh-market.com` to the registered target.
  * The pairing cookie and every application check stay on the tunneled
  * instance; this hop rewrites only the Host header so the origin sees the
@@ -242,7 +277,8 @@ export async function handleRelayProxy(request, env, id) {
     // client sends an Upgrade request and the body is null).
     ...(request.headers.get('upgrade') === 'websocket' ? {} : { duplex: 'half' }),
   })
-  return fetch(forwarded)
+  const response = await fetch(forwarded)
+  return withImmutableAssetCache(response, target.pathname, request.method)
 }
 
 /** Dispatch for relay traffic: returns a Response, or undefined when the
