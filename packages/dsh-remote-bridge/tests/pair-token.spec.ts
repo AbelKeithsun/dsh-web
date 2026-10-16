@@ -34,10 +34,21 @@ function fakeRequest(options: { remoteAddress?: string; host?: string; method?: 
   } as unknown as IncomingMessage
 }
 
-/** Call the handler once and report what it wrote. */
-function callHandler(request: IncomingMessage): RecordingResponse {
+/**
+ * Call the handler once and report what it wrote.
+ *
+ * The origin seam defaults to "this machine knows nothing", so the assertions
+ * never depend on the registry of the machine running the suite.
+ */
+function callHandler(
+  request: IncomingMessage,
+  pairOrigin: () => { origin: string; source: 'env' | 'registry' } | undefined = () => undefined,
+): RecordingResponse {
   const response = new RecordingResponse()
-  makePairTokenHandler({ pairing: new PairingService(), log: () => undefined })(request, response.asServerResponse())
+  makePairTokenHandler({ pairing: new PairingService(), log: () => undefined, pairOrigin })(
+    request,
+    response.asServerResponse(),
+  )
   return response
 }
 
@@ -52,6 +63,41 @@ describe('bootstrap token endpoint', () => {
     expect(body.token.length).toBeGreaterThan(20)
     expect(body.expiresAt).toBeGreaterThan(0)
     expect(body.url).toBe(`ws://127.0.0.1:3000/ios/v1?token=${body.token}`)
+  })
+
+  it('operator on a host that knows its public origin is handed the one-scan code', () => {
+    // Given a loopback request and a host that located its relay origin
+    const response = callHandler(
+      fakeRequest({ remoteAddress: '127.0.0.1', host: '127.0.0.1:3000' }),
+      () => ({ origin: 'wss://abc123.dsh-market.com', source: 'registry' }),
+    )
+    // When the handler answers
+    const body = JSON.parse(response.body) as {
+      token: string
+      url: string
+      origin: string
+      originSource: string
+      pairingUrl: string
+    }
+    // Then the phone-facing code names that origin and carries the same token,
+    // while the machine-local link keeps its loopback Host
+    expect(response.status).toBe(200)
+    expect(body.origin).toBe('wss://abc123.dsh-market.com')
+    expect(body.originSource).toBe('registry')
+    expect(body.pairingUrl).toBe(`wss://abc123.dsh-market.com/ios/v1?token=${body.token}`)
+    expect(body.url).toBe(`ws://127.0.0.1:3000/ios/v1?token=${body.token}`)
+  })
+
+  it('operator on a host that cannot name its public origin gets no phone-facing code', () => {
+    // Given a loopback request and no discoverable origin
+    const response = callHandler(fakeRequest({ remoteAddress: '127.0.0.1', host: '127.0.0.1:3000' }))
+    // When the handler answers
+    const body = JSON.parse(response.body) as { token: string; origin?: string; pairingUrl?: string }
+    // Then the fields are absent rather than wrong, so the panel falls back to the bare token
+    expect(response.status).toBe(200)
+    expect(body.origin).toBeUndefined()
+    expect(body.pairingUrl).toBeUndefined()
+    expect(body.token.length).toBeGreaterThan(20)
   })
 
   it('operator reaches the pairing link through a public tunnel and is refused', () => {

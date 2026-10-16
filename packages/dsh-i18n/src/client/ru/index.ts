@@ -13,6 +13,7 @@ import { ru as modelCapabilities } from './model-capabilities.ts'
 import { ru as pet } from './pet.ts'
 import { ru as pluginManager } from './plugin-manager.ts'
 import { ru as presetCenter } from './preset-center.ts'
+import { ru as remoteBridge } from './remote-bridge.ts'
 import { ru as remoteWebUi } from './remote-web-ui.ts'
 import { ru as sessionId } from './session-id.ts'
 import { ru as sessionArchive } from './session-archive.ts'
@@ -34,6 +35,7 @@ export const ruDictionaries: Record<string, Record<string, string>> = {
   'settings.pluginManager': pluginManager,
   'dsh-web-ui-preset-center': presetCenter,
   'remote': remoteWebUi,
+  'remote-bridge': remoteBridge,
   'session-id': sessionId,
   'dsh-web-ui-session-archive': sessionArchive,
   'dsh-skill-explorer': skillExplorer,

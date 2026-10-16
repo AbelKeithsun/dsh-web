@@ -22,8 +22,13 @@ export const PAIR_TOKEN_URL = PAIR_TOKEN_PATH.replace(/^\/+/, '')
 
 /** The outcome of one token read. */
 export type PairTokenOutcome =
-  /** A live one-shot token and the instant it stops being accepted. */
-  | { kind: 'ok'; token: string; expiresAt: number }
+  /**
+   * A live one-shot token and the instant it stops being accepted, plus the
+   * address half when this machine can name its own public origin. `pairingUrl`
+   * is the code a QR should carry: a `{token, url}` document the phone parses
+   * into both halves of its configuration.
+   */
+  | { kind: 'ok'; token: string; expiresAt: number; origin: string | null; pairingUrl: string | null }
   /** 403: the page is not open on the machine itself, so the loopback gate refused it. */
   | { kind: 'forbidden' }
   /** The route answered with a status the panel does not know, or with a body that is not a token. */
@@ -46,6 +51,11 @@ export interface ReadPairTokenOptions {
   readonly fetchImpl?: PairTokenFetch
   /** Aborts an in-flight read (the panel closed, the entry unmounted). */
   readonly signal?: AbortSignal
+}
+
+/** Read a string field, treating a missing, mistyped or empty value as absent. */
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null
 }
 
 /**
@@ -84,5 +94,11 @@ export async function readPairToken(options: ReadPairTokenOptions = {}): Promise
   const expiresAt = (body as { expiresAt?: unknown }).expiresAt
   if (typeof token !== 'string' || token === '') return { kind: 'failed', status: response.status }
   if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return { kind: 'failed', status: response.status }
-  return { kind: 'ok', token, expiresAt }
+  // Additive fields: a host that predates origin discovery answers without
+  // them, and the panel then falls back to the bare-token code instead of
+  // refusing to show anything.
+  const origin = stringOrNull((body as { origin?: unknown }).origin)
+  const candidate = stringOrNull((body as { pairingUrl?: unknown }).pairingUrl)
+  const pairingUrl = candidate !== null && /^wss?:\/\/\S+$/.test(candidate) ? candidate : null
+  return { kind: 'ok', token, expiresAt, origin, pairingUrl }
 }

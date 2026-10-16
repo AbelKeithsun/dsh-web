@@ -30,7 +30,9 @@ function makeReader(tokens: readonly string[]) {
     read: async (): Promise<PairTokenOutcome> => {
       const token = tokens[Math.min(served, tokens.length - 1)] ?? ''
       served += 1
-      return { kind: 'ok', token, expiresAt: Date.now() + 30_000 }
+      // No origin in this stub: the entry's own flow is what is under test here,
+      // and the origin-bearing code has its own cases in the panel and reader specs.
+      return { kind: 'ok', token, expiresAt: Date.now() + 30_000, origin: null, pairingUrl: null }
     },
     served: () => served,
   }

@@ -19,8 +19,14 @@ import css from './panel.module.css'
 export type PairPanelState =
   /** A read is in flight. */
   | { kind: 'reading' }
-  /** A live one-shot secret: the QR carries the bare token, nothing else. */
-  | { kind: 'ready'; token: string; issuedAt: number; expiresAt: number }
+  /**
+   * A live one-shot secret. `pairingUrl`, when the host could name its own
+   * public origin, is what the QR encodes: a `{token, url}` document the iOS
+   * client parses into both halves of its configuration, so one scan sets the
+   * address AND the token. With no origin the QR carries the bare token and the
+   * panel says the address has to be set on the phone by hand.
+   */
+  | { kind: 'ready'; token: string; issuedAt: number; expiresAt: number; origin: string | null; pairingUrl: string | null }
   /** 403 from the loopback gate: this page is not open on the machine itself. */
   | { kind: 'forbidden' }
   /** The host route answered with an unexpected status or shape. */
@@ -47,8 +53,10 @@ export interface PairPanelProps {
 /**
  * The QR symbol, memoized on the secret: the countdown re-renders the panel
  * every second, and qrcode.react rebuilds the whole module path on each render.
- * The encoded value is the bare token and nothing else — a URL or a JSON
- * document here would let the phone parser rewrite its own origin.
+ * The encoded value is the host's own `pairingUrl` verbatim when there is one —
+ * a `{token, url}` document whose `url` names THIS instance's public relay, so
+ * the phone adopts an origin that actually reaches this host. The bare-token
+ * fallback means the phone keeps whatever origin it already has.
  */
 const PairQrCode = memo(function PairQrCode({ value, label }: { value: string; label: string }) {
   return <QRCodeSVG value={value} size={184} level="M" marginSize={1} aria-label={label} />
@@ -75,6 +83,9 @@ export function PairPanel({ t, state, now, host, copy, onClose, onRefresh, onCop
   const seconds = Math.ceil(remainingMs / 1000)
   const windowMs = state.kind === 'ready' ? Math.max(1, state.expiresAt - state.issuedAt) : 1
   const percent = Math.min(100, Math.max(0, Math.round((remainingMs / windowMs) * 100)))
+  // What the QR encodes and what the copy button hands over: the same string,
+  // so a human can paste exactly what a camera would have read.
+  const payload = state.kind === 'ready' ? (state.pairingUrl ?? state.token) : ''
 
   return (
     <div className={css.overlay} role="presentation">
@@ -114,8 +125,8 @@ export function PairPanel({ t, state, now, host, copy, onClose, onRefresh, onCop
         {state.kind === 'ready' && (
           <>
             <div className={css.qrCard}>
-              <div className={css.qrWrap} data-dsh-part={PART_QR} {...{ [QR_VALUE_ATTR]: state.token }}>
-                <PairQrCode value={state.token} label={t('pair.qrLabel')} />
+              <div className={css.qrWrap} data-dsh-part={PART_QR} {...{ [QR_VALUE_ATTR]: payload }}>
+                <PairQrCode value={payload} label={t('pair.qrLabel')} />
               </div>
               {expired ? (
                 <Notice tone="alert" title={t('pair.expired')} body={t('pair.expiredHint')} />
@@ -130,8 +141,8 @@ export function PairPanel({ t, state, now, host, copy, onClose, onRefresh, onCop
             </div>
 
             <div className={css.tokenRow} data-dsh-part={PART_TOKEN}>
-              <span className={css.tokenLabel}>{t('pair.tokenLabel')}</span>
-              <code className={css.token}>{state.token}</code>
+              <span className={css.tokenLabel}>{t('pair.payloadLabel')}</span>
+              <code className={css.token}>{payload}</code>
             </div>
 
             <button
@@ -140,13 +151,21 @@ export function PairPanel({ t, state, now, host, copy, onClose, onRefresh, onCop
               data-dsh-part={PART_COPY}
               data-copied={copy === 'copied'}
               data-failed={copy === 'failed'}
-              onClick={() => { onCopy(state.token) }}
+              onClick={() => { onCopy(payload) }}
             >
               {copy === 'copied' ? <CheckIcon /> : <CopyIcon />}
               {copy === 'copied' ? t('action.copied') : copy === 'failed' ? t('action.copyFailed') : t('action.copy')}
             </button>
 
-            <Notice tone="warning" title={t('origin.title')} body={t('origin.body', { host })} />
+            {state.pairingUrl === null ? (
+              <Notice tone="warning" title={t('origin.title')} body={t('origin.body', { host })} />
+            ) : (
+              <Notice
+                tone="plain"
+                title={t('origin.located.title')}
+                body={t('origin.located.body', { origin: state.origin ?? '' })}
+              />
+            )}
           </>
         )}
 

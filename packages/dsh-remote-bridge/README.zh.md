@@ -105,6 +105,21 @@ curl -s http://127.0.0.1:3080/remote-bridge/pair/token
 # {"token":"...","expiresAt":1760000030000,"url":"ws://127.0.0.1:3080/ios/v1?token=..."}
 ```
 
+当这台机器能说出自己的公网地址时——先看 `DSH_REMOTE_PUBLIC_BASE_URL`，其次看 `dsh-remote-web-ui` 维护的中继注册表 `$DSH_HOME/remote-web-ui-registry/<profile>.json`——同一个响应里会多出地址那一半：
+
+```json
+{
+  "token": "...",
+  "expiresAt": 1760000030000,
+  "url": "ws://127.0.0.1:3080/ios/v1?token=...",
+  "origin": "wss://<id>.dsh-market.com",
+  "originSource": "registry",
+  "pairingUrl": "wss://<id>.dsh-market.com/ios/v1?token=..."
+}
+```
+
+`pairingUrl` 就是二维码该装的东西：iOS 客户端会解析 `{token, url}` 并从 `url` 取 origin，所以扫一次就同时设好地址与一次性 token，手机上什么都不用输。查不到公网地址时这两个字段**缺省而非瞎猜**，面板退回只装裸配对码，手机保持它已有的地址不变。
+
 ### 设备令牌
 
 `pair.begin` 应答一个 nonce 及其过期时刻；客户端用 P-256 密钥对 nonce 的原始字节签名，并以 base64url 的 SPKI 公钥与 base64url 的 ES256 签名调用 `pair.finish`。签名必须是 WebCrypto 与 CryptoKit 产出的原始 64 字节 `r||s` 形态，不能是 DER 包装：宿主先校验长度再验签，重新编码过的签名会被拒绝。宿主回一个 32 随机字节的 base64url 设备令牌及其 deviceId。服务端只存该令牌的 SHA-256 哈希，因此名册文件即使被拿走也换不出可用凭据。

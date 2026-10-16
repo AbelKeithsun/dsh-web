@@ -14,10 +14,13 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { loopbackDenialOf } from '../core/loopback.ts'
 import { PAIR_TOKEN_PATH, WS_PATH } from '../core/protocol.ts'
 import type { PairingService } from '../core/pairing.ts'
+import { discoverPairOrigin, type PairOriginFacts } from './pair-origin.ts'
 
 export interface PairTokenRouteDeps {
   readonly pairing: PairingService
   readonly log: (message: string) => void
+  /** Origin discovery seam; defaults to {@link discoverPairOrigin}. */
+  readonly pairOrigin?: () => PairOriginFacts | undefined
 }
 
 /** Write one JSON response. The family's shared reader/writer is not copied into this package. */
@@ -50,14 +53,29 @@ export function makePairTokenHandler(deps: PairTokenRouteDeps): WebRoute['handle
       return
     }
     const ticket = deps.pairing.issueToken()
-    // The link a phone can open directly. The token rides the query because a
-    // WebSocket handshake started from a share sheet cannot set a header; the
-    // connection it opens is UNPAIRED, which is exactly what `pair.begin`
-    // needs.
+    // The link a client ON THIS MACHINE can open directly. The token rides the
+    // query because a WebSocket handshake started from a share sheet cannot set
+    // a header; the connection it opens is UNPAIRED, which is exactly what
+    // `pair.begin` needs.
     const host = req.headers.host ?? '127.0.0.1'
     const url = `ws://${host}${WS_PATH}?token=${ticket.value}`
-    deps.log(`pair a device with ${url}`)
-    writeJson(res, 200, { token: ticket.value, expiresAt: ticket.expiresAt, url })
+    // The link the PHONE should dial, when this machine knows its own public
+    // origin. `pairingUrl` is what a QR should carry: the iOS client parses
+    // `{token, url}` and adopts the origin from `url`, so one scan sets both.
+    const discovered = (deps.pairOrigin ?? discoverPairOrigin)()
+    const pairingUrl = discovered === undefined ? undefined : `${discovered.origin}${WS_PATH}?token=${ticket.value}`
+    deps.log(
+      pairingUrl === undefined
+        ? `pair a device with ${url}`
+        : `pair a device with ${url} (phone: ${pairingUrl})`,
+    )
+    writeJson(res, 200, {
+      token: ticket.value,
+      expiresAt: ticket.expiresAt,
+      url,
+      ...(discovered === undefined ? {} : { origin: discovered.origin, originSource: discovered.source }),
+      ...(pairingUrl === undefined ? {} : { pairingUrl }),
+    })
   }
 }
 

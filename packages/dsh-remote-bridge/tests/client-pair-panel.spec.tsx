@@ -47,7 +47,7 @@ afterEach(() => {
 describe('protocol v1 pairing panel', () => {
   it('operator sees the bare pairing code in the QR symbol and in plaintext', () => {
     // Given a live code on screen
-    const container = mount({ kind: 'ready', token: 'Kq7xTt2mRw9vLpB4nJcH5sYzA1eU8gFoI3dXbN0rQ6w', issuedAt: 1_000_000, expiresAt: 1_030_000 })
+    const container = mount({ kind: 'ready', token: 'Kq7xTt2mRw9vLpB4nJcH5sYzA1eU8gFoI3dXbN0rQ6w', issuedAt: 1_000_000, expiresAt: 1_030_000, origin: null, pairingUrl: null })
     // When the reader looks at the symbol and the code row
     const qr = container.querySelector('[data-dsh-part="qr"]')
     const token = container.querySelector('[data-dsh-part="token"] code')
@@ -61,7 +61,7 @@ describe('protocol v1 pairing panel', () => {
 
   it('operator sees the countdown while the code is live and the expiry state after the deadline', () => {
     // Given a code minted at t=1_000_000 with a 30 s window
-    const state: PairPanelState = { kind: 'ready', token: 'Kq7xTt2m', issuedAt: 1_000_000, expiresAt: 1_030_000 }
+    const state: PairPanelState = { kind: 'ready', token: 'Kq7xTt2m', issuedAt: 1_000_000, expiresAt: 1_030_000, origin: null, pairingUrl: null }
     // When the panel renders one second in, then one second past the deadline
     const live = mount(state, 1_001_000)
     expect(screen.getByText('剩余 29 秒')).toBeInstanceOf(HTMLElement)
@@ -75,7 +75,7 @@ describe('protocol v1 pairing panel', () => {
 
   it('operator is told the phone origin is the public relay rather than this page', () => {
     // Given a live code on a page served from this machine's loopback address
-    const container = mount({ kind: 'ready', token: 'Kq7xTt2m', issuedAt: 1_000_000, expiresAt: 1_030_000 })
+    const container = mount({ kind: 'ready', token: 'Kq7xTt2m', issuedAt: 1_000_000, expiresAt: 1_030_000, origin: null, pairingUrl: null })
     // When the panel renders its notices
     const notices = [...container.querySelectorAll('[data-dsh-part="notice"]')].map(node => node.textContent ?? '')
     // Then one notice names the relay origin and says this page's host is unreachable from the phone
@@ -106,5 +106,28 @@ describe('protocol v1 pairing panel', () => {
     // Then neither is silent, and each names its own cause
     expect(failedText).toContain('宿主返回了 HTTP 500')
     expect(unreachableText).toContain('请求没有到达宿主')
+  })
+
+  it('operator on a machine that knows its public address gets a one-scan code', () => {
+    // Given a host that located its relay origin and handed back the code for it
+    const payload = JSON.stringify({ token: 'Kq7xTt2m', url: 'wss://abc.dsh-market.com/ios/v1?token=Kq7xTt2m' })
+    const container = mount({
+      kind: 'ready',
+      token: 'Kq7xTt2m',
+      issuedAt: 1_000_000,
+      expiresAt: 1_030_000,
+      origin: 'wss://abc.dsh-market.com',
+      pairingUrl: payload,
+    })
+    // When the panel renders
+    const shown = container.querySelector('[data-dsh-part="token"]')?.textContent ?? ''
+    const qr = container.querySelector(`[${QR_VALUE_ATTR}]`)
+    const notices = [...container.querySelectorAll('[data-dsh-part="notice"]')].map(node => node.textContent ?? '')
+    // Then the QR carries the whole {token,url} document, the plaintext is the same
+    // string so it can be pasted instead of scanned, and the notice says the address
+    // travelled with the code instead of leaving it to the operator
+    expect(qr?.getAttribute(QR_VALUE_ATTR)).toBe(payload)
+    expect(shown).toContain(payload)
+    expect(notices.some(text => text.includes('wss://abc.dsh-market.com') && text.includes('已写进二维码'))).toBe(true)
   })
 })

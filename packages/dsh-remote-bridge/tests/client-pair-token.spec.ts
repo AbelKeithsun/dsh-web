@@ -31,9 +31,52 @@ describe('protocol v1 pairing code read', () => {
     // When the panel reads one
     const outcome = await readPairToken({ fetchImpl: transport })
     // Then the token and its deadline cross, and the route is this package's own
-    expect(outcome).toEqual({ kind: 'ok', token: 'Zm9vYmFy', expiresAt: 1_760_000_030_000 })
+    expect(outcome).toEqual({ kind: 'ok', token: 'Zm9vYmFy', expiresAt: 1_760_000_030_000, origin: null, pairingUrl: null })
     expect(asked).toBe(PAIR_TOKEN_URL)
     expect(asked).toBe('remote-bridge/pair/token')
+  })
+
+  it('operator on a host that knows its public origin gets the one-scan code', async () => {
+    // Given a body that also names the origin a phone should dial
+    const pairingUrl = 'wss://abc.dsh-market.com/ios/v1?token=Zm9vYmFy'
+    const transport = answering(200, {
+      token: 'Zm9vYmFy',
+      expiresAt: 1_760_000_030_000,
+      url: 'ws://127.0.0.1:3000/ios/v1?token=Zm9vYmFy',
+      origin: 'wss://abc.dsh-market.com',
+      originSource: 'registry',
+      pairingUrl,
+    })
+    // When the panel reads it
+    const outcome = await readPairToken({ fetchImpl: transport })
+    // Then both halves cross, so the panel can encode {token,url} instead of a bare code
+    expect(outcome).toEqual({
+      kind: 'ok',
+      token: 'Zm9vYmFy',
+      expiresAt: 1_760_000_030_000,
+      origin: 'wss://abc.dsh-market.com',
+      pairingUrl,
+    })
+  })
+
+  it('operator scans a code whose address is not a websocket origin and the panel falls back', async () => {
+    // Given a body whose pairingUrl is not a dialable ws(s) URL
+    const transport = answering(200, {
+      token: 'Zm9vYmFy',
+      expiresAt: 1_760_000_030_000,
+      origin: 'wss://abc.dsh-market.com',
+      pairingUrl: 'https://elsewhere.example/steal?token=Zm9vYmFy',
+    })
+    // When the panel reads it
+    const outcome = await readPairToken({ fetchImpl: transport })
+    // Then the code falls back to the bare token instead of pointing the phone elsewhere
+    expect(outcome).toEqual({
+      kind: 'ok',
+      token: 'Zm9vYmFy',
+      expiresAt: 1_760_000_030_000,
+      origin: 'wss://abc.dsh-market.com',
+      pairingUrl: null,
+    })
   })
 
   it('operator opens the page from another machine and the loopback gate refuses it', async () => {

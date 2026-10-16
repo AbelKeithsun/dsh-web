@@ -105,6 +105,21 @@ curl -s http://127.0.0.1:3080/remote-bridge/pair/token
 # {"token":"...","expiresAt":1760000030000,"url":"ws://127.0.0.1:3080/ios/v1?token=..."}
 ```
 
+When this machine can name its own public origin — `DSH_REMOTE_PUBLIC_BASE_URL`, else the relay registry row `$DSH_HOME/remote-web-ui-registry/<profile>.json` that `dsh-remote-web-ui` keeps — the same answer carries the address half too:
+
+```json
+{
+  "token": "...",
+  "expiresAt": 1760000030000,
+  "url": "ws://127.0.0.1:3080/ios/v1?token=...",
+  "origin": "wss://<id>.dsh-market.com",
+  "originSource": "registry",
+  "pairingUrl": "wss://<id>.dsh-market.com/ios/v1?token=..."
+}
+```
+
+`pairingUrl` is what a pairing QR should carry: the iOS client parses `{token, url}` and adopts the origin from `url`, so one scan sets both the address and the one-shot token and the operator types nothing on the phone. With no discoverable origin those two fields are absent rather than guessed, the panel falls back to a bare-token code, and the phone keeps whatever origin it already has.
+
 ### Device token
 
 `pair.begin` answers with a nonce and its expiry; the client signs the nonce's raw bytes with a P-256 key and calls `pair.finish` with the base64url SPKI public key and the base64url ES256 signature. The signature must be the raw 64-byte `r||s` form that WebCrypto and CryptoKit produce, not a DER wrapper: the host checks the length before it verifies, so a re-encoded signature is refused. The host answers with a 32-byte random device token, base64url encoded, and its device id. The server keeps only the SHA-256 hash of that token, so a stolen roster file does not yield a usable credential.

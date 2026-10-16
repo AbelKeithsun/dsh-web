@@ -37,7 +37,15 @@ export type PairEntryProps = PropsLocale<'remote-bridge'> & {
 /** Map a read outcome onto the panel's view state. */
 function panelStateOf(outcome: PairTokenOutcome, issuedAt: number): PairPanelState {
   switch (outcome.kind) {
-    case 'ok': return { kind: 'ready', token: outcome.token, issuedAt, expiresAt: outcome.expiresAt }
+    case 'ok':
+      return {
+        kind: 'ready',
+        token: outcome.token,
+        issuedAt,
+        expiresAt: outcome.expiresAt,
+        origin: outcome.origin,
+        pairingUrl: outcome.pairingUrl,
+      }
     case 'forbidden': return { kind: 'forbidden' }
     case 'unreachable': return { kind: 'unreachable' }
     case 'failed': return { kind: 'failed', status: outcome.status }
