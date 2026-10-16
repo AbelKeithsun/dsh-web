@@ -44,7 +44,7 @@
 | `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1","session.snapshot.trim.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" 或 "unpaired"}` |
 | `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
 | `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
-| `session.snapshot` | `{sessionId}` | `{turns:[...], lastSeq:<uint>}` |
+| `session.snapshot` | `{sessionId, maxBytes?}` | `{turns:[...], lastSeq:<uint>, hasMore?}` |
 | `session.history` | `{sessionId, before?, maxBytes?}` | `{turns:[...], nextBefore?:<uint>, hasMore:<bool>}` |
 | `session.prompt` | `{sessionId, text, requestId}` | `{accepted:true}` |
 | `session.interrupt` | `{sessionId}` | `{ok:true}` |
@@ -55,6 +55,8 @@
 `hello` 无需设备令牌即可调用，并回报本连接自身的 `auth` 状态。`session.snapshot` 把宿主 follow 流的开帧快照映射成 `turns`，把它的 cursor 作为 `lastSeq` 回报，随后保持该流作为本连接对该会话的订阅；`session.prompt` 幂等地确保同一条订阅，因此客户端可以跳过 snapshot。发言模式固定为排队，`clientTimeZone` 由服务端填本机 IANA 时区，`requestId` 是幂等键：同名 `requestId` 在同一会话内只发一次，重复调用直接回 `{accepted:true}` 且不再发送。`session.interrupt` 取消回合，不拆除订阅。
 
 `hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本协议版本认识的能力只有一个：`session.snapshot.trim.v1`。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
+
+第二个能力 `session.snapshot.page.v1` 给首屏本身加上页预算。不声明时，一次快照仍是整个开帧窗口，逐字节与今天一致。声明之后，`session.snapshot` 只回最新一页，按 `maxBytes`（默认 524288，即 512 KiB；不是可用预算就拒绝，而不是悄悄夹取）衡量，并用 `session.history` 那同一套按 entry 的切片来切：一个回合的 entry 可以跨在这一页与下一页之间，而该回合保留自己的字段；比整页预算还大的单条 entry 独占一页；`snapshot-too-large` 再也不会回给这样的连接。这一页带 `lastSeq` 与 `hasMore`，而它继续往回的游标就是它自己最旧那条 entry 的 `seq`——正是 `session.history` 的 `before` 所取的值，所以不再用 `nextBefore` 重述一遍。于是打开一个会话只需一页，`session.history` 以同样的 512 KiB 页把窗口其余部分往回走完。
 
 `session.snapshot` 与 `session.history` 按宿主要求的方式寻址会话。普通会话用它自己的 id 寻址；被委派的子会话——名册行带 `origin:"subagent"` 的那些——只能通过它的持久父会话寻址，而把一个子会话当作普通会话来问，宿主会回 `session/agent-busy`。桥依据宿主自己的这条拒绝来判定，而不是去猜：它只对这一个会话改用委派地址 `{kind:"subagent", parentSessionId, childSessionId, mode:"unknown"}` 重试一次，并把子会话的真实历史交给客户端。父 id 来自名册——唯一携带谱系的端点：先列会话再打开会话的客户端不会多付一次读取，而每个连接最多读一次名册。普通会话永远不为此付费：它们第一次尝试就打开。没有内容可看的会话也不等于失败：日志里只有宿主自己记账记录的会话，回的是真实投影加一个空回合；只有拿不到开帧、或宿主自己抛错，才会被拒绝。
 
@@ -231,6 +233,7 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
 - **不做增量补发。** 发现跳号或重连的客户端重新调 `session.snapshot` 拿完整基线；本包不为断开的客户端缓存 delta。
 - **被委派的子会话每个连接最多付一次名册读取。** 子会话的持久父 id 只有 `session.list` 会发布，所以一个连接在没先列名册的情况下打开的第一个子会话，要付一次名册读取；此后任何父名下的任何子会话都不再付费，而先列名册再打开的客户端一分不付。名册若没有指明该子会话的父，桥会让宿主自己的拒绝（`session/agent-busy`）原样穿过，而不是编造一个地址。
 - **`session.history` 到不了开帧窗口之下。** 分页走的就是 `session.snapshot` 所用的那份基线，因此最旧可达的 entry 就是那个窗口里最旧的 entry——受宿主自己的 `maxMessages` 窗口（200 条消息）限制。开帧上的 `hasMore` 是宿主对更旧内容的回答，桥不会越过它去取。
+- **比一帧还大的单条 entry 无法被塞进预算。** 分页首屏与 `session.history` 都会让这样的 entry 独占一页而不是拒绝，因此承载它的那一页可能超过 10 MiB 单帧上限；其余每一页都留在自己的预算之内。
 - **工具调用参数以增量到达。** `tool-call` 增量的 `argumentsDelta` 可以为空串，参数由客户端拼装；整次调用不会被重发。
 - **订阅比 interrupt 活得久。** `session.interrupt` 只取消回合；订阅在连接关闭时结束，一个连接名下的 follow 流由同一个 AbortController 一起 abort。
 - **`clientTimeZone` 由宿主侧填写。** 桥接用本机 IANA 时区填充它；v1 里客户端无法指定自己的时区。
