@@ -183,9 +183,12 @@ export function checkParentLink(
 
 /**
  * The tasks one run request opens executions for: the requested task first,
- * then its on-board descendants within the configured depth. Archived tasks
- * never run; a participant that already has an open execution is skipped by
- * the caller, which cannot start it twice.
+ * then its on-board descendants within the configured depth. This is the
+ * SHAPE of a cascade — every walk that must see the whole tree (settlement,
+ * archive/restore, the running lock) reads it. The run path filters it with
+ * {@link joinsCascadeRun}: archived tasks never run, a participant that already
+ * has an open execution is skipped by the caller, which cannot start it twice,
+ * and a finished descendant is left alone.
  */
 export function cascadeTargets(
   tasks: readonly TaskRecord[],
@@ -195,6 +198,27 @@ export function cascadeTargets(
   const root = tasks.find(task => task.id === rootId)
   if (root === undefined) return []
   return [root, ...descendantTasks(tasks, rootId, maxSubtaskDepth)]
+}
+
+/**
+ * Whether a cascade member takes part in a new run.
+ *
+ * The task the user ran is always a member: the request names that card, and
+ * the operator asked for it to run whatever its column says. A descendant does
+ * not join once it sits in the `done` column — its work is finished, so running
+ * the parent again is a run of the parent, never a second execution of work
+ * that is already done. The rule keys on the column alone, so it covers both a
+ * subtask that ran and one an operator moved to done by hand, and it holds for
+ * every trigger: a manual run, a re-run, and a due occurrence of a schedule.
+ * A card whose own schedule is enabled settles back into `todo`, so a scheduled
+ * subtask stays a participant; to make a finished one run again, move it back
+ * to `todo` or run it on its own.
+ * @param task - the candidate member.
+ * @param rootId - the task the run request named.
+ * @returns false when this member is left alone by the run.
+ */
+export function joinsCascadeRun(task: TaskRecord, rootId: string): boolean {
+  return task.id === rootId || task.status !== 'done'
 }
 
 /** One still-open execution belonging to a cascade run group. */

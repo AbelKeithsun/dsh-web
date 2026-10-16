@@ -10,6 +10,7 @@ import {
   DEFAULT_SUBTASK_DEPTH,
   cascadeTargets,
   combineCascadeOutcome,
+  joinsCascadeRun,
   normalizeSubtaskDepth,
   openGroupExecution,
   pendingCascadeChildren,
@@ -1267,10 +1268,11 @@ export class HostTaskLedger {
   }
 
   /**
-   * Open one execution per cascade participant (the requested task and its
-   * on-board descendants, within the depth limit) under a single run group, and
-   * commit the ledger once. The returned runs are ordered root-first, so the
-   * Host launches the parent before its subtasks.
+   * Open one execution per cascade participant that still has work (the
+   * requested task and its on-board descendants, within the depth limit) under
+   * a single run group, and commit the ledger once. A descendant in 'done' is
+   * not a participant ({@link joinsCascadeRun}). The returned runs are ordered
+   * root-first, so the Host launches the parent before its subtasks.
    * @param root - the task the user ran.
    * @param now - clock instant (ms epoch).
    * @param initiator - the DSH session that asked for the run (audit only).
@@ -1290,6 +1292,11 @@ export class HostTaskLedger {
     const runs: OpenedRun[] = []
     for (const task of cascadeTargets(before, root.id, this.maxSubtaskDepth)) {
       if (task.archivedAt !== undefined) continue
+      // A subtask that already sits in 'done' is left alone: running the parent
+      // repeats the parent, never the work a subtask has already finished. The
+      // rule is the card's column, so it holds for a manual run, a re-run and a
+      // due occurrence alike.
+      if (!joinsCascadeRun(task, root.id)) continue
       if (hasOpenExecution(task)) continue
       const base = rerun && task.id === root.id ? withStatus(task, 'todo', now) : task
       const opened = startExecution(base, now, crypto.randomUUID(), initiator, groupId)

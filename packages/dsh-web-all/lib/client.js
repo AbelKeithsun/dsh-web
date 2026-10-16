@@ -5369,6 +5369,26 @@ window.__ModuleLoader__.load({
 			return { ok: true };
 		}
 		/**
+		* Whether a cascade member takes part in a new run.
+		*
+		* The task the user ran is always a member: the request names that card, and
+		* the operator asked for it to run whatever its column says. A descendant does
+		* not join once it sits in the `done` column — its work is finished, so running
+		* the parent again is a run of the parent, never a second execution of work
+		* that is already done. The rule keys on the column alone, so it covers both a
+		* subtask that ran and one an operator moved to done by hand, and it holds for
+		* every trigger: a manual run, a re-run, and a due occurrence of a schedule.
+		* A card whose own schedule is enabled settles back into `todo`, so a scheduled
+		* subtask stays a participant; to make a finished one run again, move it back
+		* to `todo` or run it on its own.
+		* @param task - the candidate member.
+		* @param rootId - the task the run request named.
+		* @returns false when this member is left alone by the run.
+		*/
+		function joinsCascadeRun(task, rootId) {
+			return task.id === rootId || task.status !== "done";
+		}
+		/**
 		* The permission a task would actually run under: its handover bundle's pin
 		* wins over the plain pin field, exactly as the runner resolves it.
 		*/
@@ -8611,7 +8631,8 @@ window.__ModuleLoader__.load({
 			"detail.subtasks.link": "关联现有任务",
 			"detail.subtasks.detach": "解除关联",
 			"detail.subtasks.runningLock": "子任务正在执行，结算后才能解除关联或改挂父任务",
-			"detail.subtasks.runHint": "执行本任务会同时并发执行它的 {count} 个子任务；子任务失败不影响其它子任务继续执行。",
+			"detail.subtasks.runHint": "执行本任务会同时并发执行它 {count} 个未完成的子任务；已在完成列的子任务不会重复执行，子任务失败不影响其它子任务继续执行。",
+			"detail.subtasks.runHintSettled": "这个任务的子任务都已在完成列；执行本任务不会重复执行它们，要让某个子任务再跑一次，把它移回待办列或单独执行它。",
 			"detail.subtasks.waiting": "等待子任务结算",
 			"detail.subtasks.depthLimit": "当前子任务深度上限为 {depth} 层，子任务不能再创建或关联子任务。",
 			"detail.subtasks.hostOnly": "连接 Host 后才能创建或关联子任务。",
@@ -9050,7 +9071,8 @@ window.__ModuleLoader__.load({
 			"detail.subtasks.link": "Link existing task",
 			"detail.subtasks.detach": "Detach",
 			"detail.subtasks.runningLock": "This subtask is running; it can be detached or re-linked once it settles",
-			"detail.subtasks.runHint": "Running this task also runs its {count} subtasks concurrently; one subtask failing does not stop the others.",
+			"detail.subtasks.runHint": "Running this task also runs its {count} unfinished subtasks concurrently; a subtask already in the done column is not run again, and one subtask failing does not stop the others.",
+			"detail.subtasks.runHintSettled": "Every subtask of this task is already in the done column; running this task does not repeat them. To run one again, move it back to the todo column or run it on its own.",
 			"detail.subtasks.waiting": "Waiting for subtasks",
 			"detail.subtasks.depthLimit": "The subtask depth limit is {depth}; a subtask cannot create or link further subtasks.",
 			"detail.subtasks.hostOnly": "Connect to the Host to create or link subtasks.",
@@ -14752,6 +14774,15 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			});
 		}
 		/**
+		* The run hint of one card: how many subtasks a run opens, counting the same
+		* members the Host will launch (`joinsCascadeRun` leaves a finished subtask
+		* alone), or why it opens none even though the card has subtasks.
+		*/
+		function subtaskRunHint(parentId, children) {
+			const runnable = children.filter((child) => joinsCascadeRun(child, parentId));
+			return runnable.length > 0 ? t$5("detail.subtasks.runHint", { count: String(runnable.length) }) : t$5("detail.subtasks.runHintSettled");
+		}
+		/**
 		* The subtask block: the parent link, the direct subtasks with their status,
 		* and the actions that grow or prune the tree. Every gate here mirrors the
 		* Host lineage gate for affordance only; the Host re-checks the action.
@@ -14825,7 +14856,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					}),
 					children.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 						className: board_module_css_default.detailText,
-						children: t$5("detail.subtasks.runHint", { count: String(children.length) })
+						children: subtaskRunHint(task.id, children)
 					}),
 					!archived && (canAddChild ? controller.isHostBacked() ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 						className: board_module_css_default.subtaskAddRow,
@@ -15182,7 +15213,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 										type: "button",
 										className: board_module_css_default.primaryButton,
 										disabled: busy || pending,
-										title: subtaskChildren.length > 0 ? t$5("detail.subtasks.runHint", { count: String(subtaskChildren.length) }) : void 0,
+										title: subtaskChildren.length > 0 ? subtaskRunHint(current.id, subtaskChildren) : void 0,
 										onClick: () => {
 											controller.rerunTask(current.id).then(() => {
 												if (controller.getSnapshot().transportError === void 0) controller.closeTask();

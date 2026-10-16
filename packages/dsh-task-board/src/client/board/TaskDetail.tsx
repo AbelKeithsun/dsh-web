@@ -12,7 +12,7 @@ import { isValidCron } from '../../core/schedule.ts'
 import { MANUAL_STATUSES, TASK_PERMISSIONS, canMoveTask, hasOpenExecution, tagTone, type ExecutionRecord, type ScheduleMode, type TaskPermission, type TaskRecord } from '../../core/tasks.ts'
 import { canEditTaskContent } from '../../core/use-cases/task-update.ts'
 import { requiresPermissionConfirmation } from '../../core/handover.ts'
-import { DEFAULT_SUBTASK_DEPTH, directSubtasks, taskDepth } from '../../core/subtask.ts'
+import { DEFAULT_SUBTASK_DEPTH, directSubtasks, joinsCascadeRun, taskDepth } from '../../core/subtask.ts'
 import { t, type TaskBoardKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import { budgetLabel, defaultZonedInputValue, endedLabel, nextRunLabel, parseZonedInput, runCapOption, skippedLabel, zonedInputValue, zoneChoices } from '../schedule-zone.ts'
@@ -575,6 +575,18 @@ function ScheduleSection({ controller, task, pending }: { controller: BoardContr
 }
 
 /**
+ * The run hint of one card: how many subtasks a run opens, counting the same
+ * members the Host will launch (`joinsCascadeRun` leaves a finished subtask
+ * alone), or why it opens none even though the card has subtasks.
+ */
+function subtaskRunHint(parentId: string, children: readonly TaskRecord[]): string {
+  const runnable = children.filter(child => joinsCascadeRun(child, parentId))
+  return runnable.length > 0
+    ? t('detail.subtasks.runHint', { count: String(runnable.length) })
+    : t('detail.subtasks.runHintSettled')
+}
+
+/**
  * The subtask block: the parent link, the direct subtasks with their status,
  * and the actions that grow or prune the tree. Every gate here mirrors the
  * Host lineage gate for affordance only; the Host re-checks the action.
@@ -644,7 +656,7 @@ function SubtaskSection({ controller, task, pending, archived, snapshot }: {
           </ul>
         )}
       {children.length > 0 && (
-        <p className={css.detailText}>{t('detail.subtasks.runHint', { count: String(children.length) })}</p>
+        <p className={css.detailText}>{subtaskRunHint(task.id, children)}</p>
       )}
       {!archived && (canAddChild
         ? (controller.isHostBacked()
@@ -918,7 +930,7 @@ export function TaskDetail({ controller, task, phase = 'open' }: { controller: B
               className={css.primaryButton}
               disabled={busy || pending}
               title={subtaskChildren.length > 0
-                ? t('detail.subtasks.runHint', { count: String(subtaskChildren.length) })
+                ? subtaskRunHint(current.id, subtaskChildren)
                 : undefined}
               onClick={() => {
                 void controller.rerunTask(current.id).then(() => {

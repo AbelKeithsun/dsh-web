@@ -13,6 +13,7 @@ import {
   checkParentLink,
   combineCascadeOutcome,
   directSubtasks,
+  joinsCascadeRun,
   normalizeSubtaskDepth,
   resolveExecutionTargets,
   subtreeHeight,
@@ -357,6 +358,37 @@ describe('cascade participant set', () => {
 
     // Then the root comes first and then each level
     expect(participants.map(entry => entry.id)).toEqual(['root', 'a', 'b', 'a1'])
+  })
+
+  it('operator running a parent again leaves a finished subtask out of the new run', () => {
+    // Given a finished subtask and an untouched one
+    const root = task('root')
+    const done = task('a', { parentId: 'root', status: 'done' })
+    const todo = task('b', { parentId: 'root', status: 'todo' })
+    const tree = [root, done, todo]
+
+    // When the run picks its members
+    const participants = tree.filter(entry => joinsCascadeRun(entry, 'root'))
+
+    // Then the tree still holds both subtasks while only the unfinished one joins
+    expect(cascadeTargets(tree, 'root', SUBTASK_DEPTH_MAX).map(entry => entry.id)).toEqual(['root', 'a', 'b'])
+    expect(participants.map(entry => entry.id)).toEqual(['root', 'b'])
+  })
+
+  it('operator running a parent whose own column is done still runs that parent', () => {
+    // Given a card the operator ran directly and descendants in mixed columns
+    const requested = task('root', { status: 'done' })
+    const running = task('running-child', { parentId: 'root', status: 'running' })
+    const failed = task('failed-child', { parentId: 'root', status: 'failed' })
+    const finished = task('done-child', { parentId: 'root', status: 'done' })
+
+    // When the run picks its members
+    // Then the requested task always joins, and among the descendants only the
+    // finished one is left alone
+    expect(joinsCascadeRun(requested, 'root')).toBe(true)
+    expect(joinsCascadeRun(running, 'root')).toBe(true)
+    expect(joinsCascadeRun(failed, 'root')).toBe(true)
+    expect(joinsCascadeRun(finished, 'root')).toBe(false)
   })
 
   it('operator folding a cascade prefers failure over cancellation over success', () => {

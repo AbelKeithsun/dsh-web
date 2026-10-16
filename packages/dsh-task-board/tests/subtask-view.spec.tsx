@@ -119,6 +119,36 @@ describe('task detail subtask block', () => {
     expect(button(container, t('detail.subtasks.link')).textContent).toBe(t('detail.subtasks.link'))
   })
 
+  it('user opening a parent whose subtasks are all finished is told a run will not repeat them', () => {
+    // Given a root whose subtasks both sit in the done column
+    const parent = task('parent')
+    const first = task('first', { parentId: 'parent', status: 'done' })
+    const second = task('second', { parentId: 'parent', status: 'done' })
+    const { controller } = fakeController([parent, first, second])
+
+    // When the user opens the parent detail
+    const container = render(<TaskDetail controller={controller} task={parent} />)
+
+    // Then the block explains the run instead of promising the subtasks
+    const section = container.querySelector('[data-dsh-part="subtasks"]')
+    expect(section?.textContent).toContain(t('detail.subtasks.runHintSettled'))
+  })
+
+  it('user opening a parent with one unfinished subtask is told which runs are opened', () => {
+    // Given a root with one finished and one unfinished subtask
+    const parent = task('parent')
+    const done = task('done-child', { parentId: 'parent', status: 'done' })
+    const open = task('open-child', { parentId: 'parent' })
+    const { controller } = fakeController([parent, done, open])
+
+    // When the user opens the parent detail
+    const container = render(<TaskDetail controller={controller} task={parent} />)
+
+    // Then the hint counts the unfinished subtask alone
+    const section = container.querySelector('[data-dsh-part="subtasks"]')
+    expect(section?.textContent).toContain(t('detail.subtasks.runHint', { count: '1' }))
+  })
+
   it('user opening a subtask at the depth limit sees the limit instead of the add controls', () => {
     // Given a board limited to one subtask level and a card that already is a subtask
     const parent = task('parent')

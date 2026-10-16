@@ -278,7 +278,7 @@ function buildSetParentTool(host: TaskBoardToolHost): ToolDefinition {
       'Attach an existing task under a parent (making it a subtask) or detach it back to the root board by setting its parentId.',
       'Pass an empty parentId to detach.',
       'The Host refuses the link when the parent is unknown or archived, when the moved task is one of its own descendants, when the resulting depth exceeds the deployment subtask limit (default one level, maximum three), or while the task has an unsettled execution (its link may still be a running cascade parent pointer).',
-      'Running a task runs its whole subtree concurrently; a parent card settles only after its own turn and every direct subtask settle.',
+      'Running a task opens one run group over its subtree concurrently and leaves a subtask that already sits in the done column alone; a parent card settles only after its own turn and every direct subtask it opened have settled.',
     ].join(' '),
     parameters: {
       taskId: { type: 'string', required: true, description: 'The task whose parent link changes.' },
@@ -314,7 +314,7 @@ function buildRunTool(host: TaskBoardToolHost): ToolDefinition {
       'Executions consume real API quota. Sessions are created asynchronously, so read their ids and outcomes back with task_board_get.',
     ].join(' '),
     parameters: {
-      taskId: { type: 'string', required: true, description: 'The task to run; running a root task runs its whole subtree.' },
+      taskId: { type: 'string', required: true, description: 'The task to run; running a root task runs its whole subtree, minus the subtasks that are already in the done column.' },
       rerun: { type: 'boolean', description: 'Re-run a settled task: reset its column to todo before starting (default false).' },
     },
     output: { schema: { type: 'json' }, render: renderJson },
@@ -459,7 +459,7 @@ function buildScheduleTool(host: TaskBoardToolHost): ToolDefinition {
       'Arm, change, or disarm a task scheduled runs. Two kinds of plan exist: a recurring 5-field cron rule (day-of-month and day-of-week follow Vixie semantics: both restricted means OR, otherwise AND), and a one-shot that runs once at a future instant.',
       'For a one-shot pass mode "once" with at (the planned instant, ms since epoch UTC). For a recurring rule pass mode "cron" (or omit mode) with a cron expression, optionally capped by maxRuns (a positive whole number of scheduled executions; omit for unlimited, pass 0 to clear a cap).',
       'The wall clock is read in the rule stored IANA time zone; omit timeZone to use the Host zone reported by task_board_list/task_board_get. DST gaps are skipped and an ambiguous fall-back time fires once, at the earlier instant.',
-      'A due scheduled task runs the same cascade a manual run does, so a root task runs its whole subtask tree.',
+      'A due scheduled task runs the same cascade a manual run does, so a root task runs its whole subtask tree minus the subtasks already in the done column.',
       'The scheduler counts executions it actually starts; once a rule reaches its run budget it stops itself in the ledger, and a manual run never consumes the budget. A schedule whose tree contains an unconfirmed above-default permission is refused and does not consume the budget; the reason is reported in the list board summary as schedulerError.',
       'Missed occurrences during Host downtime are skipped, never queued (a one-shot whose instant passed while the Host was down is stopped as missed); a task that is already running skips its occurrence without consuming the budget.',
     ].join(' '),
