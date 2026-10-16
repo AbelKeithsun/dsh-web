@@ -34,6 +34,15 @@ export const STDERR_MIN_BYTES = 1024
 export const STDERR_MAX_BYTES = 512 * 1024
 
 /**
+ * Whether win_bash follows the LiangShen agent preset's declaration by
+ * default. When true (the shipped setting) the tool registers only for a
+ * deployment that declares the `liangshen` preset; false skips the gate and
+ * always registers, which is the escape hatch for a session that wants this
+ * shell without the preset.
+ */
+export const DEFAULT_SYNC_WITH_LIANGSHEN = true
+
+/**
  * Model-facing tool description. Active voice; states the persistence
  * guarantee and the two facts a model must know before choosing this tool
  * over the host's own shell: this is a real MSYS2 bash, and its state belongs
@@ -56,6 +65,8 @@ export interface WinBashConfigInput {
   maxStderrBytes?: number
   /** Model-facing tool description override. */
   description?: string
+  /** Whether the tool's availability follows the LiangShen preset declaration. */
+  syncWithLiangShen?: boolean
 }
 
 /** Config shape the plugin runs with; every field resolved. */
@@ -68,6 +79,8 @@ export interface WinBashConfig {
   maxStderrBytes: number
   /** Model-facing tool description. */
   description: string
+  /** Whether the tool's availability follows the LiangShen preset declaration. */
+  syncWithLiangShen: boolean
 }
 
 /** Runtime configuration schema for the win_bash tool. */
@@ -76,6 +89,7 @@ export const Config: z<WinBashConfigInput, WinBashConfig> = z.object({
   maxStdoutBytes: z.number().min(STDOUT_MIN_BYTES).max(STDOUT_MAX_BYTES).default(DEFAULT_MAX_STDOUT_BYTES),
   maxStderrBytes: z.number().min(STDERR_MIN_BYTES).max(STDERR_MAX_BYTES).default(DEFAULT_MAX_STDERR_BYTES),
   description: z.string().default(DEFAULT_DESCRIPTION),
+  syncWithLiangShen: z.boolean().default(DEFAULT_SYNC_WITH_LIANGSHEN),
 })
 
 /** The values an omitted field takes. */
@@ -84,6 +98,7 @@ export const CONFIG_DEFAULTS: WinBashConfig = {
   maxStdoutBytes: DEFAULT_MAX_STDOUT_BYTES,
   maxStderrBytes: DEFAULT_MAX_STDERR_BYTES,
   description: DEFAULT_DESCRIPTION,
+  syncWithLiangShen: DEFAULT_SYNC_WITH_LIANGSHEN,
 }
 
 /** One rejected configuration field. */
@@ -136,6 +151,9 @@ export function validateConfig(config: WinBashConfig): ConfigViolation[] {
   bounded('maxStderrBytes', STDERR_MIN_BYTES, STDERR_MAX_BYTES)
   if (typeof config.description !== 'string' || config.description.trim() === '') {
     violations.push({ field: 'description', message: 'must be a non-empty string' })
+  }
+  if (typeof config.syncWithLiangShen !== 'boolean') {
+    violations.push({ field: 'syncWithLiangShen', message: 'must be a boolean' })
   }
   return violations
 }

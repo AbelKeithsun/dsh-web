@@ -32,6 +32,9 @@ patchFrom:
   - ../dsh-usage
   - ../dsh-session-archive
   - ../dsh-model-capabilities
+  # dsh-win-bash 是 host-only 包（无 src/client/），排在 dsh-liangshen 之后：
+  # 它的 win_bash 可用性跟随梁神预设的声明状态，门控在挂载后异步求值。
+  - ../dsh-win-bash
   # dsh-i18n 语言包无宿主行为、无时序依赖，放列表末尾：注册 ru 语言与全部
   # 家族插件命名空间的 ru 字典（见 packages/dsh-i18n）。
   - ../dsh-i18n
@@ -53,6 +56,7 @@ deps:
   - ../dsh-usage
   - ../dsh-session-archive
   - ../dsh-model-capabilities
+  - ../dsh-win-bash
   - ../dsh-web-settings
   - ../dsh-i18n
 
@@ -72,7 +76,12 @@ deps:
 # 已发布的聚合行 id 与家族子路径导出。覆盖把两者拆开：独立行改名，聚合行
 # web-ui-plugin-manager 与子路径 plugin-manager 逐字不变，老 profile 无需迁移。
 # 值必须在本聚合的 web-ui-* id 空间内，且必须指向本聚合真实挂载的行。
+# dsh-win-bash：子包的行 id 带包前缀（dsh-win-bash，自身 AGENTS.md 钉死），
+# 直接派生会得到 web-ui-dsh-win-bash 与子路径 dsh-win-bash，而家族子路径统一
+# 是不带 dsh- 前缀的短名（ssh / usage / liangshen）。覆盖后聚合行与子路径取
+# 短名 win-bash，且从第一版就锁定，省掉日后迁移。
 familyIds:
+  dsh-win-bash: web-ui-win-bash
   ui-plugin-manager-update-check: web-ui-plugin-manager
 rows:
   - {"id": "community-plugins", "name": "@linxin666/dsh-client-ui-community-plugins"}

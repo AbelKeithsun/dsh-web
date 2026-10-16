@@ -1333,6 +1333,9 @@ importers:
       '@linxin666/dsh-usage':
         specifier: workspace:*
         version: link:../dsh-usage
+      '@linxin666/dsh-win-bash':
+        specifier: workspace:*
+        version: link:../dsh-win-bash
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.4

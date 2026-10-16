@@ -13,8 +13,18 @@
  * and on a Windows host that is not x64, because no PATH bash is ever used as
  * a substitute.
  *
+ * Availability gate: win_bash serves sessions that run the LiangShen (梁神)
+ * preset, so its registration follows that preset's DECLARATION in the
+ * harness's agent-preset registry — declared means registered, undeclared
+ * means the tool is never registered and one info line says why. The gate's
+ * config escape hatch is syncWithLiangShen: false, which skips it and always
+ * registers. See ./gate.ts for the API the gate reads and the timing
+ * constraints it satisfies.
+ *
  * Lifecycle: one shell process per calling agent, released when that agent is
- * disposed and when the plugin fiber unloads.
+ * disposed and when the plugin fiber unloads. apply() returns as soon as the
+ * plugin is configured: the gate decides in mountWithGate, whose promise is
+ * deliberately NOT returned from apply (see that function).
  * @module @linxin666/dsh-win-bash
  */
 
@@ -24,16 +34,34 @@ import type {} from '@deepseek-ai/dsh-sandbox'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-tools'
 import { Config, resolveConfig, type WinBashConfig, type WinBashConfigInput } from './config.ts'
-import { resolveRuntime, type HostPlatform } from './runtime.ts'
+import { startLiangShenGate, LIANGSHEN_PRESET_ID, type GateOptions, type GateOutcome } from './gate.ts'
+import { resolveRuntime, type RuntimeReady, type HostPlatform } from './runtime.ts'
 import { ShellRegistry } from './shell.ts'
 import { buildWinBashTool } from './tool.ts'
 
 export { Config }
 export type { WinBashConfig, WinBashConfigInput }
-export { CONFIG_DEFAULTS, DEFAULT_DESCRIPTION, validateConfig } from './config.ts'
+export { CONFIG_DEFAULTS, DEFAULT_DESCRIPTION, DEFAULT_SYNC_WITH_LIANGSHEN, validateConfig } from './config.ts'
 export { WIN_BASH_TOOL } from './tool.ts'
 export { ShellRegistry, ShellUnavailableError } from './shell.ts'
 export { buildFrame, markerFor, parseFrame } from './protocol.ts'
+export {
+  GATE_DECLARATION_WAIT_MS,
+  GATE_POLL_INTERVAL_MS,
+  GATE_READ_TIMEOUT_MS,
+  GATE_SETTLE_TIMEOUT_MS,
+  LIANGSHEN_PRESET_ID,
+  declaresLiangShen,
+  readPresetRegistry,
+  settleHostTree,
+  startLiangShenGate,
+  type GateOptions,
+  type GateOutcome,
+  type GateReason,
+  type PresetRosterReader,
+  type PresetRosterRow,
+  type SettleStatus,
+} from './gate.ts'
 export {
   bashPath,
   parseChecksums,
@@ -48,6 +76,124 @@ export const name = 'dsh-win-bash'
 
 /** Required services: the tool registry and the managed subprocess seam. */
 export const inject = ['tools', 'subprocess']
+
+/**
+ * One human-readable line explaining a refused gate verdict.
+ * @param outcome - the gate's verdict.
+ * @returns the message the entry logs.
+ */
+export function gateRefusalMessage(outcome: GateOutcome): string {
+  const settleNote = outcome.settled === 'timed-out'
+    ? '; the host plugin tree did not settle in time, so the roster was read during boot'
+    : ''
+  if (outcome.reason === 'registry-absent') {
+    return 'win_bash was not registered (syncWithLiangShen is on and this deployment publishes no agent-preset registry,'
+      + ' so a preset with id ' + LIANGSHEN_PRESET_ID + ' cannot be declared)' + settleNote
+  }
+  if (outcome.reason === 'registry-unreadable') {
+    return 'win_bash was not registered (syncWithLiangShen is on and the agent-preset registry roster could not be read)'
+      + settleNote
+  }
+  return 'win_bash was not registered (syncWithLiangShen is on and no preset with id '
+    + LIANGSHEN_PRESET_ID + ' is declared; enable the dsh-liangshen plugin row, or set syncWithLiangShen to false to'
+    + ' register this shell without the preset)' + settleNote
+}
+
+/**
+ * Register the win_bash tool and its per-session shell registry on the calling
+ * fiber. Called only once per fiber: the caller decides whether to call at all.
+ * @param ctx - context carrying tools and subprocess.
+ * @param config - the resolved configuration.
+ * @param runtime - the verified payload paths.
+ */
+export function registerWinBash(ctx: Context, config: WinBashConfig, runtime: RuntimeReady): void {
+  const shells = new ShellRegistry(ctx.subprocess)
+  const tool = buildWinBashTool(ctx, config, runtime, shells)
+
+  ctx.effect(() => {
+    const unregister = ctx.tools.register(tool)
+    return async () => {
+      unregister()
+      // Unload must reach quiescence: the shells are real processes the host
+      // would otherwise keep hosting with nobody able to talk to them.
+      await shells.disposeAll('the dsh-win-bash plugin was unloaded')
+    }
+  }, 'dsh-win-bash: win_bash tool and its persistent shells')
+
+  // One session's shell dies with that session. The agent object is the key,
+  // so a session that ends for any reason (close, archive, reload) releases
+  // its process instead of leaving it to the plugin's own disposal.
+  ctx.on('agent/disposed', ({ agent }) => {
+    void shells.dispose(agent, 'the owning agent was disposed')
+  })
+}
+
+/**
+ * Apply the availability gate, then register the tool when it allows it.
+ *
+ * The returned promise is deliberately NOT awaited by apply: the gate's roster
+ * read audits every declared preset and can await the Host loader tree, which
+ * still counts this very activation among its pending tasks — awaiting it from
+ * inside the activation would make the two waits depend on each other and
+ * neither would settle. Keeping the decision off the activation path also
+ * keeps the loader entry's own inertia free of it, so the tree can settle.
+ *
+ * A fiber disposed while the gate was deciding registers nothing: its tool
+ * effect would be refused anyway, and its shells would outlive it.
+ * @param ctx - context carrying tools and subprocess.
+ * @param config - the resolved configuration.
+ * @param runtime - the verified payload paths.
+ * @param options - gate deadlines; the defaults are the shipped bounds.
+ * @returns the decision, for the caller to observe (never rejects).
+ */
+export async function mountWithGate(
+  ctx: Context,
+  config: WinBashConfig,
+  runtime: RuntimeReady,
+  options: GateOptions = {},
+): Promise<void> {
+  let closed = false
+  ctx.effect(() => () => { closed = true }, 'dsh-win-bash: gate continuation lifetime')
+
+  const mount = (announcement?: string): void => {
+    if (announcement !== undefined) ctx.logger?.info?.(announcement)
+    // Registration is deliberately OUTSIDE the gate's try: a tool registry that
+    // refuses the registration is not a gate defect, and reporting it as one
+    // would send an operator to the wrong place. It must also not escape as a
+    // rejection, because this continuation is not awaited by the loader's own
+    // activation and an unhandled rejection here kills the whole process.
+    try {
+      registerWinBash(ctx, config, runtime)
+    } catch (error) {
+      ctx.logger?.error?.('dsh-win-bash: win_bash could not be registered: '
+        + (error instanceof Error ? error.message : String(error)))
+    }
+  }
+
+  if (!config.syncWithLiangShen) {
+    mount()
+    return
+  }
+
+  let outcome: GateOutcome
+  try {
+    outcome = await startLiangShenGate(ctx, options)
+  } catch (error) {
+    // The gate contains its own failures; this arm keeps a defect in it from
+    // escaping as an unhandled rejection, which the host's fail-loud guard
+    // turns into a whole-process kill.
+    if (closed) return
+    ctx.logger?.warn?.('dsh-win-bash: win_bash was not registered (the LiangShen availability gate failed: '
+      + (error instanceof Error ? error.message : String(error)) + ')')
+    return
+  }
+  if (closed) return
+  if (!outcome.allowed) {
+    ctx.logger?.info?.('dsh-win-bash: ' + gateRefusalMessage(outcome))
+    return
+  }
+  mount('dsh-win-bash: win_bash registered (the ' + LIANGSHEN_PRESET_ID + ' preset is declared)')
+}
 
 /**
  * Mount the plugin.
@@ -70,23 +216,10 @@ export function apply(ctx: Context, config?: WinBashConfigInput): void {
     ctx.logger?.error?.('dsh-win-bash: ' + (error instanceof Error ? error.message : String(error)))
     throw error
   }
-  const shells = new ShellRegistry(ctx.subprocess)
-  const tool = buildWinBashTool(ctx, resolved, runtime, shells)
-
-  ctx.effect(() => {
-    const unregister = ctx.tools.register(tool)
-    return async () => {
-      unregister()
-      // Unload must reach quiescence: the shells are real processes the host
-      // would otherwise keep hosting with nobody able to talk to them.
-      await shells.disposeAll('the dsh-win-bash plugin was unloaded')
-    }
-  }, 'dsh-win-bash: win_bash tool and its persistent shells')
-
-  // One session's shell dies with that session. The agent object is the key,
-  // so a session that ends for any reason (close, archive, reload) releases
-  // its process instead of leaving it to the plugin's own disposal.
-  ctx.on('agent/disposed', ({ agent }) => {
-    void shells.dispose(agent, 'the owning agent was disposed')
+  // Deliberately detached (see mountWithGate), with a last-resort catch so no
+  // defect above can surface as the unhandled rejection that kills the process.
+  void mountWithGate(ctx, resolved, runtime).catch((error: unknown) => {
+    ctx.logger?.error?.('dsh-win-bash: the mount continuation failed: '
+      + (error instanceof Error ? error.message : String(error)))
   })
 }

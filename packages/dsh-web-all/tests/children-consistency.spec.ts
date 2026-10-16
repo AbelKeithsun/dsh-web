@@ -87,4 +87,16 @@ describe('family row / client child consistency', () => {
   it('the shells marker manifest ships beside the built shell module', () => {
     expect(existsSync(join(PACKAGE_DIR, 'src/shells/package.json'))).toBe(true)
   })
+
+  it('operator mounting a host-only family child gets no client child for it', () => {
+    // Given the host-only child the aggregate folds in (dsh-win-bash ships no
+    // src/client and declares no dsh.client),
+    const row = familyRows().find(candidate => candidate.plugin === '@linxin666/dsh-win-bash')
+    // When the operator compares the family rows with the client mount list,
+    // Then the row is mounted under the short family subpath and contributes no
+    // inline client child, which is what keeps the client-children gate honest.
+    expect(row?.id).toBe('web-ui-win-bash')
+    expect(row?.name).toBe('@linxin666/dsh-web-all/win-bash')
+    expect(clientChildren().some(child => child.name === '@linxin666/dsh-win-bash')).toBe(false)
+  })
 })

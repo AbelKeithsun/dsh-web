@@ -35,6 +35,33 @@ session is what makes that true.
 It adds no settings section, no HTTP route and no browser half: the Host
 renders this row's configuration form from the plugin's own Config schema.
 
+## Availability
+
+The tool serves sessions that run the LiangShen (梁神) agent preset, so its
+availability follows that preset's **declaration**. At mount the plugin asks the
+harness's agent-preset registry whether a preset with id `liangshen` is
+declared; when it is, the tool registers, and when it is not, no tool is
+registered at all and one info line states the reason. A tool that mounted and
+refused every call would teach the model a capability the session does not have,
+which is worse than an honest absence.
+
+Three verdicts are distinguishable in the log, because they need different
+actions: the preset is declared (registered), no such preset is declared (enable
+the `dsh-liangshen` plugin row), and no usable agent-preset registry is
+published in this deployment. Setting `syncWithLiangShen: false` skips the gate
+entirely and always registers the tool.
+
+The verdict waits for the host plugin tree to settle and then reads the roster.
+A read that already carries the declaration decides at once; one that does not is
+re-read on a short bounded schedule, because the declaring plugin publishes its
+preset off its own activation return and the two can therefore land in either
+order. A late declaration is never turned into a refusal.
+
+The registry declares no roster-change event, so the verdict is decided once per
+mount. Toggling the LiangShen row takes effect for `win_bash` after the plugin
+manager refreshes the profile — the same freshness model the rest of the family
+uses, not an immediate one.
+
 ## Install
 
 ### From the repository (development)
@@ -58,6 +85,7 @@ so a POSIX profile can carry the same composition without mounting anything.
 | `maxStdoutBytes` | 131072 | Visible stdout byte budget (1024..1048576). Output past it is dropped from the front and the result is flagged truncated. |
 | `maxStderrBytes` | 32768 | Visible stderr byte budget (1024..524288). |
 | `description` | built-in | Model-facing tool description; deployments may describe their own environment. |
+| `syncWithLiangShen` | true | When true, the tool registers only while the `liangshen` agent preset is declared; false skips that gate and always registers. |
 
 ## Tool interface
 
@@ -103,8 +131,6 @@ license mapping.
 
 ## Follow-up work
 
-- Aggregate wiring: this package is deliberately NOT a child of the `dsh-web-all`
-  aggregate yet, and the root `cordis.patch.yml` is untouched.
 - A packaging-time verification script that re-downloads the pinned MinGit
   asset, rebuilds the payload and diffs the result against `checksums.sha256`,
   so a payload refresh is machine-checked rather than hand-reviewed.

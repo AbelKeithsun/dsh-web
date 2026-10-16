@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CONFIG_DEFAULTS,
+  DEFAULT_SYNC_WITH_LIANGSHEN,
   DEFAULT_TIMEOUT_MS,
   TIMEOUT_MAX_MS,
   TIMEOUT_MIN_MS,
@@ -38,6 +39,26 @@ describe('configuration resolution', () => {
     const config = resolveConfig({ description: 'Run this project shell command.' })
     // Then the replacement is what the tool advertises.
     expect(config.description).toBe('Run this project shell command.')
+  })
+
+  it('operator mounting the shipped default gets the LiangShen availability gate on', () => {
+    // Given a profile row that supplies no config,
+    // When the config is resolved,
+    const config = resolveConfig(undefined)
+    // Then the gate ships ON: win_bash follows the preset by default, and the
+    // escape hatch is a deliberate opt-out rather than the shipped state.
+    expect(config.syncWithLiangShen).toBe(DEFAULT_SYNC_WITH_LIANGSHEN)
+    expect(config.syncWithLiangShen).toBe(true)
+  })
+
+  it('operator turning the escape hatch off gets that value through to the running config', () => {
+    // Given a row that opts out of the availability gate,
+    // When the config is resolved,
+    const config = resolveConfig({ syncWithLiangShen: false })
+    // Then the opt-out survives resolution, so the entry skips the gate.
+    expect(config.syncWithLiangShen).toBe(false)
+    // And every other field keeps its default.
+    expect(config.timeoutMs).toBe(DEFAULT_TIMEOUT_MS)
   })
 })
 
@@ -89,6 +110,14 @@ describe('configuration rejection', () => {
     // When the config is validated,
     // Then each offending field is reported separately.
     expect(violations.map(v => v.field)).toEqual(['timeoutMs', 'maxStdoutBytes', 'maxStderrBytes'])
+  })
+
+  it('operator supplying a non-boolean sync switch gets a rejection naming the field', () => {
+    // Given a row whose sync switch is not a boolean,
+    // When the config is validated,
+    const violations = validateConfig({ ...CONFIG_DEFAULTS, syncWithLiangShen: 'yes' as unknown as boolean })
+    // Then the offending field is named, so an operator can fix the row.
+    expect(violations).toEqual([{ field: 'syncWithLiangShen', message: 'must be a boolean' }])
   })
 
   it('operator supplying a valid maximum gets acceptance rather than an off-by-one rejection', () => {

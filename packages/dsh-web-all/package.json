@@ -32,7 +32,8 @@
     "./usage": "./lib/shells/shell.js",
     "./skin-center": "./lib/shells/shell.js",
     "./update": "./lib/shells/shell.js",
-    "./task-board-github": "./lib/shells/shell.js"
+    "./task-board-github": "./lib/shells/shell.js",
+    "./win-bash": "./lib/shells/shell.js"
   },
   "dsh": {
     "engines": {
@@ -102,6 +103,7 @@
     "@linxin666/dsh-usage": "workspace:*",
     "@linxin666/dsh-session-archive": "workspace:*",
     "@linxin666/dsh-client-ui-model-capabilities": "workspace:*",
+    "@linxin666/dsh-win-bash": "workspace:*",
     "@linxin666/dsh-client-ui-web-ui-settings": "workspace:*",
     "@linxin666/dsh-i18n": "workspace:*",
     "@linxin666/dsh-client-ui-community-plugins": "^0.4.6",
