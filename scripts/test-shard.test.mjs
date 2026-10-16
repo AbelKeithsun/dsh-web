@@ -61,9 +61,13 @@ function makeFixtureWorkspace() {
 
 /** Test-bearing workspace packages, enumerated by pnpm rather than by our parser. */
 function workspaceTestDirsViaPnpm() {
+  // win32: Node refuses to spawn a .cmd without a shell (EINVAL), so the shim
+  // needs both the explicit name and the shell, the same pair
+  // scripts/e2e-mount-rewrite uses for `pnpm pack`.
   const listed = spawnSync(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['ls', '-r', '--depth', '-1', '--json'], {
     cwd: ROOT,
     encoding: 'utf8',
+    shell: process.platform === 'win32',
   })
   assert.equal(listed.status, 0, `pnpm ls -r --depth -1 --json must succeed: ${listed.stderr}`)
   const start = listed.stdout.indexOf('[')
