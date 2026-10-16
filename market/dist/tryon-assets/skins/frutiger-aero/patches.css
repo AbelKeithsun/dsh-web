@@ -88,12 +88,18 @@ html[data-dsh-skin="frutiger-aero"] [id="root"] {
                              （height: var(--dsh-windows-titlebar-height)）
    哈希前缀随 DSH 版本变化，故一律用 [class*=] 通配匹配。
 
-   ★磨砂统筹★ 割裂感来自"相邻区域模糊度不同"，所以把最大相邻差值压到最小：
-     顶栏 2px │ 侧栏 0（清玻璃）│ 主区 2px │ 右侧栏 3px │ 提示气泡 4px
-     最大差值 3px，三条接缝都看不出断差。
-   这四处磨砂叠在全屏动态气泡之上时，显卡 3D 占用仍低于 0.3%（Intel Iris Xe）。
-   窗口级巨型层 [data-dsh-part="dialog"] 刻意不加模糊：那里约 +22% 显卡占用。
-   兜底：系统开启"减少透明效果"时本段的磨砂自动失效。 */
+   ★1.1.0：实时磨砂改为"资源内预烘"★
+   1.0.0~1.1.0 的面板磨砂用的是 backdrop-filter。问题在于气泡一直在面板背后上浮：
+   背景每帧都在变，浏览器就只能每帧回读并重算整屏模糊。实测（Intel Iris Xe，
+   1920x1200 最大化、窗口前台、空白会话）3D 引擎占用 82.33%，其中约 59 个点
+   来自这一项 —— 把气泡冻结则只剩 6.50%，即开销几乎全部是"每帧重算"本身。
+   离线像素实测：blur(2px) 对观感的贡献只有 0.28 级（远低于可感知阈值），
+   真正被看见的是 saturate 的冷色偏移。因此 1.1.0 把"2px 柔化 + 冷色 1.06"
+   一次性烘进 assets/aero-sky.webp（并补抖动，太阳区色阶平台占比仍为 1.9%），
+   面板退回清玻璃 + 冷色底，与左侧栏材质统一。
+   结果：3D 引擎 82.33% → 22.79%（-72.3%），整窗观感差异 2~3 级以内。
+   想换回实时磨砂：把 skin.css 的 --aero-frost 设为 blur(1px) saturate(1.10)。
+   （历史）窗口级巨型层 [data-dsh-part="dialog"] 刻意不加模糊：那里约 +22%。 */
 @media (prefers-reduced-transparency: no-preference) {
   html[data-dsh-skin="frutiger-aero"] [class*="sidebarCol"] {
     /* 左侧工作区不使用 backdrop-filter：
@@ -103,18 +109,18 @@ html[data-dsh-skin="frutiger-aero"] [id="root"] {
        材质差异靠 --dsw-specific-sidebar-fill 的填充浓度表达。 */
   }
   html[data-dsh-skin="frutiger-aero"] [class*="centerCol"] {
-    /* 主聊天区：面积最大，磨砂保持最轻，避免明亮天空被糊成一层薄白雾。 */
-    backdrop-filter: blur(2px) saturate(1.10);
-    -webkit-backdrop-filter: blur(2px) saturate(1.10);
+    /* 主聊天区：面积最大的那块。1.1.0 起不再实时模糊，观感由预烘资源承担。 */
+    backdrop-filter: var(--aero-frost, none);
+    -webkit-backdrop-filter: var(--aero-frost, none);
   }
   html[data-dsh-skin="frutiger-aero"] [class*="rightbarCol"] {
-    /* 右侧工作区：比主聊天区略实一档，形成层次。 */
-    backdrop-filter: blur(3px) saturate(1.14);
-    -webkit-backdrop-filter: blur(3px) saturate(1.14);
+    /* 右侧工作区：原为比主区略实一档的磨砂，现已并入预烘资源。 */
+    backdrop-filter: var(--aero-frost, none);
+    -webkit-backdrop-filter: var(--aero-frost, none);
   }
   html[data-dsh-skin="frutiger-aero"] [class*="_frame"]::before {
-    backdrop-filter: blur(2px) saturate(1.11);
-    -webkit-backdrop-filter: blur(2px) saturate(1.11);
+    backdrop-filter: var(--aero-frost, none);
+    -webkit-backdrop-filter: var(--aero-frost, none);
     /* ★整窗唯一的顶边高光★ 光从上方落在这一整片玻璃的顶边上。
        1px 亮线 + 约 12px 柔光渐隐（与面板用的是同一套衰减参数，观感统一）。 */
     box-shadow:
@@ -127,8 +133,8 @@ html[data-dsh-skin="frutiger-aero"] [id="root"] {
       inset 0 4px 7px -4px #ffffff1f;
   }
   html[data-dsh-skin="frutiger-aero"] [role="tooltip"] {
-    backdrop-filter: blur(4px) saturate(1.12);
-    -webkit-backdrop-filter: blur(4px) saturate(1.12);
+    backdrop-filter: var(--aero-frost, none);
+    -webkit-backdrop-filter: var(--aero-frost, none);
   }
 }
 
@@ -224,6 +230,20 @@ html[data-dsh-skin="frutiger-aero"] [role="tooltip"] {
 
 html[data-dsh-skin="frutiger-aero"] body[data-ds-dark-theme] [role="tooltip"] {
   border-color: #5AC8F51f;
+}
+
+/* ===== 变体 a+b：侧栏上部局部垫底 + 文字白色柔光晕 =====
+   对应收编意见：浅色清玻璃侧栏把工作区列表压在云朵图像上、对比度偏低。
+   a 解决"底色是云"（局部背景 std 21.7 → 12.3）；
+   b 再把最差的那几行文字抬起来（p10 6.35 → 8.5）。
+   两条都只在侧栏上、只影响浅色、不换材质、不用 backdrop-filter、不碰两用 token。 */
+html[data-dsh-skin="frutiger-aero"] [class*="sidebarCol"] {
+  background-image: linear-gradient(180deg, rgba(247,252,255,.68) 0%, rgba(245,251,255,.52) 34%, rgba(242,249,255,0) 58%);
+  text-shadow: 0 0 1px rgba(255,255,255,.92), 0 1px 2px rgba(255,255,255,.74);
+}
+html[data-dsh-skin="frutiger-aero"] body[data-ds-dark-theme] [class*="sidebarCol"] {
+  background-image: none;
+  text-shadow: none;
 }
 
 html[data-dsh-skin="frutiger-aero"] [id="root"] { background: transparent; }
