@@ -27,7 +27,8 @@ DeepSeek 模型的后训练以 bash 工具面为主，Windows 会话只有 pwsh 
 ## Consequences
 
 - 包首版仅 Windows x64；ARM64 与其他平台拒绝挂载（如实告警）。
-- 未接聚合与根 patch：进 dsh-web-all 与 profile 挂载是后续任务；打包期的「重下载钉版资产并 diff checksums」校验脚本同为后续任务。
+- 已接入 dsh-web-all 聚合家族（聚合行 `web-ui-win-bash`，家族子路径 `@linxin666/dsh-web-all/win-bash`，`familyIds` 显式映射锁定短名），随全家桶默认安装；根 patch 不接，profile 挂载由聚合承担。打包期的「重下载钉版资产并 diff checksums」校验脚本仍为后续任务。
+- **可用性跟随梁神开关**：挂载时经 `ctx.agentPresets.list()` 检查 `liangshen` 预设是否已声明，未声明即不注册 `win_bash`（绝不注册一个总会报错的工具）；`syncWithLiangShen: false` 为逃生口。门控不在 apply 里 await（注册表审计会 await 宿主 loader 树，互等即死锁），判定在挂载续延里完成，先等宿主树 settle、首读未命中再有界重读；注册表无声明变更事件，开关切换经插件管理器刷新行后生效。实现与约束见 [packages/dsh-win-bash/AGENTS.md](../../../packages/dsh-win-bash/AGENTS.md) 与 src/gate.ts 模块头。
 - 宿主对未声明 `isConcurrencySafe` 的工具一律按 exclusive 调度（fail-closed），同一持久 shell 不存在并发帧竞争。
 
 ## Testing

@@ -27,7 +27,8 @@ The gap is filled by an **independent plugin package**, not the preset: `package
 ## Consequences
 
 - v1 ships Windows x64 only; ARM64 and other platforms refuse the mount with an honest warning.
-- No aggregate or root-patch wiring yet: dsh-web-all integration and profile mounting are follow-up tasks, as is a packaging-time script that re-downloads the pinned asset and diffs it against checksums.
+- Wired into the dsh-web-all aggregate family (aggregate row `web-ui-win-bash`, family subpath `@linxin666/dsh-web-all/win-bash`, locked by an explicit `familyIds` mapping), so it installs with the family by default; the root patch stays untouched. A packaging-time script that re-downloads the pinned asset and diffs it against checksums remains a follow-up.
+- **Availability follows the LiangShen switch**: at mount the gate checks `ctx.agentPresets.list()` for a declared `liangshen` preset and registers no `win_bash` without it (never a tool whose every call refuses); `syncWithLiangShen: false` is the escape hatch. The gate never awaits from apply (the registry audit awaits the host loader tree, and mutual waiting deadlocks), so the verdict lands in a continuation after the host tree settles, with a bounded re-read when the first roster read misses; the registry exposes no declaration-change event, so a switch toggle takes effect through the plugin manager's row refresh. See [packages/dsh-win-bash/AGENTS.md](../../../packages/dsh-win-bash/AGENTS.md) and the src/gate.ts module header for the constraints.
 - The host schedules tools without `isConcurrencySafe` as exclusive (fail-closed), so one persistent shell never faces concurrent frames.
 
 ## Testing
