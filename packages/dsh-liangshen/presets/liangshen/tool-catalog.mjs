@@ -10,7 +10,8 @@
  *   other tool is reached from inside the program through the generated SDK;
  * - `both` (default): the full native roster plus the `run_code` transport
  *   co-resident on the wire — native calls carry ordinary work, `run_code`
- *   covers programmatic batch computation and overlapped fan-out.
+ *   covers batch computation, overlapped fan-out, and the calls whose large
+ *   raw output only a conclusion is needed from.
  *
  * The declaration happens once per agent scope (agent.ctx.tools.presentAs) as
  * early as the scope exists — there is no turn-boundary staging: the retired
@@ -230,6 +231,28 @@ function validateRetiredAnchorTools(value) {
 }
 
 /**
+ * The batching pointer the SHELL tools carry when `run_code` is co-resident
+ * ('both'), appended to the curated line below.
+ *
+ * It lives in its own table rather than inside {@link CURATED_TOOL_SUMMARIES}
+ * because the curated table renders under EVERY presentation, and under
+ * `native` this deployment carries no program at all: a shell line that named
+ * `run_code` there would announce a transport the request does not open — the
+ * exact claim the declare-only-what-the-request-opens contract forbids, and a
+ * claim the native catalog tests already pin. Gating the suffix on the same
+ * flag that puts `run_code` on the wire keeps one fact in one place: the shell
+ * line points at a program exactly when a program exists.
+ *
+ * Kept inside the same one-line budget as the curated table, and countable for
+ * the same reason the contract's triggers are: a vague "for long outputs"
+ * leaves the boundary to the model's judgement.
+ */
+const CO_RESIDENT_SHELL_HINTS = new Map([
+  ['bash', ' 2+ commands or long output: `run_code`.'],
+  ['pwsh', ' 2+ commands or long output: `run_code`.'],
+])
+
+/**
  * Curated one-line summaries, one per host builtin tool this preset can put on
  * a wire. Each line says what the tool is FOR and names the arguments that
  * decide how it is called, kept well inside {@link DEFAULT_DESCRIPTION_MAX_LENGTH}.
@@ -276,8 +299,9 @@ function validateRetiredAnchorTools(value) {
  * That is why the table is exported — a test can prove every key is a tool name
  * and every value is a single bounded line, without freezing the prose.
  */
+
 export const CURATED_TOOL_SUMMARIES = new Map([
-  ['run_code', 'Execute a TypeScript program against the available tools (`code`, `description`); reach a tool as `await tools.<name>(args)` and return only what the next step needs.'],
+  ['run_code', 'Execute a TypeScript program (`code`, `description`) reaching tools as `await tools.<name>(args)`; use it for two or more independent targets, or one large output needed only as a conclusion.'],
   ['bash', 'Run a command in a fresh bash shell (`command`, optional `timeoutMs`, `workdir`, `run_in_background`).'],
   ['pwsh', 'Run a command in a fresh PowerShell process (`command`, optional `timeoutMs`, `workdir`, `run_in_background`); native Windows paths and `$env:NAME` variables.'],
   ['read', 'Read one UTF-8 text file as line-numbered content (`file_path`, optional `offset` and `limit`).'],
@@ -329,11 +353,19 @@ export function catalogDescription(value, maxLength) {
  * for a tool nobody has written a line for yet.
  * @param {{ name?: unknown, description?: unknown }} schema - one tool definition.
  * @param {number} maxLength - the schema-description cap, in characters.
+ * @param {{ coResident?: boolean }} [options] - whether `run_code` shares this
+ *   request's wire, which is what lets a shell line point at a program.
  * @returns the summary text for the catalog entry.
  */
-export function toolSummary(schema, maxLength) {
+export function toolSummary(schema, maxLength, options) {
   const name = schema?.name
-  if (typeof name === 'string' && CURATED_TOOL_SUMMARIES.has(name)) return CURATED_TOOL_SUMMARIES.get(name)
+  if (typeof name === 'string' && CURATED_TOOL_SUMMARIES.has(name)) {
+    const line = CURATED_TOOL_SUMMARIES.get(name)
+    // The shell pointer only ships where a program does: see
+    // {@link CO_RESIDENT_SHELL_HINTS}.
+    const hint = options?.coResident === true ? CO_RESIDENT_SHELL_HINTS.get(name) : undefined
+    return hint === undefined ? line : `${line}${hint}`
+  }
   return catalogDescription(schema?.description, maxLength)
 }
 
@@ -397,7 +429,9 @@ export function renderSignature(parameters) {
  * skipped; the `run_code` transport is listed only when the presentation puts
  * it on the wire beside the native tools ('both'). Each entry's summary is
  * resolved by {@link toolSummary}: the curated line where the table has one,
- * the capped schema description otherwise.
+ * the capped schema description otherwise. `includeRunCode` is also what lets
+ * a curated SHELL line carry its batching pointer, so the pointer and the
+ * transport it names always travel together.
  */
 export function catalogEntries(schemas, maxLength, options) {
   const includeRunCode = options?.includeRunCode === true
@@ -414,7 +448,7 @@ export function catalogEntries(schemas, maxLength, options) {
     entries.push({
       name: toolName,
       signature: renderSignature(schema.parameters),
-      description: toolSummary(schema, maxLength),
+      description: toolSummary(schema, maxLength, { coResident: includeRunCode }),
       ...(namespace === undefined ? {} : { namespace }),
     })
   }
@@ -441,17 +475,21 @@ const PTC_PROGRAM_LINES = [
 /**
  * The short note the catalog carries when `run_code` sits on the wire beside
  * the native roster ('both'): native calls are the primary surface, and the
- * transport covers programmatic batch work. The trigger is countable, because a
- * shape rule alone leaves the boundary to the model's judgement. Paged-out
- * namespaces stay reachable through the SDK inside a program even before
- * activation — the native wire carries every registered tool and 'both' leaves
- * the scope's registry unrestricted, so nothing removed them from the program's
- * own surface.
+ * transport covers batch work and context economy. Both triggers are countable,
+ * because a shape rule alone leaves the boundary to the model's judgement: two
+ * or more independent targets in one intent, and a single call whose raw output
+ * is expected to be large while the next step needs only a conclusion. The
+ * second trigger is context economics rather than capability — the program is
+ * how a large raw output is kept out of the conversation instead of being
+ * carried in it. Paged-out namespaces stay reachable through the SDK inside a
+ * program even before activation — the native wire carries every registered
+ * tool and 'both' leaves the scope's registry unrestricted, so nothing removed
+ * them from the program's own surface.
  */
 const BOTH_PROGRAM_LINES = [
-  'Prefer calling the tools above directly by name: ordinary single-step work (read, edit, bash, one search) goes through the native call, never through `run_code`. Reserve `run_code` for what a direct call cannot do — an async TypeScript body (`code`, with a short `description`) that reaches tools as `await tools.<name>({ ... })`, overlaps independent read-only calls under `Promise.all`, and catches `ToolCallError` to continue: programmatic batch computation, wide fan-out, or multi-step data shaping.',
+  'Prefer calling the tools above directly by name: ordinary single-step work (read, edit, bash, one search) goes through the native call, never through `run_code`. Reach for `run_code` when a direct call cannot do the job as well — an async TypeScript body (`code`, with a short `description`) that reaches tools as `await tools.<name>({ ... })`, overlaps independent read-only calls under `Promise.all`, and catches `ToolCallError` to continue: batch computation, wide fan-out, multi-step data shaping, or keeping a large raw output out of the conversation.',
   '',
-  'The trigger is countable: one intent with three or more independent targets, or intermediate results that do not belong in the conversation. Below that, call the tools directly. Every call inside a program must handle its own failure with `try/catch`, so the error chain a program produces is longer than a direct call — wrapping one-step work in a program to save a call pays that cost for nothing.',
+  'Two countable triggers, either one sufficient. (1) Two or more independent targets in one intent: two reads, two searches, two commands. (2) Context economy: one call whose raw output is expected to be large — a long log, bulk file contents, a whole table — while the next step needs only a conclusion, a summary, or a count; the program then returns that conclusion and the raw output never enters the conversation. Below both, call the tools directly: one target whose output the next step reads in full stays a native call. Every call inside a program must handle its own failure with `try/catch`, so the error chain a program produces is longer than a direct call — wrapping one-step work in a program to save a call pays that cost for nothing.',
   '',
   'Paged-out namespaces stay off the NATIVE direct-call surface but stay reachable through the SDK inside a program even before activation — the native wire carries every registered tool and nothing removes the paged ones from the scope registry, so this is the reachability the wire itself carries rather than an exemption paging grants — and activating one also puts its tools back on the direct surface.',
 ]

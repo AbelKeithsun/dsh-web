@@ -11,7 +11,7 @@
  * the report's own conclusion is that this guard-layer gap can be filled by a
  * plugin without touching the DSH core. This plugin is that outside force.
  *
- * Two signals, both folded from the durable session event stream (never from
+ * Three signals, all folded from the durable session event stream (never from
  * process memory, so resume and compaction rebuild the same verdict):
  *
  * - STALL: N consecutive assistant steps that carry reasoning but neither a
@@ -30,12 +30,25 @@
  *   a write, a batch that may have been interrupted halfway — has an UNKNOWN
  *   effect, and the model has to inspect the real state with read-only tools
  *   before it decides the next call.
+ * - MISUSE: N consecutive model-direct shell calls (bash / pwsh / win_bash) that
+ *   all succeeded and that no `run_code` program interrupted. Nothing is broken
+ *   here — the session is working, one call at a time — but those steps are
+ *   exactly the batch a single program could have carried, returning only the
+ *   conclusion instead of every raw output. The ONE reset condition is a
+ *   program: a direct `run_code` call, or a bridged sub-dispatch logged as
+ *   `tool/ptc-dispatch`, clears the run, because the sub-calls a program logs
+ *   are not model-direct shell calls and must never be counted as such.
  *
- * On either signal the breaker FIRES once per episode with a circuit-breaker
- * user message injected at the next pre-step (the one channel guaranteed to
- * reach the model, as durable as the working-context projection), telling the
- * model the loop was interrupted and to close out or pick a materially
- * different action.
+ * The two DEGENERATION signals (stall and echo) fire the breaker once per
+ * episode with a circuit-breaker user message injected at the next pre-step (the
+ * one channel guaranteed to reach the model, as durable as the working-context
+ * projection), telling the model the loop was interrupted and to close out or
+ * pick a materially different action. MISUSE rides that same channel and the
+ * same once-per-episode discipline, but its message is a batching nudge rather
+ * than an interruption: it carries no step-down and no stop-re-deriving closing,
+ * because nothing has gone wrong yet. It also stays silent wherever the
+ * transport it names is provably absent — a `native` session has no
+ * `run_code`, so advising one there would be the one way this signal can hurt.
  *
  * A STALL additionally arms a temporary reasoning-effort step-down that rides
  * the `agent/request` waterfall for the next FEW requests: one notch down
@@ -96,6 +109,33 @@ export const DEFAULT_STALL_REASONING_CHARS = 12000
 
 /** How many identical-argument failures in a row constitute an echo loop. */
 export const DEFAULT_ECHO_FAILURES = 3
+
+/**
+ * How many consecutive successful MODEL-DIRECT shell calls (bash / pwsh /
+ * win_bash) with no `run_code` in between constitute presentation misuse:
+ * steps that a single program could have carried, each raw output paid for in
+ * the conversation. Four is the point where the pattern is a habit rather than
+ * two adjacent commands — and the number is deliberately the same order as the
+ * slow-burn ladder, because both describe "many small steps that should have
+ * been one move".
+ *
+ * A false positive here is the cheapest kind the guard has: the message asks
+ * for batching and nothing else, so it neither interrupts work nor changes a
+ * request. That is why the threshold can sit this low while the degeneration
+ * ladders stay conservative.
+ */
+export const DEFAULT_SHELL_BATCH_STEPS = 4
+
+/**
+ * Tools whose model-direct calls count toward the misuse ladder. The shell set
+ * is an allowlist of the three platform carriers this deployment can mount
+ * (POSIX bash, win32 pwsh, and the pinned-bash win_bash row), so a future
+ * tool that merely runs commands is not silently folded into the signal.
+ */
+const SHELL_TOOL_NAMES = new Set(['bash', 'pwsh', 'win_bash'])
+
+/** The reserved transport name whose presence proves a program can be used. */
+const RUN_CODE_TOOL_NAME = 'run_code'
 
 /**
  * Steps with at least this much reasoning count toward the global (slow-burn)
@@ -228,6 +268,9 @@ function isErrorResult(event) {
  * `blind` reports the session-level fact that reasoning blocks were observed
  * without a single character of reasoning text, so the caller can say once that
  * this session's stall detection is running on step counts.
+ * `signal: 'misuse'` is the presentation signal rather than a degeneration one:
+ * it reports that the session is running fine but paying conversation space for
+ * work a program could have batched, and it carries `tool` like an echo does.
  */
 export function foldGuardSignal(events, options) {
   const stallSteps = options?.stallSteps ?? DEFAULT_STALL_STEPS
@@ -235,6 +278,7 @@ export function foldGuardSignal(events, options) {
   const echoFailures = options?.echoFailures ?? DEFAULT_ECHO_FAILURES
   const globalCap = options?.globalStallCap ?? DEFAULT_GLOBAL_STALL_CAP
   const blindCap = options?.blindStallCap ?? DEFAULT_BLIND_STALL_CAP
+  const shellBatchSteps = options?.shellBatchSteps ?? DEFAULT_SHELL_BATCH_STEPS
 
   // Stall, two independent ladders walked in parallel:
   //  1. PER-STEP: one step whose reasoning alone blows past the character floor
@@ -300,6 +344,34 @@ export function foldGuardSignal(events, options) {
   let lastTool
   let failStreak = 0
 
+  // Misuse: consecutive SUCCESSFUL model-direct shell calls with no program in
+  // between. A run only counts while every call in it is a shell call, so a
+  // read or an edit landing between two commands ends the run rather than
+  // hiding inside it, and the counter only moves on a settled success — a
+  // failing command is the echo ladder's business, not this one's. Shell calls
+  // dispatched from INSIDE a program are excluded (see the `tool/ptc-dispatch`
+  // case below): those are the batching this signal asks for, not the pattern
+  // it reports.
+  let shellStreak = 0
+  // How many times the shell chain has BROKEN. The caller keys its "one report
+  // per episode" discipline on this counter instead of on a cooldown: a run
+  // that keeps going after the nudge must stay one episode however long it
+  // lasts, while a run that starts over after a real break is a new one. Deriving
+  // it inside the fold keeps the discipline replayable — resume and compaction
+  // rebuild the same generation from the same stream.
+  let shellGeneration = 0
+  /** Break the chain: a counted run ends here and a new episode begins. */
+  const breakShellChain = () => {
+    if (shellStreak > 0) shellGeneration += 1
+    shellStreak = 0
+    pendingShell = false
+  }
+  // The pending call's identity for the ladder above: `tool/call` only records
+  // the intent, and a call is a STEP of the chain once its result settles
+  // successfully. The tool name is kept beside it for the injected message.
+  let pendingShell = false
+  let lastShellTool
+
   for (const event of Array.isArray(events) ? events : []) {
     switch (event?.type) {
       case 'step/start':
@@ -329,6 +401,21 @@ export function foldGuardSignal(events, options) {
         }
         lastCallId = event.data?.callId
         lastTool = event.data?.name
+        // Misuse ladder: only a chain of model-direct shell calls counts. A
+        // `run_code` call IS the batching this signal asks for, so it clears
+        // the chain outright; any other tool clears it too, because a step the
+        // shell never asked for means the session is not in a shell rhythm.
+        // Sub-calls dispatched from inside a program log `tool/ptc-dispatch`
+        // rather than `tool/call`, so they can never be counted as
+        // model-direct shell calls.
+        if (lastTool === RUN_CODE_TOOL_NAME) {
+          breakShellChain()
+        } else if (SHELL_TOOL_NAMES.has(lastTool)) {
+          pendingShell = true
+          lastShellTool = lastTool
+        } else {
+          breakShellChain()
+        }
         break
       }
       case 'tool/result': {
@@ -336,12 +423,23 @@ export function foldGuardSignal(events, options) {
         if (callId !== undefined && lastCallId !== undefined && callId !== lastCallId) break
         if (isErrorResult(event)) {
           if (lastSignature !== undefined) failStreak += 1
+          // A failed shell call is not one of the successful steps this ladder
+          // counts; it is the echo ladder's business, so the chain ends here.
+          if (pendingShell) breakShellChain()
         } else {
           failStreak = 0
           lastSignature = undefined
           lastCallId = undefined
           lastTool = undefined
+          if (pendingShell) shellStreak += 1
         }
+        pendingShell = false
+        break
+      }
+      case 'tool/ptc-dispatch': {
+        // A bridged sub-call proves a program ran, so the model is already
+        // batching: whatever the chain counted before it is finished.
+        breakShellChain()
         break
       }
       default:
@@ -368,6 +466,18 @@ export function foldGuardSignal(events, options) {
   }
   if (failStreak >= echoFailures) {
     return { signal: 'echo', detail: `${failStreak} consecutive identical-argument tool failures`, blind, tool: lastTool }
+  }
+  // Presentation misuse comes LAST: it is the only signal that reports a
+  // session which is working. A real degeneration episode is the more urgent
+  // fact and takes the episode when both are true.
+  if (shellStreak >= shellBatchSteps) {
+    return {
+      signal: 'misuse',
+      detail: `${shellStreak} consecutive successful shell calls with no run_code in between`,
+      blind,
+      tool: lastShellTool,
+      generation: shellGeneration,
+    }
   }
   return { signal: undefined, detail: '', blind }
 }
@@ -400,7 +510,13 @@ export function resolveThresholds(options) {
   const blindStallCap = options?.blindStallCap !== undefined
     ? options.blindStallCap
     : globalStallCap
-  return { stallReasoningChars, globalStallCap, echoFailures, blindStallCap }
+  // The misuse cap scales with the sensitivity presets like every other cap, so
+  // an operator who wants fewer interruptions gets them from the mechanism they
+  // already tuned rather than from a second knob to learn.
+  const shellBatchSteps = options?.shellBatchSteps !== undefined
+    ? options.shellBatchSteps
+    : Math.max(2, Math.round(DEFAULT_SHELL_BATCH_STEPS * scale))
+  return { stallReasoningChars, globalStallCap, echoFailures, blindStallCap, shellBatchSteps }
 }
 
 /**
@@ -452,6 +568,17 @@ function effectStateOf(tool) {
 }
 
 /**
+ * The leading integer of a fold detail, for the message that names how many
+ * steps tripped a ladder. The fold's details are written as "<N> consecutive
+ * ...", so a missing or unparsable detail degrades to a phrase rather than
+ * printing "undefined consecutive".
+ */
+function countOf(detail) {
+  const match = /^(\d+)\b/.exec(typeof detail === 'string' ? detail : '')
+  return match === null ? 'several' : match[1]
+}
+
+/**
  * The breaker message injected at pre-step.
  *
  * A STALL keeps its original wording: its cause is an over-large reasoning
@@ -461,8 +588,21 @@ function effectStateOf(tool) {
  * arguments and retry) versus a call whose effect is unknown (validate the
  * scene with read-only tools first). The tool name is the only evidence the
  * guard has, so an unrecognised tool is told the conservative half.
+ *
+ * A MISUSE verdict shares the channel and none of that closing. It is not a
+ * degeneration report, so it must not claim one: the stalls and echoes keep
+ * their text verbatim, and this branch returns before the stop-re-deriving
+ * lines, which would be advice about a problem the session does not have.
  */
 export function renderGuardMessage(verdict) {
+  if (verdict.signal === 'misuse') {
+    const tool = typeof verdict.tool === 'string' && verdict.tool.length > 0 ? verdict.tool : 'the shell'
+    return [
+      `[Circuit Breaker] Presentation check: ${countOf(verdict.detail)} consecutive \`${tool}\` calls have each put their raw output into this conversation, and no \`run_code\` program ran between them.`,
+      `These steps can be packed into one \`run_code\` program: reach the shell as \`await tools.${tool}({ ... })\`, keep the looping, filtering and counting inside the program, and \`return\` only the conclusion. The raw output then never enters the conversation, and one call replaces the whole batch.`,
+      'Nothing here is broken and no answer needs to change: keep the current work, and use one program for the next batch of independent shell steps — two or more independent commands, or any call whose raw output is large and only its conclusion is needed.',
+    ].join(' ')
+  }
   const what = verdict.signal === 'stall'
     ? 'repeated long reasoning with no tool call and no reply'
     : 'the same tool call failing repeatedly with identical arguments'
@@ -521,7 +661,7 @@ export function apply(ctx, config) {
   const stateOf = (agent) => {
     let state = stateByAgent.get(agent)
     if (state === undefined) {
-      state = { cooldown: 0, firedVerdict: undefined, stepDownLeft: 0, currentEffort: undefined, blindWarned: false }
+      state = { cooldown: 0, firedVerdict: undefined, stepDownLeft: 0, currentEffort: undefined, blindWarned: false, misuseReportedAt: undefined }
       stateByAgent.set(agent, state)
     }
     return state
@@ -547,6 +687,29 @@ export function apply(ctx, config) {
     if (lowered === undefined) return resolved
     return { ...resolved, reasoningEffort: lowered }
   })
+
+  /**
+   * Whether this scope's wire provably carries the `run_code` transport.
+   *
+   * The misuse nudge names `run_code`, so it may only fire where a program can
+   * actually be written: under `native` the transport is absent, and advising
+   * one there would repeat exactly the claim the preset's declare-what-the-
+   * request-opens contract forbids. The check reads the SAME scoped projection
+   * the catalog reads (`schemas()` appends the reserved transport for every
+   * non-native mode), and an unreadable surface answers false: a missed nudge
+   * costs nothing, while a nudge naming an unreachable tool costs a wasted
+   * round trip on every request that follows it.
+   */
+  const transportAvailable = (agent) => {
+    const tools = agent?.ctx?.tools
+    if (tools === undefined || typeof tools.schemas !== 'function') return false
+    try {
+      const schemas = tools.schemas(agent)
+      return Array.isArray(schemas) && schemas.some(schema => schema?.name === RUN_CODE_TOOL_NAME)
+    } catch {
+      return false
+    }
+  }
 
   // Fold the signal and inject the breaker message. step/start is not emitted
   // as a ctx event on every host, so the fold runs inside pre-step — the one
@@ -577,6 +740,45 @@ export function apply(ctx, config) {
       try { ctx.logger?.warn?.(`${name}: this session persisted reasoning blocks without any reasoning text, so stall detection is degraded to step counts (${thresholds.blindStallCap} consecutive output-free steps)`) } catch {}
     }
 
+    // The misuse nudge is the one signal that can be wrong to send at all: it
+    // names a transport the session may not carry. A scope without `run_code`
+    // simply never fires it — the verdict is suppressed rather than the episode
+    // being consumed, so a later request that DOES carry the transport reports
+    // the same run. Staying quiet here is the whole fix: there is nothing to
+    // report to a session that cannot batch.
+    /** Build the injected breaker message for one verdict. */
+    const inject = (verdictToSend) => {
+      const message = {
+        id: globalThis.crypto.randomUUID(),
+        role: 'user',
+        content: [{ type: 'text', text: renderGuardMessage(verdictToSend) }],
+        source: { kind: name },
+      }
+      try { ctx.logger?.warn?.(`${name}: circuit breaker fired (${verdictToSend.detail}) [${thresholds.stallReasoningChars}ch/${thresholds.globalStallCap}steps/${thresholds.echoFailures}fails/${thresholds.shellBatchSteps}shells, ${sensitivity}, effort ${state.currentEffort ?? 'unknown'}, ${verdictToSend.signal === 'stall' ? `step-down ${String(stepDownRequests)} requests` : 'message only'}]`) } catch {}
+      return { ...decision, messages: [...decision.messages, message] }
+    }
+
+    if (verdict.signal === 'misuse') {
+      // The batching nudge runs on its OWN gate and leaves the degeneration
+      // breaker completely alone: it neither consumes nor is blocked by the
+      // shared cooldown. That separation is the whole point — a nudge about
+      // batching must never delay the stall or echo breaker that follows it,
+      // because those two are the ones an operator is relying on. Suppressed
+      // entirely where the request carries no transport, which is the one case
+      // this message would name an unreachable tool.
+      if (!transportAvailable(agent)) return decision
+      // Once per EPISODE: the fold's generation counter advances only when the
+      // shell chain really breaks (a program ran, another tool intervened, or a
+      // call failed), so a run that keeps going after the nudge is never
+      // re-nagged, while a session returning to one-at-a-time shell work later
+      // does hear once more. Deriving the episode from the stream (rather than
+      // from a request-counting cooldown) keeps it replayable after a resume.
+      if (state.misuseReportedAt === verdict.generation) return decision
+      state.misuseReportedAt = verdict.generation
+      state.firedVerdict = verdict
+      return inject(verdict)
+    }
+
     if (verdict.signal !== undefined && state.cooldown === 0) {
       // Fire: inject the breaker message, and arm the effort step-down only for
       // a STALL. A stall is an over-large reasoning budget, which is what
@@ -585,14 +787,7 @@ export function apply(ctx, config) {
       state.cooldown = refireCooldown
       if (verdict.signal === 'stall') state.stepDownLeft = stepDownRequests
       state.firedVerdict = verdict
-      const message = {
-        id: globalThis.crypto.randomUUID(),
-        role: 'user',
-        content: [{ type: 'text', text: renderGuardMessage(verdict) }],
-        source: { kind: name },
-      }
-      try { ctx.logger?.warn?.(`${name}: circuit breaker fired (${verdict.detail}) [${thresholds.stallReasoningChars}ch/${thresholds.globalStallCap}steps/${thresholds.echoFailures}fails, ${sensitivity}, effort ${state.currentEffort ?? 'unknown'}, ${verdict.signal === 'stall' ? `step-down ${String(stepDownRequests)} requests` : 'message only'}]`) } catch {}
-      return { ...decision, messages: [...decision.messages, message] }
+      return inject(verdict)
     }
 
     if (state.cooldown > 0) state.cooldown -= 1

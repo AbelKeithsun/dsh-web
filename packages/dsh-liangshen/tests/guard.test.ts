@@ -42,6 +42,37 @@ function failingCall(callId, tool = 'bash', args = '{"cmd":"pytest"}') {
   ]
 }
 
+/** A SUCCESSFUL tool call/result pair with a distinct callId. */
+function okCall(callId, tool = 'bash', args = '{"cmd":"ls"}') {
+  return [
+    { type: 'tool/call', data: { name: tool, callId, arguments: args } },
+    { type: 'tool/result', data: { callId, message: { content: [{ type: 'text', text: 'ok' }] } } },
+  ]
+}
+
+/**
+ * A run of N successful model-direct shell calls, one per callId. Each call is
+ * its own step boundary so the fold sees a chain of settled successes rather
+ * than several calls inside one step.
+ */
+function shellRun(count: number, tool = 'bash') {
+  const events: any[] = []
+  for (let index = 0; index < count; index += 1) {
+    events.push({ type: 'step/start' })
+    events.push(...okCall(`s${index}`, tool, `{"cmd":"cmd-${index}"}`))
+  }
+  return events
+}
+
+/**
+ * One bridged sub-dispatch settlement: what a `run_code` program logs for each
+ * tool it calls. Used to prove the fold never counts program-internal shell
+ * calls as model-direct ones.
+ */
+function ptcDispatch(name = 'bash') {
+  return { type: 'tool/ptc-dispatch', data: { name, subCallId: `c1:ptc:1`, parentCallId: 'c1', isError: false, content: [] } }
+}
+
 describe('guard foldGuardSignal', () => {
   it('operator sees no signal on an empty or healthy stream', () => {
     // Given an empty stream and a healthy stream whose steps all produce output.
@@ -153,6 +184,113 @@ describe('guard foldGuardSignal', () => {
   })
 })
 
+describe('guard presentation-misuse signal', () => {
+  it('operator sees misuse after four successful shell calls with no program between them', () => {
+    // Given four model-direct shell calls that each succeeded and no run_code
+    // call anywhere in the stream.
+    const events = shellRun(4)
+    // When the fold runs, Then it reports the batching signal and names the
+    // shell the model is stuck one-call-at-a-time on.
+    const verdict = foldGuardSignal(events)
+    expect(verdict.signal).toBe('misuse')
+    expect(verdict.tool).toBe('bash')
+    expect(verdict.detail).toContain('4 consecutive successful shell calls')
+  })
+
+  it('operator sees no misuse below the threshold or on non-shell tools', () => {
+    // Given three shell calls, and four calls of a tool that is not a shell.
+    const below = shellRun(3)
+    const otherTool = [...okCall('r0', 'read'), ...okCall('r1', 'read'), ...okCall('r2', 'read'), ...okCall('r3', 'read')]
+    // When the fold runs, Then neither is the one-call-at-a-time shell habit:
+    // four reads are not the pattern this signal reports.
+    expect(foldGuardSignal(below).signal).toBeUndefined()
+    expect(foldGuardSignal(otherTool).signal).toBeUndefined()
+  })
+
+  it('operator sees the shell chain reset by a run_code call in between', () => {
+    // Given two shell calls, a run_code program, then two more shell calls.
+    const events = [...shellRun(2), ...okCall('rc', 'run_code', '{"code":"return 1"}'), ...shellRun(2)]
+    // When the fold runs, Then the program broke the chain and no misuse is
+    // reported: reaching for the transport is exactly what the signal asks for.
+    expect(foldGuardSignal(events).signal).toBeUndefined()
+  })
+
+  it('operator sees the shell chain reset by any other tool between two commands', () => {
+    // Given two shell calls, one read, then two more shell calls.
+    const events = [...shellRun(2), ...okCall('mid', 'read'), ...shellRun(2)]
+    // When the fold runs, Then a step the shell never asked for ends the run,
+    // so four shell calls split by one read are not a four-step chain.
+    expect(foldGuardSignal(events).signal).toBeUndefined()
+  })
+
+  it('operator sees the shell chain reset by a FAILED shell call', () => {
+    // Given three successful shell calls, one failure, then three more.
+    const events = [...shellRun(3), ...failingCall('bad'), ...shellRun(3)]
+    // When the fold runs, Then a failed command is the echo ladder's business
+    // and never a step of the batching chain.
+    expect(foldGuardSignal(events).signal).toBeUndefined()
+  })
+
+  it('operator sees program-internal shell calls excluded from the chain', () => {
+    // Given many shell calls BRIDGED from inside a program (tool/ptc-dispatch),
+    // which is the batching the signal asks for rather than the pattern it
+    // reports.
+    const events: any[] = []
+    for (let index = 0; index < 8; index += 1) events.push(ptcDispatch('bash'))
+    // When the fold runs, Then those dispatches never advance the model-direct
+    // chain and no misuse is reported.
+    expect(foldGuardSignal(events).signal).toBeUndefined()
+  })
+
+  it('operator can tune the misuse threshold like every other cap', () => {
+    // Given two successful shell calls.
+    const events = shellRun(2)
+    // When the fold runs at the default versus a lowered cap, Then only the
+    // tuned cap reports, and the sensitivity presets scale it.
+    expect(foldGuardSignal(events).signal).toBeUndefined()
+    expect(foldGuardSignal(events, { shellBatchSteps: 2 }).signal).toBe('misuse')
+    expect(resolveThresholds({ sensitivity: 'balanced' }).shellBatchSteps).toBe(4)
+    expect(resolveThresholds({ sensitivity: 'aggressive' }).shellBatchSteps).toBe(2)
+    expect(resolveThresholds({ sensitivity: 'conservative' }).shellBatchSteps).toBe(6)
+    expect(resolveThresholds({ shellBatchSteps: 9 }).shellBatchSteps).toBe(9)
+  })
+
+  it('operator sees a real degeneration episode win over the batching signal', () => {
+    // Given a stream that is BOTH a shell chain and a runaway reasoning step.
+    const events = [...shellRun(4), ...step(384000, {})]
+    // When the fold runs, Then the degeneration signal takes the episode: a
+    // broken session is the more urgent fact than a batching habit.
+    expect(foldGuardSignal(events).signal).toBe('stall')
+  })
+})
+
+describe('guard presentation-misuse message and injection', () => {
+  it('operator reads a batching nudge that names the program and claims no degeneration', () => {
+    // Given a misuse verdict on a shell chain.
+    const message = renderGuardMessage({ signal: 'misuse', tool: 'bash', detail: '4 consecutive successful shell calls with no run_code in between' })
+    // When the message renders, Then it points at one run_code program, names
+    // the count and the shell, and makes none of the degeneration claims the
+    // stall and echo messages make.
+    expect(message).toContain('Presentation check')
+    expect(message).toContain('4 consecutive')
+    expect(message).toContain('`bash`')
+    expect(message).toContain('one `run_code` program')
+    expect(message).toContain('return` only the conclusion')
+    expect(message).not.toContain('degeneration loop')
+    expect(message).not.toContain('Stop re-deriving')
+    expect(message).not.toContain('effectState')
+  })
+
+  it('operator sees the stall and echo messages unchanged beside the new signal', () => {
+    // Given each degeneration verdict, When the messages render, Then the
+    // existing wording is intact: the new signal was added beside them, not
+    // through them.
+    expect(renderGuardMessage({ signal: 'stall' })).toContain('The runtime interrupted a degeneration loop: repeated long reasoning with no tool call and no reply.')
+    expect(renderGuardMessage({ signal: 'echo' })).toContain('The runtime interrupted a degeneration loop: the same tool call failing repeatedly with identical arguments.')
+    expect(renderGuardMessage({ signal: 'echo', tool: 'read' })).toContain('effectState none')
+    expect(renderGuardMessage({ signal: 'stall' })).toContain('Stop re-deriving in thought')
+  })
+})
 describe('guard blind-route STALL fallback', () => {
   it('operator still gets a stall on a session that never persisted reasoning text', () => {
     // Given four consecutive output-free steps whose reasoning blocks carry a
@@ -424,6 +562,120 @@ describe('guard fire behaviour (signal to action)', () => {
   })
 })
 
+describe('guard presentation-misuse injection', () => {
+  /**
+   * A fake agent whose session replays one event stream and whose scope either
+   * carries the run_code transport or does not. The scope reads the SAME public
+   * `schemas()` projection the catalog reads, so the transport probe is
+   * exercised through its real input rather than a private flag.
+   */
+  const agent = (events: any[], { transport = true } = {}) => ({
+    session: { events },
+    ctx: { tools: { schemas: () => (transport ? [{ name: 'run_code' }, { name: 'bash' }] : [{ name: 'bash' }]) } },
+  })
+
+  /** Mount the guard over a fake context and return its pre-step hook. */
+  function mount(config: Record<string, unknown> = {}) {
+    const handlers = new Map<string, any>()
+    const warnings: string[] = []
+    const ctx = {
+      on: (event: string, listener: any) => { handlers.set(event, listener) },
+      logger: { warn: (message: string) => { warnings.push(message) } },
+    }
+    apply(ctx, config)
+    return {
+      warnings,
+      preStep: (target: any) => handlers.get('agent/pre-step')({ agent: target }, async () => ({ kind: 'enter', messages: [] })),
+    }
+  }
+
+  /** The injected message texts of one pre-step decision. */
+  const textsOf = (decision: any) => decision.messages.map((message: any) => message.content[0].text)
+
+  it('operator gets one batching nudge on a shell chain and is not nagged again in the same episode', async () => {
+    // Given a session running four shell calls one at a time carrying run_code.
+    const target = agent(shellRun(4))
+    const guard = mount({ refireCooldownSteps: 1 })
+    // When the fold runs on the SAME stream twice, Then the nudge lands once:
+    // the episode is the chain, not the request.
+    const first = await guard.preStep(target)
+    expect(first.messages).toHaveLength(1)
+    expect(textsOf(first)[0]).toContain('Presentation check')
+    expect(textsOf(first)[0]).toContain('4 consecutive')
+    const second = await guard.preStep(target)
+    expect(second.messages).toHaveLength(0)
+  })
+
+  it('operator gets no nudge once a program breaks the chain', async () => {
+    // Given a shell chain a program interrupted halfway through.
+    const target = agent([...shellRun(2), ...okCall('rc', 'run_code', '{"code":"return 1"}'), ...shellRun(2)])
+    const guard = mount({})
+    // When the fold runs, Then no nudge is injected: the model already batched.
+    const decision = await guard.preStep(target)
+    expect(decision.messages).toHaveLength(0)
+  })
+
+  it('operator gets no nudge in a session whose wire carries no run_code', async () => {
+    // Given the same four-call chain, but a scope that opens no transport —
+    // the native presentation, where advising a program would name a tool the
+    // request does not carry.
+    const target = agent(shellRun(4), { transport: false })
+    const guard = mount({})
+    // When the fold runs, Then nothing is injected and no request is touched.
+    const decision = await guard.preStep(target)
+    expect(decision.messages).toHaveLength(0)
+  })
+
+  it('operator sees a resumed chain count as a new episode while a continuing one does not', () => {
+    // Given two streams that both end with four consecutive shell calls: one
+    // where an earlier chain was broken by a program, and one where the SAME
+    // chain simply keeps going past its own report point.
+    const resumed = [
+      ...shellRun(4),
+      ...okCall('rc', 'run_code', '{"code":"return 1"}'),
+      ...shellRun(4),
+    ]
+    const continuing = shellRun(6)
+    // When the fold runs on each, Then the generation counter is what tells
+    // the two apart: the break advanced it, so a session that returns to
+    // one-at-a-time shell work is a NEW episode deserving one more nudge,
+    // while a chain that never broke reports once and holds.
+    expect(foldGuardSignal(resumed).generation).toBe(1)
+    expect(foldGuardSignal(continuing).generation).toBe(0)
+    // The streak itself resets at the break, so a resumed chain reports its
+    // OWN length rather than a running total across both episodes.
+    expect(foldGuardSignal(resumed).detail).toContain('4 consecutive')
+    expect(foldGuardSignal(continuing).detail).toContain('6 consecutive')
+  })
+
+  it('operator sees the batching nudge leave the degeneration breaker untouched', async () => {
+    // Given a session that first draws the batching nudge, then goes on to a
+    // real runaway-reasoning episode.
+    const target = agent([...shellRun(4), ...step(384000, {})])
+    const guard = mount({})
+    // When the fold runs for the nudge step alone, then for the full stream,
+    // Then the nudge consumed none of the DEgeneration breaker's budget: the
+    // stall still fires with its step-down window intact. A batching hint must
+    // never delay the breaker an operator is actually relying on.
+    const nudge = await guard.preStep(agent(shellRun(4)))
+    expect(textsOf(nudge)[0]).toContain('Presentation check')
+    const stalled = await guard.preStep(target)
+    expect(textsOf(stalled)[0]).toContain('Stop re-deriving in thought')
+  })
+  it('operator still gets the degeneration breaker on the same session shape', async () => {
+    // Given a chain of shell calls whose last step is a runaway reasoning step,
+    // so the same stream carries both the batch habit and a real episode.
+    const target = agent([...shellRun(4), ...step(384000, {})])
+    const guard = mount({})
+    // When the fold runs, Then the DEGENERATION message is what lands: the
+    // existing signals keep their text and their priority.
+    const decision = await guard.preStep(target)
+    expect(decision.messages).toHaveLength(1)
+    expect(textsOf(decision)[0]).toContain('degeneration loop')
+    expect(textsOf(decision)[0]).toContain('Stop re-deriving in thought')
+    expect(textsOf(decision)[0]).not.toContain('Presentation check')
+  })
+})
 describe('guard plugin identity', () => {
   it('operator can rely on the stable cordis plugin name', () => {
     // Given the plugin module, When its name is read, Then it is the stable id.
