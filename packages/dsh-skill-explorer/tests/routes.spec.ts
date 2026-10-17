@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { ROUTES, makeRoutes } from '../src/routes.ts'
 import { providerToggleFile } from '../src/provider-toggles.ts'
+import { buildZip } from './zip-builder.ts'
 
 const TMP = mkdtempSync(join(tmpdir(), 'skill-explorer-routes-'))
 const HOME = join(TMP, 'home')
@@ -1073,3 +1074,197 @@ describe('plugin-provided skill switch (#1854)', () => {
   })
 })
 
+describe('import (#1881)', () => {
+  /** Isolated route family with its own user and project roots. */
+  function importFixture(): {
+    root: string
+    home: string
+    project: string
+    mount(): ReturnType<typeof makeRoutes>
+  } {
+    const root = mkdtempSync(join(tmpdir(), 'skill-explorer-import-route-'))
+    const project = join(root, 'project')
+    const home = join(root, 'home')
+    mkdirSync(join(project, '.git'), { recursive: true })
+    mkdirSync(home, { recursive: true })
+    return {
+      root,
+      home,
+      project,
+      mount: () => makeRoutes({} as never, {
+        dshHome: home,
+        agentsHome: join(root, 'agents'),
+        customSkillDirs: [],
+        registry: { snapshot: async () => ({ skills: [], complete: true }) },
+        activeSessionCwds: () => [project],
+        logger: { warn: () => {} },
+      }),
+    }
+  }
+
+  /** Post one import body and capture the answer. */
+  async function postImport(
+    mounted: ReturnType<typeof makeRoutes>,
+    body: unknown,
+  ): Promise<{ status: number; payload: Record<string, unknown> }> {
+    const route = mounted.find(candidate => candidate.path === ROUTES.import)!
+    const captured = response()
+    await route.handler(request(ROUTES.import, 'POST', body === undefined ? {} : { body }), captured.res)
+    const answer = captured.body()
+    return { status: captured.status(), payload: answer === '' ? {} : JSON.parse(answer) }
+  }
+
+  /** A source directory holding one skill folder. */
+  function sourceDir(root: string, name: string, skillName: string): string {
+    const source = join(root, `source-${name}`)
+    mkdirSync(join(source, name), { recursive: true })
+    writeFileSync(join(source, name, 'SKILL.md'), `---\nname: ${skillName}\ndescription: imported\n---\nbody\n`, 'utf8')
+    return source
+  }
+
+  it('operator importing a directory creates the skill under the user root', async () => {
+    // Given a source directory holding one skill
+    const fixture = importFixture()
+    try {
+      const source = sourceDir(fixture.root, 'alpha-skill', 'alpha-skill')
+      // When the operator posts the import into the user root
+      const result = await postImport(fixture.mount(), {
+        root: 'user',
+        cwd: fixture.project,
+        source: { kind: 'directory', path: source },
+      })
+      // Then the file lands under ~/.dsh/skills and the report counts it
+      expect(result.status).toBe(200)
+      expect(result.payload.imported).toBe(1)
+      expect(result.payload.skipped).toBe(0)
+      expect(existsSync(join(fixture.home, 'skills', 'alpha-skill', 'SKILL.md'))).toBe(true)
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('operator importing into the project root writes into the shown workspace', async () => {
+    // Given a source directory holding one skill
+    const fixture = importFixture()
+    try {
+      const source = sourceDir(fixture.root, 'beta-skill', 'beta-skill')
+      // When the operator posts the import into the project root
+      const result = await postImport(fixture.mount(), {
+        root: 'project',
+        cwd: fixture.project,
+        source: { kind: 'directory', path: source },
+      })
+      // Then the file lands under the workspace's own .dsh/skills
+      expect(result.status).toBe(200)
+      expect(existsSync(join(fixture.project, '.dsh', 'skills', 'beta-skill', 'SKILL.md'))).toBe(true)
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('operator importing a name the project already owns into the user root is reported shadowed', async () => {
+    // Given a project skill that already owns the name
+    const fixture = importFixture()
+    try {
+      const projectSkill = join(fixture.project, '.dsh', 'skills', 'shared-skill', 'SKILL.md')
+      mkdirSync(join(projectSkill, '..'), { recursive: true })
+      writeFileSync(projectSkill, '---\nname: shared-skill\ndescription: project copy\n---\n', 'utf8')
+      const source = sourceDir(fixture.root, 'shared-skill', 'shared-skill')
+      // When the same name is imported into the user root
+      const result = await postImport(fixture.mount(), {
+        root: 'user',
+        cwd: fixture.project,
+        source: { kind: 'directory', path: source },
+      })
+      // Then nothing is written, because the project copy outranks it
+      expect(result.status).toBe(200)
+      expect(result.payload.imported).toBe(0)
+      expect((result.payload.outcomes as Array<{ reason?: string }>)[0].reason).toBe('shadowed')
+      expect(existsSync(join(fixture.home, 'skills', 'shared-skill', 'SKILL.md'))).toBe(false)
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('operator importing a posted archive creates every skill it carries', async () => {
+    // Given a zip archive the browser read, base64-encoded
+    const fixture = importFixture()
+    try {
+      const archive = buildZip([
+        { path: 'alpha-skill/SKILL.md', content: '---\nname: alpha-skill\ndescription: one\n---\n' },
+        { path: 'beta-skill/SKILL.md', content: '---\nname: beta-skill\ndescription: two\n---\n' },
+      ])
+      // When the operator posts it
+      const result = await postImport(fixture.mount(), {
+        root: 'user',
+        cwd: fixture.project,
+        source: { kind: 'archive', data: archive.toString('base64') },
+      })
+      // Then both land under the user root
+      expect(result.status).toBe(200)
+      expect(result.payload.imported).toBe(2)
+      expect(existsSync(join(fixture.home, 'skills', 'alpha-skill', 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(fixture.home, 'skills', 'beta-skill', 'SKILL.md'))).toBe(true)
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('operator posting a broken archive gets the archive reason instead of a server error', async () => {
+    // Given bytes that are not an archive
+    const fixture = importFixture()
+    try {
+      // When the operator posts them as an archive
+      const result = await postImport(fixture.mount(), {
+        root: 'user',
+        cwd: fixture.project,
+        source: { kind: 'archive', data: Buffer.from('not a zip').toString('base64') },
+      })
+      // Then the request is refused as a client error that names the problem
+      expect(result.status).toBe(400)
+      expect(String(result.payload.error)).toContain('not a zip archive')
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('operator posting a malformed import request gets 400 and writes nothing', async () => {
+    // Given requests missing the body, the root, the workspace, the source, or
+    // carrying an unimplemented source kind
+    const fixture = importFixture()
+    try {
+      const mounted = fixture.mount()
+      // When each one reaches the route
+      const noBody = await postImport(mounted, undefined)
+      const badRoot = await postImport(mounted, { root: 'elsewhere', cwd: fixture.project, source: { kind: 'directory', path: fixture.root } })
+      const noCwd = await postImport(mounted, { root: 'user', source: { kind: 'directory', path: fixture.root } })
+      const noSource = await postImport(mounted, { root: 'user', cwd: fixture.project })
+      const badKind = await postImport(mounted, { root: 'user', cwd: fixture.project, source: { kind: 'url', path: 'x' } })
+      const blankPath = await postImport(mounted, { root: 'user', cwd: fixture.project, source: { kind: 'directory', path: '   ' } })
+      const notBase64 = await postImport(mounted, { root: 'user', cwd: fixture.project, source: { kind: 'archive', data: '!!!' } })
+      // Then each is refused before any file is created
+      expect([
+        noBody.status, badRoot.status, noCwd.status, noSource.status,
+        badKind.status, blankPath.status, notBase64.status,
+      ]).toEqual([400, 400, 400, 400, 400, 400, 400])
+      expect(existsSync(join(fixture.home, 'skills'))).toBe(false)
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+
+  it('operator importing with a GET gets 405 before any directory is read', async () => {
+    // Given the import route
+    const fixture = importFixture()
+    try {
+      const route = fixture.mount().find(candidate => candidate.path === ROUTES.import)!
+      const captured = response()
+      // When it is requested with the wrong method
+      await route.handler(request(ROUTES.import, 'GET'), captured.res)
+      // Then the method check answers before the handler runs
+      expect(captured.status()).toBe(405)
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true })
+    }
+  })
+})

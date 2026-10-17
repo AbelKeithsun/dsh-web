@@ -32,10 +32,25 @@ A visual Skill Explorer for DeepSeek Harness (DSH) Web GUI and desktop client: b
   description, when-to-use, invocation marks, an enable/disable switch
   (rewrites `disable-model-invocation` in the SKILL.md frontmatter,
   hot-refreshed by the model catalog; a plugin-provided file has no such path,
-  so its switch is recorded in the panel's own store instead), an edit action
-  and a delete button
+  so its switch is recorded in the panel's own store instead), a duplicate
+  action (a copy of the skill as a starting point in the create form), an edit
+  action and a delete button
   (moves the file into `.trash`, recoverable). The refresh control hides while
   a load runs.
+- **Filters and source folding**: the search box stacks with three facets — the
+  source groups to include, the enabled/disabled state, and the row marks
+  ("Provided by plugin" / "No local file" / "symlinked") — behind one toolbar
+  toggle that shows how many facets are narrowing the list. Each source group's
+  header folds and unfolds its rows; on first use only the project and user
+  roots are open, so the global sources do not paint every row at once. The
+  facets and the fold decisions are view preferences stored in `localStorage`;
+  a browser that refuses storage simply does not remember them.
+- **Import tab**: batch-create skills from a directory on the host or from a
+  `.zip` archive read by the browser. Every candidate is validated against the
+  official acceptance rule and resolved by the same source rank the list uses,
+  so a candidate a stronger source already provides is reported as skipped
+  instead of creating a file the model would never receive. An import only ever
+  creates files: an existing skill is never overwritten.
 - **Create tab**: a form to create a new skill under the user root
   (`~/.dsh/skills`) or the project root (`.dsh/skills`), generating a
   standard SKILL.md.
@@ -101,6 +116,7 @@ sidebar.
 | `/api/dsh-skill-explorer/set-enabled` | POST | Enable/disable (rewrites frontmatter) |
 | `/api/dsh-skill-explorer/set-provider-enabled` | POST | Enable/disable a plugin-provided skill (recorded in the panel's own store) |
 | `/api/dsh-skill-explorer/create` | POST | Create a skill (user/project root) |
+| `/api/dsh-skill-explorer/import` | POST | Batch-create skills from a directory or a .zip archive |
 | `/api/dsh-skill-explorer/update` | POST | Edit an existing skill in place (name and location unchanged) |
 | `/api/dsh-skill-explorer/delete` | POST | Delete (move into .trash) |
 | `/api/dsh-skill-explorer/health` | GET | Health probe |
@@ -137,8 +153,18 @@ sidebar.
   only removes a record, so it is allowed unconditionally and a stored record
   stays removable after its plugin is gone. Both directions are idempotent, so
   a double click or a retried request cannot stack duplicates.
+- The import route is the one creation surface that reads content outside the
+  skill roots, and its read set is narrow: a host directory the user names is
+  scanned one level for `<name>/SKILL.md` or `<name>.md`, symbolic links and dot
+  entries there are skipped rather than followed, or the browser posts an
+  archive it read. It writes only new `<skill root>/<name>/SKILL.md` files under
+  the documented user/project root, never rewriting an existing one, and the
+  request is bounded (archive 4MB, entries 512, one SKILL.md 64KB, 4MB of
+  expanded text). A malformed or unsupported archive (zip64, encrypted entries,
+  an unknown compression method, a path escaping the archive) is answered with
+  400 and the reason, and every refusal names the offending entry.
 - Skill content is user-authored markdown; the create form caps content at
-  64KB, and the edit route enforces the same cap.
+  64KB, and the edit and import routes enforce the same cap.
 - The panel renders skill descriptions with text nodes only (no HTML
   injection).
 - Scans follow symbolic links: symlinked skill directories and single `.md`
@@ -186,6 +212,9 @@ sidebar.
   directory and single-file links list normally; a single-file link (pointing
   at one `.md`) is replaced by a plain file during the atomic rewrite — the link
   is not kept and the target file is left untouched.
+- A directory import reads one level and does not recurse: a nested tree has to be pointed at the directory that actually holds the skills. A `.zip` import accepts `SKILL.md` at any depth, so a zipped folder of skills works, but other files in the archive are ignored rather than copied as resources.
+- Importing a skill whose name resolves at the same or a stronger source is reported as skipped (`exists` / `shadowed`) rather than replacing that skill; bringing such a name in means renaming the candidate first.
+- The fold and facet preferences are per browser profile and survive a panel remount and a page refresh, but not a different browser or an incognito window.
 
 ## Telemetry
 

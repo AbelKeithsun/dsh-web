@@ -20,6 +20,7 @@ const API = {
   create: 'api/dsh-skill-explorer/create',
   update: 'api/dsh-skill-explorer/update',
   delete: 'api/dsh-skill-explorer/delete',
+  import: 'api/dsh-skill-explorer/import',
 } as const
 
 /**
@@ -80,6 +81,44 @@ export interface ListPayload {
   workspaces?: WorkspaceItem[]
 }
 
+/** Why a candidate the import read was not created. */
+export type ImportSkipReason =
+  | 'invalid-frontmatter'
+  | 'invalid-name'
+  | 'too-large'
+  | 'duplicate'
+  | 'exists'
+  | 'shadowed'
+
+/** One candidate's result from an import run. */
+export interface ImportOutcome {
+  /** The skill name, or the origin when no valid name was found. */
+  name: string
+  /** The archive entry or file path it was read from. */
+  origin: string
+  status: 'imported' | 'skipped'
+  /** Why it was skipped (absent when imported). */
+  reason?: ImportSkipReason
+  /** The written SKILL.md path (imported only). */
+  path?: string
+}
+
+/** The report an import run returns. */
+export interface ImportReport {
+  ok: true
+  /** The source level the files were written into. */
+  level: string
+  /** One outcome per candidate, in source order. */
+  outcomes: ImportOutcome[]
+  imported: number
+  skipped: number
+}
+
+/** Where the skills to import come from. */
+export type ImportSourceRequest =
+  | { kind: 'directory'; path: string }
+  | { kind: 'archive'; data: string }
+
 /** One thrown API error with the host-provided message. */
 export class ApiError extends Error {}
 
@@ -124,6 +163,20 @@ export class SkillApi {
   /** Rewrite an existing skill file in place (name and location unchanged). */
   async update(payload: { name: string; path: string; description: string; whenToUse?: string; content: string }): Promise<{ ok: true; name: string; path: string; disabled: boolean }> {
     return this.request(API.update, { method: 'POST', body: payload })
+  }
+
+  /**
+   * Batch-create skills from a host directory or a .zip archive.
+   *
+   * The directory form names a path on the host (the route is loopback-only,
+   * so the browser and the host are the same machine by construction); the
+   * archive form carries the bytes the browser read, base64-encoded, so the
+   * user can pick a file through the ordinary file dialog. Both only ever
+   * create new files under the chosen root; a name that already resolves at
+   * the same or a stronger source comes back skipped with its reason.
+   */
+  async importSkills(payload: { root: 'user' | 'project'; cwd: string; source: ImportSourceRequest }): Promise<ImportReport> {
+    return this.request(API.import, { method: 'POST', body: payload })
   }
 
   /** Delete a skill (moves it into .trash). */

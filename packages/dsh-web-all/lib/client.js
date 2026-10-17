@@ -10169,7 +10169,7 @@ window.__ModuleLoader__.load({
 		const DEFAULT_COMPACT_COLUMNS = ["done"];
 		/** Browser storage key of the per-column density choice. */
 		const COMPACT_COLUMNS_KEY = "dsh.taskBoard.compactColumns.v1";
-		const STATUSES = [
+		const STATUSES$1 = [
 			"backlog",
 			"todo",
 			"running",
@@ -10187,7 +10187,7 @@ window.__ModuleLoader__.load({
 				if (raw === null || raw === void 0) return [...DEFAULT_COMPACT_COLUMNS];
 				const parsed = JSON.parse(raw);
 				if (!Array.isArray(parsed)) return [...DEFAULT_COMPACT_COLUMNS];
-				return STATUSES.filter((status) => parsed.includes(status));
+				return STATUSES$1.filter((status) => parsed.includes(status));
 			} catch {
 				return [...DEFAULT_COMPACT_COLUMNS];
 			}
@@ -10200,7 +10200,7 @@ window.__ModuleLoader__.load({
 		*/
 		function writeCompactColumns(storage, columns) {
 			try {
-				storage?.setItem(COMPACT_COLUMNS_KEY, JSON.stringify(STATUSES.filter((status) => columns.includes(status))));
+				storage?.setItem(COMPACT_COLUMNS_KEY, JSON.stringify(STATUSES$1.filter((status) => columns.includes(status))));
 			} catch {}
 		}
 		//#endregion
@@ -48661,7 +48661,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			setProviderEnabled: "api/dsh-skill-explorer/set-provider-enabled",
 			create: "api/dsh-skill-explorer/create",
 			update: "api/dsh-skill-explorer/update",
-			delete: "api/dsh-skill-explorer/delete"
+			delete: "api/dsh-skill-explorer/delete",
+			import: "api/dsh-skill-explorer/import"
 		};
 		/** One thrown API error with the host-provided message. */
 		var ApiError = class extends Error {};
@@ -48720,6 +48721,22 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					body: payload
 				});
 			}
+			/**
+			* Batch-create skills from a host directory or a .zip archive.
+			*
+			* The directory form names a path on the host (the route is loopback-only,
+			* so the browser and the host are the same machine by construction); the
+			* archive form carries the bytes the browser read, base64-encoded, so the
+			* user can pick a file through the ordinary file dialog. Both only ever
+			* create new files under the chosen root; a name that already resolves at
+			* the same or a stronger source comes back skipped with its reason.
+			*/
+			async importSkills(payload) {
+				return this.request(API.import, {
+					method: "POST",
+					body: payload
+				});
+			}
 			/** Delete a skill (moves it into .trash). */
 			async remove(name, path) {
 				return this.request(API.delete, {
@@ -48757,12 +48774,14 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			panelOpen = false;
 			activeTab = "skills";
 			editing;
+			template;
 			listeners = /* @__PURE__ */ new Set();
 			/** Cached so getSnapshot stays referentially stable between changes. */
 			snapshot = {
 				panelOpen: false,
 				activeTab: "skills",
-				editing: void 0
+				editing: void 0,
+				template: void 0
 			};
 			constructor(deps = {}) {
 				this.deps = deps;
@@ -48829,11 +48848,30 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				this.activeTab = "skills";
 				this.commit();
 			}
+			/**
+			* Open the create tab prefilled from an existing skill. Leaving the editor
+			* target alone keeps a half-finished edit reachable from its own tab.
+			*/
+			openCreateFromTemplate(draft) {
+				this.template = draft;
+				this.activeTab = "create";
+				this.commit();
+			}
+			/**
+			* Drop the pending template, so a later visit to the create tab starts from
+			* a blank form. Called when the template has been used or dismissed.
+			*/
+			clearTemplate() {
+				if (this.template === void 0) return;
+				this.template = void 0;
+				this.commit();
+			}
 			commit() {
 				this.snapshot = {
 					panelOpen: this.panelOpen,
 					activeTab: this.activeTab,
-					editing: this.editing
+					editing: this.editing,
+					template: this.template
 				};
 				for (const fn of [...this.listeners]) fn();
 			}
@@ -48855,6 +48893,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"panel.title": "技能中心",
 			"tab.list": "技能",
 			"tab.create": "创建",
+			"tab.import": "导入",
 			"tab.edit": "编辑技能",
 			"group.bundled": "系统内置",
 			"group.project-dsh": "项目技能（.dsh/skills）",
@@ -48895,6 +48934,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"list.deleteConfirm": "删除技能「{name}」？将移入 .trash。",
 			"list.deleteFailed": "删除失败：{error}",
 			"list.edit": "编辑",
+			"list.duplicate": "复制为模板",
+			"list.duplicateFailed": "复制失败：{error}",
 			"create.root": "创建位置",
 			"create.root.user": "用户技能（~/.dsh/skills，所有项目可用）",
 			"create.root.project": "项目技能（当前项目 .dsh/skills）",
@@ -48908,6 +48949,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"create.created": "已创建：{path}",
 			"create.failed": "创建失败：{error}",
 			"create.note": "创建后立即生效（skill-filesystem 会热扫描）。内容会作为指令注入模型上下文——不要写入敏感信息。",
+			"create.template": "来自模板「{name}」：改好名称与字段后再创建。",
+			"create.templateClear": "清除模板",
 			"edit.name": "技能名（不可修改）",
 			"edit.loading": "正在读取技能内容…",
 			"edit.loadFailed": "读取失败：{error}",
@@ -48922,6 +48965,40 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"filter.searchPlaceholder": "按名称或描述筛选",
 			"filter.empty": "没有匹配「{query}」的技能",
 			"filter.emptyWorkspace": "当前筛选下没有技能。",
+			"filter.toggle": "筛选",
+			"filter.sourceLabel": "来源",
+			"filter.statusLabel": "状态",
+			"filter.status.all": "全部",
+			"filter.status.enabled": "已启用",
+			"filter.status.disabled": "已禁用",
+			"filter.markLabel": "标记",
+			"filter.mark.provider-file": "由插件提供",
+			"filter.mark.no-file": "无本地文件",
+			"filter.mark.linked": "软链接",
+			"filter.clear": "清除筛选",
+			"import.open": "导入",
+			"import.root": "导入到",
+			"import.source": "导入来源",
+			"import.source.directory": "本地目录",
+			"import.source.archive": ".zip 压缩包",
+			"import.directoryLabel": "目录路径（本机绝对路径）",
+			"import.directoryPlaceholder": "包含 <名称>/SKILL.md 的目录",
+			"import.archiveLabel": "选择 .zip 文件",
+			"import.submit": "开始导入",
+			"import.summary": "已导入 {imported} 个，跳过 {skipped} 个。",
+			"import.imported": "已导入",
+			"import.reason.unknown": "已跳过",
+			"import.reason.invalid-frontmatter": "frontmatter 缺少名称或描述",
+			"import.reason.invalid-name": "名称不符合 kebab-case 规则",
+			"import.reason.too-large": "内容超过 64KB",
+			"import.reason.duplicate": "同一来源中重名",
+			"import.reason.exists": "该位置已有同名技能",
+			"import.reason.shadowed": "已被更高优先级的来源覆盖",
+			"import.failed": "导入失败：{error}",
+			"import.directoryRequired": "请填写要导入的目录",
+			"import.archiveRequired": "请选择 .zip 文件",
+			"import.archiveTooLarge": "压缩包不能超过 {size}",
+			"import.note": "导入只新建文件，不会覆盖已有技能。同名冲突按官方来源优先级（项目 100 → 内置 600）裁决：优先级更高的同名技能不会被替换，对应条目显示为跳过。目录导入只读取一层（<名称>/SKILL.md 或 <名称>.md），软链接与点目录会被忽略。",
 			"workspace.isolated": "工作区隔离",
 			"workspace.isolatedHint": "该技能属于工作区「{workspace}」，在当前会话上下文隔离不生效",
 			"refresh": "刷新"
@@ -48932,6 +49009,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"panel.title": "Skill Center",
 			"tab.list": "Skills",
 			"tab.create": "Create",
+			"tab.import": "Import",
 			"tab.edit": "Edit skill",
 			"group.bundled": "System bundled",
 			"group.project-dsh": "Project skills (.dsh/skills)",
@@ -48972,6 +49050,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"list.deleteConfirm": "Delete skill \"{name}\"? It moves into .trash.",
 			"list.deleteFailed": "Delete failed: {error}",
 			"list.edit": "Edit",
+			"list.duplicate": "Duplicate as template",
+			"list.duplicateFailed": "Duplicate failed: {error}",
 			"create.root": "Location",
 			"create.root.user": "User skills (~/.dsh/skills, available to all projects)",
 			"create.root.project": "Project skills (current project .dsh/skills)",
@@ -48985,6 +49065,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"create.created": "Created: {path}",
 			"create.failed": "Create failed: {error}",
 			"create.note": "The skill takes effect immediately (skill-filesystem hot-scans). Its content is injected into the model context as instructions — do not put sensitive information in it.",
+			"create.template": "Copied from the template \"{name}\": adjust the name and fields before creating.",
+			"create.templateClear": "Clear template",
 			"edit.name": "Skill name (fixed)",
 			"edit.loading": "Loading the skill…",
 			"edit.loadFailed": "Failed to load: {error}",
@@ -48999,6 +49081,40 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"filter.searchPlaceholder": "Filter by name or description",
 			"filter.empty": "No skills match \"{query}\"",
 			"filter.emptyWorkspace": "No skills under the current filter.",
+			"filter.toggle": "Filters",
+			"filter.sourceLabel": "Source",
+			"filter.statusLabel": "Status",
+			"filter.status.all": "All",
+			"filter.status.enabled": "Enabled",
+			"filter.status.disabled": "Disabled",
+			"filter.markLabel": "Marks",
+			"filter.mark.provider-file": "Provided by plugin",
+			"filter.mark.no-file": "No local file",
+			"filter.mark.linked": "Symlinked",
+			"filter.clear": "Clear filters",
+			"import.open": "Import",
+			"import.root": "Import into",
+			"import.source": "Import source",
+			"import.source.directory": "Local directory",
+			"import.source.archive": ".zip archive",
+			"import.directoryLabel": "Directory path (absolute, on this machine)",
+			"import.directoryPlaceholder": "A directory holding <name>/SKILL.md",
+			"import.archiveLabel": "Choose a .zip file",
+			"import.submit": "Import skills",
+			"import.summary": "Imported {imported}, skipped {skipped}.",
+			"import.imported": "Imported",
+			"import.reason.unknown": "Skipped",
+			"import.reason.invalid-frontmatter": "Frontmatter lacks a name or description",
+			"import.reason.invalid-name": "Name is not kebab-case",
+			"import.reason.too-large": "Content exceeds 64KB",
+			"import.reason.duplicate": "Duplicate name in the same source",
+			"import.reason.exists": "A skill with this name already lives there",
+			"import.reason.shadowed": "A stronger source already provides this name",
+			"import.failed": "Import failed: {error}",
+			"import.directoryRequired": "Enter the directory to import",
+			"import.archiveRequired": "Choose a .zip file",
+			"import.archiveTooLarge": "The archive must not exceed {size}",
+			"import.note": "Import only creates files; it never overwrites an existing skill. A same-name conflict resolves by the official source rank (project 100 → bundled 600): a stronger same-name skill is left alone and the candidate is listed as skipped. A directory import reads one level (<name>/SKILL.md or <name>.md); symlinks and dot entries are ignored.",
 			"workspace.isolated": "Workspace isolated",
 			"workspace.isolatedHint": "This skill belongs to workspace \"{workspace}\" and is isolated from the current session context",
 			"refresh": "Refresh"
@@ -49033,7 +49149,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		}
 		//#endregion
 		//#region \0dsh-css:packages/dsh-skill-explorer/src/client/panel/panel.module.css.mjs
-		const css$2 = ".ptK59a_view{height:100%;min-height:0;overflow:hidden}.ptK59a_panel{background:var(--dsw-alias-bg-base);min-width:0;height:100%;min-height:0;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);flex-direction:column;gap:10px;padding:14px 16px 16px;display:flex}.ptK59a_panelHeader{flex:none;align-items:center;gap:10px;display:flex}.ptK59a_panelTitle{color:var(--dsw-alias-label-primary);white-space:nowrap;flex:1;margin:0;font-size:16px;font-weight:700}.ptK59a_tabBar{border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;gap:2px;display:flex}.ptK59a_tab{color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-bottom:2px solid #0000;border-radius:6px 6px 0 0;padding:7px 14px;font-size:13px}.ptK59a_tab:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_tab[data-active]{color:var(--dsw-alias-label-primary);border-bottom-color:var(--dsw-alias-state-business-primary);font-weight:600}.ptK59a_panelContent{flex-direction:column;flex:1;min-height:0;display:flex;overflow:hidden}.ptK59a_fillBody{flex-direction:column;flex:1;gap:10px;min-height:0;display:flex;overflow:hidden}.ptK59a_tabBody{flex-direction:column;flex:1;gap:10px;min-height:0;display:flex;overflow-y:auto}.ptK59a_toolbar{flex-wrap:wrap;flex:none;align-items:center;gap:8px;display:flex}.ptK59a_search{min-width:120px;color:var(--dsw-alias-label-primary);background:var(--dsw-specific-input-major);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;outline:none;flex:0 260px;padding:6px 10px;font-size:13px}.ptK59a_search::placeholder{color:var(--dsw-alias-label-tertiary)}.ptK59a_select{color:var(--dsw-alias-label-primary);background:var(--dsw-specific-input-major);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;outline:none;padding:6px 8px;font-size:13px}.ptK59a_toolbarSpacer{flex:1}.ptK59a_checkboxLabel{color:var(--dsw-alias-label-secondary);cursor:pointer;align-items:center;gap:6px;font-size:12px;display:inline-flex}.ptK59a_ghostButton{color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);cursor:pointer;white-space:nowrap;background:0 0;border-radius:8px;padding:5px 12px;font-size:12px}.ptK59a_ghostButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_ghostButton:disabled{opacity:.45;cursor:default}.ptK59a_formActions{align-items:center;gap:8px;display:flex}.ptK59a_primaryButton{color:var(--dsw-alias-label-primary-foreground);background:var(--dsw-alias-button-primary-fill);cursor:pointer;white-space:nowrap;border:none;border-radius:8px;align-self:flex-start;padding:6px 14px;font-size:13px;font-weight:600}.ptK59a_primaryButton:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}.ptK59a_primaryButton:disabled{opacity:.5;cursor:default}.ptK59a_linkButton{color:var(--dsw-alias-state-business-primary);cursor:pointer;white-space:nowrap;background:0 0;border:none;padding:0;font-size:12px}.ptK59a_linkButton:hover:not(:disabled){text-decoration:underline}.ptK59a_linkButton:disabled{opacity:.45;cursor:default}.ptK59a_linkButton[data-danger]{color:var(--dsw-alias-state-error-primary)}.ptK59a_banner{border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere;border-radius:8px;padding:8px 12px;font-size:12.5px;line-height:1.5}.ptK59a_banner[data-kind=ok]{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)}.ptK59a_banner[data-kind=error]{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}.ptK59a_empty{text-align:center;color:var(--dsw-alias-label-tertiary);padding:28px 12px;font-size:12.5px}.ptK59a_list{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;flex-direction:column;flex:1;gap:14px;min-height:0;padding:8px 12px 10px;display:flex;overflow-y:auto}.ptK59a_group{flex-direction:column;gap:6px;display:flex}.ptK59a_groupTitle{color:var(--dsw-alias-label-primary);margin:0;font-size:13px;font-weight:600}.ptK59a_count{color:var(--dsw-alias-label-secondary);margin-left:6px;font-weight:400}.ptK59a_groupHint{color:var(--dsw-alias-label-secondary);margin:0;font-size:11px}.ptK59a_skillRow{border-bottom:1px solid var(--dsw-alias-border-l1);padding:8px 0}.ptK59a_skillRow:last-child{border-bottom:none}.ptK59a_skillRow:hover{background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_skillHeader{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.ptK59a_skillName{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;font-family:var(--ds-font-family-code)}.ptK59a_badge{border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);white-space:nowrap;border-radius:999px;padding:1px 8px;font-size:11px;line-height:1.6;display:inline-block}.ptK59a_badgeWorkspace{color:var(--dsw-alias-label-secondary)}.ptK59a_badgeInvokable{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)}.ptK59a_badgeIsolated{color:var(--dsw-alias-state-warn-primary);border-color:var(--dsw-alias-state-warn-primary)}.ptK59a_skillIsolated{opacity:.76}.ptK59a_skillIsolated:hover{opacity:.98}.ptK59a_switch{cursor:pointer;background:0 0;border:none;border-radius:99px;align-items:center;margin-left:auto;padding:2px;display:inline-flex}.ptK59a_switch:disabled{opacity:.45;cursor:default}.ptK59a_switchTrack{background:var(--dsw-alias-border-l2);border-radius:99px;flex:none;width:30px;height:16px;transition:background .18s;position:relative}.ptK59a_switchThumb{background:var(--dsw-alias-bg-base);border-radius:50%;width:12px;height:12px;transition:left .18s;position:absolute;top:2px;left:2px}.ptK59a_switch[aria-checked=true] .ptK59a_switchTrack{background:var(--dsw-alias-state-success-primary)}.ptK59a_switch[aria-checked=true] .ptK59a_switchThumb{left:16px}.ptK59a_deleteButton{margin-left:4px}.ptK59a_skillDesc{color:var(--dsw-alias-label-primary);margin:6px 0 0;font-size:12px;line-height:1.5}.ptK59a_skillWhen{color:var(--dsw-alias-label-secondary);margin:4px 0 0;font-size:11px}.ptK59a_skillPath{color:var(--dsw-alias-label-tertiary);font-size:10px;font-family:var(--ds-font-family-code);word-break:break-all;margin:6px 0 0}.ptK59a_form{flex-direction:column;gap:10px;max-width:640px;display:flex}.ptK59a_field{flex-direction:column;gap:5px;display:flex}.ptK59a_fieldLabel{color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:600}.ptK59a_input{color:var(--dsw-alias-label-primary);background:var(--dsw-specific-input-major);border:1px solid var(--dsw-alias-border-l2);resize:vertical;border-radius:8px;outline:none;padding:7px 10px;font-family:inherit;font-size:13px}.ptK59a_input:focus{border-color:var(--dsw-alias-state-business-primary)}.ptK59a_input::placeholder{color:var(--dsw-alias-label-tertiary)}.ptK59a_input:disabled{opacity:.55}.ptK59a_textarea{min-height:140px;font-family:var(--ds-font-family-code)}.ptK59a_note{color:var(--dsw-alias-label-tertiary);margin:0;font-size:11px;line-height:1.7}";
+		const css$2 = ".ptK59a_view{height:100%;min-height:0;overflow:hidden}.ptK59a_panel{background:var(--dsw-alias-bg-base);min-width:0;height:100%;min-height:0;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);flex-direction:column;gap:10px;padding:14px 16px 16px;display:flex}.ptK59a_panelHeader{flex:none;align-items:center;gap:10px;display:flex}.ptK59a_panelTitle{color:var(--dsw-alias-label-primary);white-space:nowrap;flex:1;margin:0;font-size:16px;font-weight:700}.ptK59a_tabBar{border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;gap:2px;display:flex}.ptK59a_tab{color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap;background:0 0;border:none;border-bottom:2px solid #0000;border-radius:6px 6px 0 0;padding:7px 14px;font-size:13px}.ptK59a_tab:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_tab[data-active]{color:var(--dsw-alias-label-primary);border-bottom-color:var(--dsw-alias-state-business-primary);font-weight:600}.ptK59a_panelContent{flex-direction:column;flex:1;min-height:0;display:flex;overflow:hidden}.ptK59a_fillBody{flex-direction:column;flex:1;gap:10px;min-height:0;display:flex;overflow:hidden}.ptK59a_tabBody{flex-direction:column;flex:1;gap:10px;min-height:0;display:flex;overflow-y:auto}.ptK59a_toolbar{flex-wrap:wrap;flex:none;align-items:center;gap:8px;display:flex}.ptK59a_search{min-width:120px;color:var(--dsw-alias-label-primary);background:var(--dsw-specific-input-major);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;outline:none;flex:0 260px;padding:6px 10px;font-size:13px}.ptK59a_search::placeholder{color:var(--dsw-alias-label-tertiary)}.ptK59a_select{color:var(--dsw-alias-label-primary);background:var(--dsw-specific-input-major);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;outline:none;padding:6px 8px;font-size:13px}.ptK59a_toolbarSpacer{flex:1}.ptK59a_checkboxLabel{color:var(--dsw-alias-label-secondary);cursor:pointer;align-items:center;gap:6px;font-size:12px;display:inline-flex}.ptK59a_facetBar{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;flex-direction:column;flex:none;gap:6px;padding:8px 10px;display:flex}.ptK59a_facetRow{flex-wrap:wrap;align-items:center;gap:6px;display:flex}.ptK59a_facetLabel{min-width:34px;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600}.ptK59a_facetChip{color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l2);cursor:pointer;white-space:nowrap;background:0 0;border-radius:999px;align-items:center;gap:5px;padding:2px 9px;font-size:11.5px;line-height:1.7;display:inline-flex}.ptK59a_facetChip:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_facetChip[data-active]{color:var(--dsw-alias-state-business-primary);border-color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_facetCount{color:var(--dsw-alias-label-tertiary);font-size:10.5px}.ptK59a_facetChip[data-active] .ptK59a_facetCount{color:var(--dsw-alias-state-business-primary)}.ptK59a_ghostButton[data-active]{color:var(--dsw-alias-state-business-primary);border-color:var(--dsw-alias-state-business-primary)}.ptK59a_ghostButton{color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);cursor:pointer;white-space:nowrap;background:0 0;border-radius:8px;padding:5px 12px;font-size:12px}.ptK59a_ghostButton:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_ghostButton:disabled{opacity:.45;cursor:default}.ptK59a_formActions{align-items:center;gap:8px;display:flex}.ptK59a_primaryButton{color:var(--dsw-alias-label-primary-foreground);background:var(--dsw-alias-button-primary-fill);cursor:pointer;white-space:nowrap;border:none;border-radius:8px;align-self:flex-start;padding:6px 14px;font-size:13px;font-weight:600}.ptK59a_primaryButton:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}.ptK59a_primaryButton:disabled{opacity:.5;cursor:default}.ptK59a_linkButton{color:var(--dsw-alias-state-business-primary);cursor:pointer;white-space:nowrap;background:0 0;border:none;padding:0;font-size:12px}.ptK59a_linkButton:hover:not(:disabled){text-decoration:underline}.ptK59a_linkButton:disabled{opacity:.45;cursor:default}.ptK59a_linkButton[data-danger]{color:var(--dsw-alias-state-error-primary)}.ptK59a_banner{border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere;border-radius:8px;padding:8px 12px;font-size:12.5px;line-height:1.5}.ptK59a_banner[data-kind=ok]{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)}.ptK59a_banner[data-kind=error]{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-state-error-primary)}.ptK59a_empty{text-align:center;color:var(--dsw-alias-label-tertiary);padding:28px 12px;font-size:12.5px}.ptK59a_list{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;flex-direction:column;flex:1;gap:14px;min-height:0;padding:8px 12px 10px;display:flex;overflow-y:auto}.ptK59a_group{flex-direction:column;gap:6px;display:flex}.ptK59a_groupToggle{width:100%;color:var(--dsw-alias-label-primary);cursor:pointer;text-align:left;background:0 0;border:none;border-radius:6px;align-items:center;gap:6px;padding:4px 2px;font-size:13px;font-weight:600;display:flex}.ptK59a_groupToggle:hover{background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_groupCaret{border-bottom:1.5px solid;border-right:1.5px solid;flex:none;width:6px;height:6px;transition:transform .15s;transform:rotate(-45deg)}.ptK59a_groupToggle[aria-expanded=true] .ptK59a_groupCaret{transform:rotate(45deg)}.ptK59a_groupTitleText{font-weight:600}.ptK59a_count{color:var(--dsw-alias-label-secondary);margin-left:6px;font-weight:400}.ptK59a_groupHint{color:var(--dsw-alias-label-secondary);margin:0;font-size:11px}.ptK59a_skillRow{border-bottom:1px solid var(--dsw-alias-border-l1);padding:8px 0}.ptK59a_skillRow:last-child{border-bottom:none}.ptK59a_skillRow:hover{background:var(--dsw-alias-interactive-bg-hover)}.ptK59a_skillHeader{flex-wrap:wrap;align-items:center;gap:8px;display:flex}.ptK59a_skillName{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;font-family:var(--ds-font-family-code)}.ptK59a_badge{border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);white-space:nowrap;border-radius:999px;padding:1px 8px;font-size:11px;line-height:1.6;display:inline-block}.ptK59a_badgeWorkspace{color:var(--dsw-alias-label-secondary)}.ptK59a_badgeInvokable{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)}.ptK59a_badgeIsolated{color:var(--dsw-alias-state-warn-primary);border-color:var(--dsw-alias-state-warn-primary)}.ptK59a_skillIsolated{opacity:.76}.ptK59a_skillIsolated:hover{opacity:.98}.ptK59a_switch{cursor:pointer;background:0 0;border:none;border-radius:99px;align-items:center;margin-left:auto;padding:2px;display:inline-flex}.ptK59a_switch:disabled{opacity:.45;cursor:default}.ptK59a_switchTrack{background:var(--dsw-alias-border-l2);border-radius:99px;flex:none;width:30px;height:16px;transition:background .18s;position:relative}.ptK59a_switchThumb{background:var(--dsw-alias-bg-base);border-radius:50%;width:12px;height:12px;transition:left .18s;position:absolute;top:2px;left:2px}.ptK59a_switch[aria-checked=true] .ptK59a_switchTrack{background:var(--dsw-alias-state-success-primary)}.ptK59a_switch[aria-checked=true] .ptK59a_switchThumb{left:16px}.ptK59a_deleteButton{margin-left:4px}.ptK59a_skillDesc{color:var(--dsw-alias-label-primary);margin:6px 0 0;font-size:12px;line-height:1.5}.ptK59a_skillWhen{color:var(--dsw-alias-label-secondary);margin:4px 0 0;font-size:11px}.ptK59a_skillPath{color:var(--dsw-alias-label-tertiary);font-size:10px;font-family:var(--ds-font-family-code);word-break:break-all;margin:6px 0 0}.ptK59a_form{flex-direction:column;gap:10px;max-width:640px;display:flex}.ptK59a_field{flex-direction:column;gap:5px;display:flex}.ptK59a_fieldLabel{color:var(--dsw-alias-label-secondary);font-size:12px;font-weight:600}.ptK59a_fieldGroup{border:none;flex-direction:column;gap:5px;margin:0;padding:0;display:flex}.ptK59a_radioRow{flex-wrap:wrap;align-items:center;gap:14px;display:flex}.ptK59a_outcomeList{flex-direction:column;gap:4px;max-height:260px;margin:8px 0 0;padding:0;list-style:none;display:flex;overflow-y:auto}.ptK59a_outcomeItem{flex-wrap:wrap;align-items:baseline;gap:8px;font-size:12px;display:flex}.ptK59a_outcomeName{font-family:var(--ds-font-family-code);color:var(--dsw-alias-label-primary);font-weight:600}.ptK59a_outcomeReason{color:var(--dsw-alias-label-secondary);font-size:11.5px}.ptK59a_outcomeItem[data-status=skipped] .ptK59a_outcomeReason{color:var(--dsw-alias-state-warn-primary)}.ptK59a_bannerAction{margin-left:8px}.ptK59a_input{color:var(--dsw-alias-label-primary);background:var(--dsw-specific-input-major);border:1px solid var(--dsw-alias-border-l2);resize:vertical;border-radius:8px;outline:none;padding:7px 10px;font-family:inherit;font-size:13px}.ptK59a_input:focus{border-color:var(--dsw-alias-state-business-primary)}.ptK59a_input::placeholder{color:var(--dsw-alias-label-tertiary)}.ptK59a_input:disabled{opacity:.55}.ptK59a_textarea{min-height:140px;font-family:var(--ds-font-family-code)}.ptK59a_note{color:var(--dsw-alias-label-tertiary);margin:0;font-size:11px;line-height:1.7}";
 		const tagId$2 = "@linxin666/dsh-web-all/packages/dsh-skill-explorer/src/client/panel/panel.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$2) + "]") === null) {
 			const tag = document.createElement("style");
@@ -49048,28 +49164,42 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"badgeIsolated": "ptK59a_badgeIsolated",
 			"badgeWorkspace": "ptK59a_badgeWorkspace",
 			"banner": "ptK59a_banner",
+			"bannerAction": "ptK59a_bannerAction",
 			"checkboxLabel": "ptK59a_checkboxLabel",
 			"count": "ptK59a_count",
 			"deleteButton": "ptK59a_deleteButton",
 			"empty": "ptK59a_empty",
+			"facetBar": "ptK59a_facetBar",
+			"facetChip": "ptK59a_facetChip",
+			"facetCount": "ptK59a_facetCount",
+			"facetLabel": "ptK59a_facetLabel",
+			"facetRow": "ptK59a_facetRow",
 			"field": "ptK59a_field",
+			"fieldGroup": "ptK59a_fieldGroup",
 			"fieldLabel": "ptK59a_fieldLabel",
 			"fillBody": "ptK59a_fillBody",
 			"form": "ptK59a_form",
 			"formActions": "ptK59a_formActions",
 			"ghostButton": "ptK59a_ghostButton",
 			"group": "ptK59a_group",
+			"groupCaret": "ptK59a_groupCaret",
 			"groupHint": "ptK59a_groupHint",
-			"groupTitle": "ptK59a_groupTitle",
+			"groupTitleText": "ptK59a_groupTitleText",
+			"groupToggle": "ptK59a_groupToggle",
 			"input": "ptK59a_input",
 			"linkButton": "ptK59a_linkButton",
 			"list": "ptK59a_list",
 			"note": "ptK59a_note",
+			"outcomeItem": "ptK59a_outcomeItem",
+			"outcomeList": "ptK59a_outcomeList",
+			"outcomeName": "ptK59a_outcomeName",
+			"outcomeReason": "ptK59a_outcomeReason",
 			"panel": "ptK59a_panel",
 			"panelContent": "ptK59a_panelContent",
 			"panelHeader": "ptK59a_panelHeader",
 			"panelTitle": "ptK59a_panelTitle",
 			"primaryButton": "ptK59a_primaryButton",
+			"radioRow": "ptK59a_radioRow",
 			"search": "ptK59a_search",
 			"select": "ptK59a_select",
 			"skillDesc": "ptK59a_skillDesc",
@@ -49099,17 +49229,32 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		* list payload carries. The inactive tab unmounts, so a user who opens this
 		* tab first has no cwd: the first submit resolves it with one list call and
 		* reuses it afterwards.
+		*
+		* A row's "duplicate as template" action leaves a draft in the controller and
+		* opens this tab; the draft is read once at mount (the tab remounts on every
+		* visit, so a later duplicate hands the next visit a fresh one) and dropped
+		* from the controller once the skill is created or the draft is dismissed.
 		*/
 		/** The create tab body. */
-		function CreateTab({ api }) {
+		function CreateTab({ api, controller }) {
+			const [template, setTemplate] = (0, react.useState)(() => controller.getSnapshot().template);
 			const [root, setRoot] = (0, react.useState)("user");
-			const [name, setName] = (0, react.useState)("");
-			const [description, setDescription] = (0, react.useState)("");
-			const [whenToUse, setWhenToUse] = (0, react.useState)("");
-			const [content, setContent] = (0, react.useState)("");
+			const [name, setName] = (0, react.useState)(template?.name ?? "");
+			const [description, setDescription] = (0, react.useState)(template?.description ?? "");
+			const [whenToUse, setWhenToUse] = (0, react.useState)(template?.whenToUse ?? "");
+			const [content, setContent] = (0, react.useState)(template?.content ?? "");
 			const [cwd, setCwd] = (0, react.useState)(void 0);
 			const [busy, setBusy] = (0, react.useState)(false);
 			const [feedback, setFeedback] = (0, react.useState)(void 0);
+			/** Blank the form and drop the pending draft, so the next visit starts fresh. */
+			const reset = () => {
+				setName("");
+				setDescription("");
+				setWhenToUse("");
+				setContent("");
+				setTemplate(void 0);
+				controller.clearTemplate();
+			};
 			const submit = async (event) => {
 				event.preventDefault();
 				if (name.trim() === "" || description.trim() === "" || content.trim() === "") {
@@ -49135,10 +49280,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 						text: tt("create.created", { path: result.path }),
 						kind: "ok"
 					});
-					setName("");
-					setDescription("");
-					setWhenToUse("");
-					setContent("");
+					reset();
 				} catch (err) {
 					setFeedback({
 						text: tt("create.failed", { error: err instanceof Error ? err.message : String(err) }),
@@ -49156,6 +49298,16 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 						submit(event);
 					},
 					children: [
+						template !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							className: panel_module_css_default.banner,
+							"data-dsh-part": "template-banner",
+							children: [tt("create.template", { name: template.from }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: `${panel_module_css_default.linkButton} ${panel_module_css_default.bannerAction}`,
+								onClick: reset,
+								children: tt("create.templateClear")
+							})]
+						}),
 						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 							className: panel_module_css_default.field,
 							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
@@ -49409,6 +49561,421 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			});
 		}
 		//#endregion
+		//#region ../dsh-skill-explorer/src/client/import-source.ts
+		/**
+		* Import-source helpers (browser half): turn a file the user picked into the
+		* base64 string the host route carries.
+		*
+		* The archive travels as base64 inside the JSON body rather than as a
+		* multipart upload because the route family's shared body reader is JSON-only;
+		* the cap here matches the host's own archive limit, so an oversized file is
+		* refused before a multi-megabyte request is built.
+		*/
+		/**
+		* The largest archive the import route accepts. Mirrors IMPORT_LIMITS in the
+		* host half (src/import.ts): the browser refuses the file early instead of
+		* streaming something the host would reject after reading it.
+		*/
+		const MAX_IMPORT_ARCHIVE_BYTES = 4 * 1024 * 1024;
+		/** Chunk size for the fromCharCode conversion (well under the argument cap). */
+		const BASE64_CHUNK = 32768;
+		/**
+		* Encode bytes as base64, in chunks.
+		*
+		* `String.fromCharCode(...bytes)` on a multi-megabyte array overflows the
+		* argument list and throws, so the conversion walks the buffer in bounded
+		* chunks before handing the binary string to btoa.
+		* @param bytes - the raw archive bytes.
+		* @returns the base64 encoding.
+		*/
+		function bytesToBase64(bytes) {
+			let binary = "";
+			for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK) binary += String.fromCharCode(...bytes.subarray(offset, offset + BASE64_CHUNK));
+			return btoa(binary);
+		}
+		//#endregion
+		//#region ../dsh-skill-explorer/src/client/panel/ImportTab.tsx
+		/**
+		* Import tab: batch-create skills from a local directory or a .zip archive.
+		*
+		* Both forms end at the same host route. The directory form names a path on
+		* the host, which is meaningful because the route is loopback-only (browser and
+		* host are the same machine by construction); the archive form carries the
+		* bytes the browser read, so the user picks the file through the ordinary file
+		* dialog. Nothing is overwritten: every outcome the host reports says either
+		* that one SKILL.md was created or why that candidate was skipped.
+		*
+		* The tab unmounts whenever another tab or panel takes the center column, so
+		* the workspace it needs is resolved with one list call on the first import
+		* (the same lazy pattern the create tab uses) instead of being held here.
+		*/
+		/** Human-readable size, for the archive cap message. */
+		function megabytes(bytes) {
+			return `${Math.round(bytes / (1024 * 1024))}MB`;
+		}
+		/** Localized skip reason with a fallback for an outcome that carries none. */
+		function reasonLabel(outcome) {
+			if (outcome.status === "imported") return tt("import.imported");
+			const reason = outcome.reason;
+			return reason === void 0 ? tt("import.reason.unknown") : tt(`import.reason.${reason}`);
+		}
+		/** The import tab body. */
+		function ImportTab({ api }) {
+			const [root, setRoot] = (0, react.useState)("user");
+			const [mode, setMode] = (0, react.useState)("directory");
+			const [dir, setDir] = (0, react.useState)("");
+			const [archive, setArchive] = (0, react.useState)(void 0);
+			const [cwd, setCwd] = (0, react.useState)(void 0);
+			const [busy, setBusy] = (0, react.useState)(false);
+			const [report, setReport] = (0, react.useState)(void 0);
+			const [error, setError] = (0, react.useState)(void 0);
+			const busyRef = (0, react.useRef)(false);
+			const chooseArchive = async (event) => {
+				const file = event.target.files?.[0];
+				setReport(void 0);
+				if (file === void 0) {
+					setArchive(void 0);
+					return;
+				}
+				if (file.size > 4194304) {
+					setArchive(void 0);
+					setError(tt("import.archiveTooLarge", { size: megabytes(MAX_IMPORT_ARCHIVE_BYTES) }));
+					return;
+				}
+				setError(void 0);
+				try {
+					setArchive({
+						name: file.name,
+						data: bytesToBase64(new Uint8Array(await file.arrayBuffer()))
+					});
+				} catch (err) {
+					setArchive(void 0);
+					setError(tt("import.failed", { error: err instanceof Error ? err.message : String(err) }));
+				}
+			};
+			const submit = async (event) => {
+				event.preventDefault();
+				if (busyRef.current) return;
+				let source;
+				if (mode === "directory") {
+					if (dir.trim() === "") {
+						setError(tt("import.directoryRequired"));
+						return;
+					}
+					source = {
+						kind: "directory",
+						path: dir.trim()
+					};
+				} else {
+					if (archive === void 0) {
+						setError(tt("import.archiveRequired"));
+						return;
+					}
+					source = {
+						kind: "archive",
+						data: archive.data
+					};
+				}
+				busyRef.current = true;
+				setBusy(true);
+				setError(void 0);
+				setReport(void 0);
+				try {
+					const workspace = cwd ?? (await api.list()).cwd;
+					setCwd(workspace);
+					setReport(await api.importSkills({
+						root,
+						cwd: workspace,
+						source
+					}));
+				} catch (err) {
+					setError(tt("import.failed", { error: err instanceof Error ? err.message : String(err) }));
+				} finally {
+					busyRef.current = false;
+					setBusy(false);
+				}
+			};
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				className: panel_module_css_default.tabBody,
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("form", {
+					className: panel_module_css_default.form,
+					onSubmit: (event) => {
+						submit(event);
+					},
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+							className: panel_module_css_default.field,
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								className: panel_module_css_default.fieldLabel,
+								children: tt("import.root")
+							}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("select", {
+								className: panel_module_css_default.select,
+								value: root,
+								onChange: (event) => {
+									setRoot(event.target.value);
+								},
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+									value: "user",
+									children: tt("create.root.user")
+								}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+									value: "project",
+									children: tt("create.root.project")
+								})]
+							})]
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("fieldset", {
+							className: panel_module_css_default.fieldGroup,
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("legend", {
+								className: panel_module_css_default.fieldLabel,
+								children: tt("import.source")
+							}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: panel_module_css_default.radioRow,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+									className: panel_module_css_default.checkboxLabel,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+										type: "radio",
+										name: "import-mode",
+										checked: mode === "directory",
+										onChange: () => {
+											setMode("directory");
+										}
+									}), tt("import.source.directory")]
+								}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+									className: panel_module_css_default.checkboxLabel,
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+										type: "radio",
+										name: "import-mode",
+										checked: mode === "archive",
+										onChange: () => {
+											setMode("archive");
+										}
+									}), tt("import.source.archive")]
+								})]
+							})]
+						}),
+						mode === "directory" ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+							className: panel_module_css_default.field,
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+								className: panel_module_css_default.fieldLabel,
+								children: tt("import.directoryLabel")
+							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+								className: panel_module_css_default.input,
+								value: dir,
+								spellCheck: false,
+								placeholder: tt("import.directoryPlaceholder"),
+								onChange: (event) => {
+									setDir(event.target.value);
+								}
+							})]
+						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+							className: panel_module_css_default.field,
+							children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: panel_module_css_default.fieldLabel,
+									children: tt("import.archiveLabel")
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+									type: "file",
+									accept: ".zip,application/zip",
+									"aria-label": tt("import.archiveLabel"),
+									onChange: (event) => {
+										chooseArchive(event);
+									}
+								}),
+								archive !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: panel_module_css_default.note,
+									children: archive.name
+								})
+							]
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							type: "submit",
+							className: panel_module_css_default.primaryButton,
+							disabled: busy,
+							children: tt("import.submit")
+						}),
+						error !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+							className: panel_module_css_default.banner,
+							"data-kind": "error",
+							children: error
+						}),
+						report !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+							"data-dsh-part": "import-report",
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: panel_module_css_default.banner,
+								"data-kind": report.imported > 0 ? "ok" : void 0,
+								children: tt("import.summary", {
+									imported: report.imported,
+									skipped: report.skipped
+								})
+							}), report.outcomes.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("ul", {
+								className: panel_module_css_default.outcomeList,
+								children: report.outcomes.map((outcome) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("li", {
+									className: panel_module_css_default.outcomeItem,
+									"data-status": outcome.status,
+									children: [
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: panel_module_css_default.outcomeName,
+											children: outcome.name
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: panel_module_css_default.outcomeReason,
+											children: reasonLabel(outcome)
+										}),
+										/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+											className: panel_module_css_default.skillPath,
+											children: outcome.origin
+										})
+									]
+								}, outcome.origin))
+							})]
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+							className: panel_module_css_default.note,
+							children: tt("import.note")
+						})
+					]
+				})
+			});
+		}
+		//#endregion
+		//#region ../dsh-skill-explorer/src/client/panel-prefs.ts
+		/** The localStorage key holding the whole preference document. */
+		const LIST_VIEW_STORAGE_KEY = "dsh-skill-explorer:list-view:v1";
+		/**
+		* Source groups opened on first use. These are the roots the user is actively
+		* working with (project and user skills); the global and machine-level
+		* sources — system bundled, custom directories, runtime registrations — start
+		* collapsed so a wide catalog does not paint every row at once.
+		*/
+		const DEFAULT_EXPANDED_LEVELS = [
+			"project-dsh",
+			"project-agents",
+			"user-dsh",
+			"user-agents"
+		];
+		/** Bounds on the persisted document, so a hostile or buggy write stays small. */
+		const MAX_LIST_ENTRIES = 64;
+		const MAX_STORAGE_BYTES = 8 * 1024;
+		const STATUSES = [
+			"all",
+			"enabled",
+			"disabled"
+		];
+		const MARKS = [
+			"linked",
+			"provider-file",
+			"no-file"
+		];
+		/** The preferences a browser with no stored document uses. */
+		function defaultListPrefs() {
+			return {
+				levels: [],
+				status: "all",
+				marks: [],
+				collapsed: {}
+			};
+		}
+		/** Read a bounded string array, dropping anything that is not a string. */
+		function stringList(value, allowed) {
+			if (!Array.isArray(value)) return [];
+			const out = [];
+			for (const entry of value) {
+				if (typeof entry !== "string" || entry === "") continue;
+				if (allowed !== void 0 && !allowed.includes(entry)) continue;
+				if (out.includes(entry)) continue;
+				out.push(entry);
+				if (out.length >= MAX_LIST_ENTRIES) break;
+			}
+			return out;
+		}
+		/** Read the collapse map, keeping boolean decisions only. */
+		function collapseMap(value) {
+			if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+			const out = {};
+			let kept = 0;
+			for (const [key, decision] of Object.entries(value)) {
+				if (typeof decision !== "boolean" || key === "") continue;
+				out[key] = decision;
+				kept += 1;
+				if (kept >= MAX_LIST_ENTRIES) break;
+			}
+			return out;
+		}
+		/**
+		* Read the stored preferences, falling back to the defaults for a missing,
+		* unreadable, oversized or malformed document. Every field is validated on its
+		* own, so one bad field never discards the rest of the user's view.
+		* @param storage - storage to read, or undefined when none is available.
+		* @returns the preferences the tab should start from.
+		*/
+		function loadListPrefs(storage) {
+			const defaults = defaultListPrefs();
+			if (storage === void 0) return defaults;
+			let raw;
+			try {
+				raw = storage.getItem(LIST_VIEW_STORAGE_KEY);
+			} catch {
+				return defaults;
+			}
+			if (raw === null || raw === "" || raw.length > MAX_STORAGE_BYTES) return defaults;
+			let parsed;
+			try {
+				parsed = JSON.parse(raw);
+			} catch {
+				return defaults;
+			}
+			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return defaults;
+			const document = parsed;
+			const status = document.status;
+			return {
+				levels: stringList(document.levels),
+				status: typeof status === "string" && STATUSES.includes(status) ? status : defaults.status,
+				marks: stringList(document.marks, MARKS),
+				collapsed: collapseMap(document.collapsed)
+			};
+		}
+		/**
+		* Persist the preferences. A browser that refuses storage (private mode, a
+		* sandboxed frame, a full quota) is not an error: the view still works for
+		* this page load, it just does not survive a refresh.
+		* @param storage - storage to write, or undefined when none is available.
+		* @param prefs - the preferences to store.
+		* @returns whether the document was persisted.
+		*/
+		function saveListPrefs(storage, prefs) {
+			if (storage === void 0) return false;
+			try {
+				storage.setItem(LIST_VIEW_STORAGE_KEY, JSON.stringify(prefs));
+				return true;
+			} catch {
+				return false;
+			}
+		}
+		/**
+		* Whether a source group is open, given the user's recorded decisions.
+		* @param key - the group's source key.
+		* @param collapsed - recorded per-group decisions.
+		* @returns whether the group's rows are visible.
+		*/
+		function isGroupExpanded(key, collapsed) {
+			const recorded = collapsed[key];
+			return recorded === void 0 ? DEFAULT_EXPANDED_LEVELS.includes(key) : !recorded;
+		}
+		/**
+		* Flip one group's collapse decision, recording it explicitly so the choice
+		* survives a remount and later default changes cannot silently reopen it.
+		* @param key - the group's source key.
+		* @param collapsed - current recorded decisions.
+		* @returns a new decision map with this group flipped.
+		*/
+		function toggleGroupCollapsed(key, collapsed) {
+			return {
+				...collapsed,
+				[key]: isGroupExpanded(key, collapsed)
+			};
+		}
+		//#endregion
 		//#region ../dsh-skill-explorer/src/client/skill-filter.ts
 		/**
 		* Match rank of one skill against a lowercased needle: 0 when the name hits,
@@ -49421,6 +49988,41 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			if (skill.description.toLowerCase().includes(needle)) return 1;
 		}
 		/**
+		* The marks a row carries. "Provided by plugin" and "No local file" are the
+		* two halves of one classification (a file the panel cannot write versus no
+		* file at all), so at most one of them ever applies; a symlinked skill is a
+		* separate fact and can carry either.
+		* @param skill - the row's entry.
+		* @returns every mark that applies to the row.
+		*/
+		function marksOf(skill) {
+			const marks = [];
+			if (skill.fileState === "provider-file") marks.push("provider-file");
+			else if (skill.fileState === "virtual") marks.push("no-file");
+			if (skill.linked === true) marks.push("linked");
+			return marks;
+		}
+		/**
+		* Whether a skill survives the mark facet. An empty selection keeps every row;
+		* a non-empty one keeps a row carrying ANY selected mark, the same union
+		* semantics the source facet uses, so ticking two boxes widens the result
+		* instead of emptying it.
+		*/
+		function inMarks(skill, marks) {
+			if (marks === void 0 || marks.length === 0) return true;
+			const carried = marksOf(skill);
+			return marks.some((mark) => carried.includes(mark));
+		}
+		/**
+		* Whether a skill survives the enabled/disabled facet. This reads the model's
+		* automatic-invocation state (the same value the row's switch shows), not the
+		* user-invocable policy, so "disabled" means exactly what the switch reads.
+		*/
+		function inStatus(skill, status) {
+			if (status === void 0 || status === "all") return true;
+			return status === "enabled" ? skill.modelInvocable : !skill.modelInvocable;
+		}
+		/**
 		* Whether a skill survives the workspace axis. Skills without a workspace
 		* root are global and stay visible in every selection; that is the pre-search
 		* behavior and the search must not change it.
@@ -49430,17 +50032,19 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return skill.workspaceRoot === void 0 || skill.workspaceRoot === workspace;
 		}
 		/**
-		* Apply both axes to a payload's groups: workspace filter first, then the
-		* query (name hits ranked before description hits, stable within a rank).
-		* Empty groups are dropped so the caller renders only what has content.
+		* Apply every axis to a payload's groups: the source facet drops whole groups,
+		* then the workspace, status, mark and query axes narrow each one (name hits
+		* ranked before description hits, stable within a rank). Empty groups are
+		* dropped so the caller renders only what has content.
 		* @param groups - host payload groups in host order.
-		* @param filter - workspace + query.
+		* @param filter - workspace + query + optional source / status / mark facets.
 		* @returns the visible groups; the input is never mutated.
 		*/
 		function selectGroups(groups, filter) {
 			const needle = filter.query.trim().toLowerCase();
-			return groups.map((group) => {
-				const ranked = group.skills.filter((skill) => inWorkspace(skill, filter.workspace)).map((skill) => ({
+			const levels = filter.levels ?? [];
+			return groups.filter((group) => levels.length === 0 || levels.includes(group.key)).map((group) => {
+				const ranked = group.skills.filter((skill) => inWorkspace(skill, filter.workspace) && inStatus(skill, filter.status) && inMarks(skill, filter.marks)).map((skill) => ({
 					skill,
 					rank: matchRank(skill, needle)
 				})).filter((row) => row.rank !== void 0);
@@ -49454,16 +50058,62 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		//#endregion
 		//#region ../dsh-skill-explorer/src/client/panel/SkillsTab.tsx
 		/**
-		* Skills tab: the grouped skill list with the search / workspace toolbar and
-		* the per-row enable switch, edit and delete actions.
+		* Skills tab: the grouped skill list with the search / facet / workspace
+		* toolbar, collapsible source groups, and the per-row enable switch, edit,
+		* duplicate and delete actions.
 		*
 		* The host route family is the only data source; a failed refresh keeps the
-		* previous payload visible with an inline error.
+		* previous payload visible with an inline error. Which facets are applied and
+		* which source groups are open are view preferences, not payload state: they
+		* are persisted in localStorage (panel-prefs.ts), because the layout unmounts
+		* this page whenever another panel takes the center column.
 		*/
+		/** The mark facets, in the order the filter bar lists them. */
+		const MARK_FACETS = [
+			"provider-file",
+			"no-file",
+			"linked"
+		];
+		/** The enabled/disabled facets, in the order the filter bar lists them. */
+		const STATUS_FACETS = [
+			"all",
+			"enabled",
+			"disabled"
+		];
 		/** Localized provider label with fallback to the raw provider id. */
 		function providerLabel(provider) {
 			const key = `provider.${provider}`;
 			return key in zh$2 ? tt(key) : provider;
+		}
+		/** Localized source-group title, falling back to the host's own copy. */
+		function groupTitle(group) {
+			const key = `group.${group.key}`;
+			return key in zh$2 ? tt(key) : group.title;
+		}
+		/** Localized source-group hint, falling back to the host's own copy. */
+		function groupHintOf(group) {
+			const key = `groupHint.${group.key}`;
+			return key in zh$2 ? tt(key) : group.hint;
+		}
+		/** The browser's localStorage, or undefined when this context refuses it. */
+		function listStorage() {
+			try {
+				return typeof localStorage === "undefined" ? void 0 : localStorage;
+			} catch {
+				return;
+			}
+		}
+		/** Whether any facet narrows the list (the source/status/mark facets only). */
+		function hasActiveFacets(prefs) {
+			return prefs.levels.length > 0 || prefs.status !== "all" || prefs.marks.length > 0;
+		}
+		/** How many facet selections are active, for the toolbar badge. */
+		function activeFacetCount(prefs) {
+			return prefs.levels.length + (prefs.status === "all" ? 0 : 1) + prefs.marks.length;
+		}
+		/** The name a duplicate starts from; the user can change it before creating. */
+		function duplicateSkillName(name) {
+			return `${name}-copy`;
 		}
 		/**
 		* Whether this row carries an enable switch.
@@ -49508,8 +50158,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			if (skill.userInvocable) marks.push(tt("list.mark.user"));
 			return marks.join(" / ");
 		}
-		/** One skill row: name, badges, enable switch, edit and delete actions. */
-		function SkillRow({ skill, api, onChanged, onEdit }) {
+		/** One skill row: name, badges, enable switch, edit, duplicate and delete actions. */
+		function SkillRow({ skill, api, onChanged, onEdit, onDuplicate }) {
 			const [busy, setBusy] = (0, react.useState)(false);
 			const [error, setError] = (0, react.useState)(void 0);
 			const busyRef = (0, react.useRef)(false);
@@ -49547,8 +50197,36 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					setBusy(false);
 				}
 			};
+			/**
+			* Copy this skill's fields into the create form as a starting point. The
+			* read route resolves the row's own path through a fresh scan, so the draft
+			* can only ever come from a skill the panel is showing.
+			*/
+			const duplicate = async () => {
+				const path = skill.path;
+				if (path === void 0 || busyRef.current) return;
+				busyRef.current = true;
+				setBusy(true);
+				setError(void 0);
+				try {
+					const source = await api.read(skill.name, path);
+					onDuplicate({
+						from: skill.name,
+						name: duplicateSkillName(skill.name),
+						description: source.description,
+						...source.whenToUse === void 0 ? {} : { whenToUse: source.whenToUse },
+						content: source.content
+					});
+				} catch (err) {
+					setError(tt("list.duplicateFailed", { error: err instanceof Error ? err.message : String(err) }));
+				} finally {
+					busyRef.current = false;
+					setBusy(false);
+				}
+			};
 			const isIsolated = skill.isActiveWorkspace === false;
 			const fileBadge = skill.path === void 0 ? localFileBadge(skill) : void 0;
+			const canCopy = skill.path !== void 0;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("article", {
 				className: `${panel_module_css_default.skillRow}${isIsolated ? ` ${panel_module_css_default.skillIsolated}` : ""}`,
 				"data-dsh-part": "skill-row",
@@ -49604,6 +50282,15 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 									children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: panel_module_css_default.switchThumb })
 								})
 							}),
+							canCopy && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: panel_module_css_default.linkButton,
+								disabled: busy,
+								onClick: () => {
+									duplicate();
+								},
+								children: tt("list.duplicate")
+							}),
 							skill.path !== void 0 && skill.linked !== true && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 								type: "button",
 								className: panel_module_css_default.linkButton,
@@ -49650,10 +50337,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			});
 		}
 		/** The skills tab body. */
-		function SkillsTab({ api, onEdit }) {
+		function SkillsTab({ api, onEdit, onImport, onDuplicate }) {
 			const [payload, setPayload] = (0, react.useState)(void 0);
 			const [selectedWorkspace, setSelectedWorkspace] = (0, react.useState)("all");
 			const [query, setQuery] = (0, react.useState)("");
+			const [prefs, setPrefs] = (0, react.useState)(() => loadListPrefs(listStorage()));
+			const [filtersOpen, setFiltersOpen] = (0, react.useState)(() => hasActiveFacets(loadListPrefs(listStorage())));
 			const [error, setError] = (0, react.useState)(void 0);
 			const [loading, setLoading] = (0, react.useState)(true);
 			const loadSeq = (0, react.useRef)(0);
@@ -49675,6 +50364,44 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			(0, react.useEffect)(() => {
 				load();
 			}, [api]);
+			(0, react.useEffect)(() => {
+				saveListPrefs(listStorage(), prefs);
+			}, [prefs]);
+			(0, react.useEffect)(() => {
+				if (payload === void 0) return;
+				const present = new Set(payload.groups.map((group) => group.key));
+				if (prefs.levels.every((level) => present.has(level))) return;
+				setPrefs((current) => ({
+					...current,
+					levels: current.levels.filter((level) => present.has(level))
+				}));
+			}, [payload, prefs.levels]);
+			const toggleLevel = (key) => {
+				setPrefs((current) => ({
+					...current,
+					levels: current.levels.includes(key) ? current.levels.filter((level) => level !== key) : [...current.levels, key]
+				}));
+			};
+			const toggleMark = (mark) => {
+				setPrefs((current) => ({
+					...current,
+					marks: current.marks.includes(mark) ? current.marks.filter((entry) => entry !== mark) : [...current.marks, mark]
+				}));
+			};
+			const clearFacets = () => {
+				setPrefs((current) => ({
+					...current,
+					levels: [],
+					status: "all",
+					marks: []
+				}));
+			};
+			const toggleGroup = (key) => {
+				setPrefs((current) => ({
+					...current,
+					collapsed: toggleGroupCollapsed(key, current.collapsed)
+				}));
+			};
 			const refreshButton = loading ? void 0 : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 				type: "button",
 				className: panel_module_css_default.ghostButton,
@@ -49696,11 +50423,18 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					children: refreshButton
 				})] })
 			});
-			const visibleGroups = selectGroups(payload.groups, {
+			const filter = {
 				workspace: selectedWorkspace,
-				query
-			});
+				query,
+				levels: prefs.levels,
+				status: prefs.status,
+				marks: prefs.marks
+			};
+			const visibleGroups = selectGroups(payload.groups, filter);
 			const visibleCount = visibleGroups.reduce((total, group) => total + group.skills.length, 0);
+			const facetsActive = hasActiveFacets(prefs);
+			const narrowed = query.trim() !== "" || selectedWorkspace !== "all" || facetsActive;
+			const emptyText = query.trim() !== "" ? tt("filter.empty", { query: query.trim() }) : narrowed ? tt("filter.emptyWorkspace") : tt("list.empty");
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: panel_module_css_default.fillBody,
 				children: [
@@ -49737,8 +50471,93 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 									children: ws.active ? tt("filter.workspaceCurrent", { name: ws.name }) : ws.name
 								}, ws.root))]
 							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								className: panel_module_css_default.ghostButton,
+								"aria-expanded": filtersOpen,
+								"data-active": facetsActive ? "" : void 0,
+								onClick: () => {
+									setFiltersOpen((open) => !open);
+								},
+								children: [tt("filter.toggle"), facetsActive ? ` (${activeFacetCount(prefs)})` : ""]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: panel_module_css_default.ghostButton,
+								onClick: onImport,
+								children: tt("import.open")
+							}),
 							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", { className: panel_module_css_default.toolbarSpacer }),
 							refreshButton
+						]
+					}),
+					filtersOpen && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: panel_module_css_default.facetBar,
+						"data-dsh-part": "facet-bar",
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: panel_module_css_default.facetRow,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: panel_module_css_default.facetLabel,
+									children: tt("filter.sourceLabel")
+								}), payload.groups.map((group) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+									type: "button",
+									className: panel_module_css_default.facetChip,
+									"aria-pressed": prefs.levels.includes(group.key),
+									"data-active": prefs.levels.includes(group.key) ? "" : void 0,
+									onClick: () => {
+										toggleLevel(group.key);
+									},
+									children: [groupTitle(group), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: panel_module_css_default.facetCount,
+										children: group.skills.length
+									})]
+								}, group.key))]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: panel_module_css_default.facetRow,
+								children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									className: panel_module_css_default.facetLabel,
+									children: tt("filter.statusLabel")
+								}), STATUS_FACETS.map((status) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: panel_module_css_default.facetChip,
+									"aria-pressed": prefs.status === status,
+									"data-active": prefs.status === status ? "" : void 0,
+									onClick: () => {
+										setPrefs((current) => ({
+											...current,
+											status
+										}));
+									},
+									children: tt(`filter.status.${status}`)
+								}, status))]
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+								className: panel_module_css_default.facetRow,
+								children: [
+									/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: panel_module_css_default.facetLabel,
+										children: tt("filter.markLabel")
+									}),
+									MARK_FACETS.map((mark) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: panel_module_css_default.facetChip,
+										"aria-pressed": prefs.marks.includes(mark),
+										"data-active": prefs.marks.includes(mark) ? "" : void 0,
+										onClick: () => {
+											toggleMark(mark);
+										},
+										children: tt(`filter.mark.${mark}`)
+									}, mark)),
+									facetsActive && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: panel_module_css_default.linkButton,
+										onClick: clearFacets,
+										children: tt("filter.clear")
+									})
+								]
+							})
 						]
 					}),
 					error !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
@@ -49748,35 +50567,51 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					}),
 					visibleCount === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 						className: panel_module_css_default.empty,
-						children: query.trim() === "" ? tt("filter.emptyWorkspace") : tt("filter.empty", { query: query.trim() })
+						children: emptyText
 					}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 						className: panel_module_css_default.list,
 						children: visibleGroups.map((group) => {
-							const groupKey = `group.${group.key}`;
-							const hintKey = `groupHint.${group.key}`;
-							const title = groupKey in zh$2 ? tt(groupKey) : group.title;
-							const hint = hintKey in zh$2 ? tt(hintKey) : group.hint;
+							const expanded = isGroupExpanded(group.key, prefs.collapsed);
+							const hint = groupHintOf(group);
 							return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
 								className: panel_module_css_default.group,
+								"data-collapsed": expanded ? void 0 : "",
 								children: [
-									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("h3", {
-										className: panel_module_css_default.groupTitle,
-										children: [title, /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-											className: panel_module_css_default.count,
-											children: tt("list.count", { count: String(group.skills.length) })
-										})]
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+										type: "button",
+										className: panel_module_css_default.groupToggle,
+										"aria-expanded": expanded,
+										"data-dsh-part": "group-toggle",
+										onClick: () => {
+											toggleGroup(group.key);
+										},
+										children: [
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: panel_module_css_default.groupCaret,
+												"aria-hidden": "true"
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: panel_module_css_default.groupTitleText,
+												children: groupTitle(group)
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+												className: panel_module_css_default.count,
+												children: tt("list.count", { count: String(group.skills.length) })
+											})
+										]
 									}),
-									hint !== "" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+									expanded && hint !== "" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 										className: panel_module_css_default.groupHint,
 										children: hint
 									}),
-									group.skills.map((skill) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(SkillRow, {
+									expanded && group.skills.map((skill) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(SkillRow, {
 										skill,
 										api,
 										onChanged: () => {
 											load();
 										},
-										onEdit
+										onEdit,
+										onDuplicate
 									}, skill.name))
 								]
 							}, group.key);
@@ -49798,7 +50633,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		* resolves it itself and the list refetches when it returns.
 		*
 		* The edit tab appears only while a skill is being edited: the list row hands
-		* the chosen skill over, and leaving the editor returns to the list.
+		* the chosen skill over, and leaving the editor returns to the list. The
+		* import tab is always listed, and the list's import button opens it; a row's
+		* "duplicate as template" action hands a draft to the create tab through the
+		* controller for the same mount reason.
 		*/
 		/** The skill center panel. */
 		function SkillPanel({ controller, api }) {
@@ -49811,6 +50649,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				{
 					id: "create",
 					label: () => tt("tab.create")
+				},
+				{
+					id: "import",
+					label: () => tt("tab.import")
 				},
 				...editing === void 0 ? [] : [{
 					id: "edit",
@@ -49852,9 +50694,19 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 								api,
 								onEdit: (skill) => {
 									controller.openEditor(skill);
+								},
+								onImport: () => {
+									controller.setActiveTab("import");
+								},
+								onDuplicate: (draft) => {
+									controller.openCreateFromTemplate(draft);
 								}
 							}),
-							activeTab === "create" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CreateTab, { api }),
+							activeTab === "create" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(CreateTab, {
+								api,
+								controller
+							}),
+							activeTab === "import" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ImportTab, { api }),
 							activeTab === "edit" && editing !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(EditTab, {
 								api,
 								skill: editing,
