@@ -230,6 +230,24 @@ describe('user question bridge', () => {
     expect(harness.questions.size).toBe(0)
   })
 
+  it('operator a phone that reconnects is handed the question it missed', async () => {
+    // Given a question already waiting, which the phone saw once
+    const harness = makeHub()
+    await declareQuestions(harness.connection)
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    const before = questionPayloads(harness.transport).length
+    // When that phone declares the channel again after reconnecting
+    await declareQuestions(harness.connection, 9)
+    // Then it is shown the live question again, under the same call id
+    const replayed = questionPayloads(harness.transport).slice(before)
+    expect(replayed.map(payload => payload.callId)).toEqual(['c-1'])
+    expect(replayed[0]?.state).toBe('open')
+    // And the host is still waiting, not answered by the replay
+    await harness.connection.handleText(requestFrame(10, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+    expect(harness.questions.size).toBe(0)
+  })
+
   it('user of a client written before the channel sees no event and its answer is an unknown method', async () => {
     // Given a paired phone that never declared the capability
     const harness = makeHub()

@@ -76,7 +76,14 @@ export class BridgeHub {
    * @param auth - the device the upgrade proved, when it carried a valid token.
    */
   attach(transport: BridgeTransport, auth?: ConnectionAuth): BridgeConnection {
-    const connection = new BridgeConnection(this.#options, transport, auth)
+    // The replay hook is wired here rather than by the caller: a phone that
+    // reconnects mid-question was not there for the broadcast, and every
+    // construction path has to hand it the live claims.
+    const connection = new BridgeConnection(
+      { ...this.#options, onDeclare: (fresh) => { this.replayQuestions(fresh) } },
+      transport,
+      auth,
+    )
     this.#connections.add(connection)
     connection.startHeartbeat()
     if (auth !== undefined) void this.#options.roster.touch(auth.deviceId).catch(() => undefined)
@@ -117,6 +124,20 @@ export class BridgeHub {
    * Publish one event to every paired device that announced a capability.
    * @returns how many connections actually took the frame.
    */
+  /**
+   * Hand one freshly declared connection the questions it can now answer.
+   *
+   * Without this, a question raised while the phone was reconnecting stays on the
+   * host with no card anywhere on the phone: the original broadcast was addressed
+   * to clients that had already announced the channel.
+   */
+  replayQuestions(connection: BridgeConnection): void {
+    if (!connection.paired || !connection.declares(CAP_QUESTIONS)) return
+    for (const claim of this.#options.questions.openClaims()) {
+      connection.emit(TOPIC_QUESTION_REQUEST, questionPayload('open', claim))
+    }
+  }
+
   broadcastTo(capability: string, topic: string, payload: unknown): number {
     let delivered = 0
     for (const connection of this.#connections) {
@@ -197,6 +218,10 @@ export class BridgeHub {
     })
     if (claim === undefined) return await next()
     const delivered = this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('open', claim))
+    // A client that cannot receive this is not going to receive it later: the claim
+    // must not be left holding the host's ask with no card anywhere. A client that
+    // *can* receive it but was reconnecting is a different case — it is handed the
+    // live claims by `onDeclare` when it comes back.
     if (delivered === 0) this.#options.questions.withdraw([callId])
     return await claim.answer
   }

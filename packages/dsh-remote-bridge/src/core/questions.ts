@@ -343,6 +343,21 @@ export class QuestionClaims {
   }
 
   /**
+   * Every claim still waiting on an answer.
+   *
+   * A phone that connects after the question was raised never saw the original
+   * broadcast, so it has to be handed the live claims again — otherwise the
+   * question sits on the host with an answerable card nowhere.
+   */
+  openClaims(): readonly ClaimedQuestionView[] {
+    return [...this.#claims.values()].map((record) => ({
+      sessionId: record.sessionId,
+      callId: record.callId,
+      questions: record.questions,
+    }))
+  }
+
+  /**
    * Withdraw the named questions, delegating each to the next answerer.
    * @returns how many were still open and therefore delegated.
    */

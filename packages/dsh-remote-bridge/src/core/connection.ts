@@ -108,6 +108,11 @@ export interface BridgeConnectionOptions {
   /** This machine's IANA time zone, sent with every prompt. */
   readonly clientTimeZone: () => string | undefined
   readonly log: (message: string) => void
+  /**
+   * Called after a client's `hello` records its capabilities, so the hub can hand
+   * it whatever it can now receive but was not there to see.
+   */
+  readonly onDeclare?: (connection: BridgeConnection) => void
   readonly heartbeatMs?: number
 }
 
@@ -476,6 +481,9 @@ export class BridgeConnection {
   #hello(payload: Readonly<Record<string, unknown>>): DispatchOutcome {    const proto = payload.proto
     if (proto !== PROTO) return refusal(CODE_PROTO_UNSUPPORTED, `this bridge speaks protocol ${PROTO}`)
     this.#capabilities = capabilitiesOf(payload.cap)
+    // The hub replays anything this client can now receive but missed: a phone
+    // that connected after a question was raised has no other way to learn of it.
+    this.#options.onDeclare?.(this)
     return {
       ok: true,
       r: {
