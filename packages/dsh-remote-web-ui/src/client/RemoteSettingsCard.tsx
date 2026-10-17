@@ -11,7 +11,7 @@ import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { PluginSettingsCard, ValueField, BooleanField } from './PluginSettingsCard.tsx'
 import { PhoneIcon } from './PhoneIcon.tsx'
 import { CardForm, booleanField, numberField, secretField, textField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
-import { LanBindStatusError, readLanBindStatus, shouldStopLanBindPoll, type LanBindFrame } from './pair-api.ts'
+import { isLanHost, LanBindStatusError, readLanBindStatus, shouldStopLanBindPoll, type LanBindFrame } from './pair-api.ts'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 
 /** The remote-control fields this card edits (the namespace's full schema). */
@@ -48,7 +48,8 @@ export interface RemoteSettings {
   relay?: boolean
   /**
    * LAN bind toggle: once flipped, the plugin manages the profile patch's
-   * webserver block (0.0.0.0 / 127.0.0.1) and the host firewall rule.
+   * webserver block (a LAN literal of this machine / 127.0.0.1) and the host
+   * firewall rule.
    */
   lanBind?: boolean
 }
@@ -319,8 +320,13 @@ export function RemoteSettingsCard(props: RemoteSettingsCardProps) {
  * bind, the firewall summary, and the reachable LAN URLs. Polls the
  * loopback-only status endpoint; a failure (non-loopback origin) renders
  * nothing — the pairing panel carries the loopback banner instead.
+ *
+ * A host on DSH 0.2.1-rc.2 or later rejects wildcard binds, so the managed
+ * block pins a concrete LAN literal there instead; the lines below report that
+ * two ways the wildcard assumption no longer holds (the host refuses the
+ * wildcard, or nothing is bindable at all) rather than showing stale copy.
  */
-function LanBindStatus({ t }: { t: TranslateNS<'remote'> }) {
+export function LanBindStatus({ t }: { t: TranslateNS<'remote'> }) {
   const [frame, setFrame] = useState<LanBindFrame | undefined>(undefined)
   useEffect(() => {
     let alive = true
@@ -342,7 +348,9 @@ function LanBindStatus({ t }: { t: TranslateNS<'remote'> }) {
     }
   }, [])
   if (frame === undefined) return null
-  const lanOn = frame.blockHost === '0.0.0.0'
+  // Either end of the managed block can prove LAN access is on: the block may
+  // still pin the legacy wildcard, or a concrete literal the host accepts.
+  const lanOn = isLanHost(frame.blockHost) || isLanHost(frame.bindHost)
   const firewallText = frame.firewall.managed
     ? t(frame.firewall.ok ? 'lan.firewall.ok' : 'lan.firewall.bad')
     : t('lan.firewall.unmanaged')
@@ -354,6 +362,12 @@ function LanBindStatus({ t }: { t: TranslateNS<'remote'> }) {
   }
   if (!lanOn) {
     lines.push(t('lan.off'))
+  }
+  if (frame.wildcardSupported === false) {
+    lines.push(t('lan.wildcardUnsupported'))
+  }
+  if (frame.lanBlocked === true) {
+    lines.push(t('lan.noLanAddress'))
   }
   if (frame.setting === null) {
     lines.push(t('lan.untouched'))

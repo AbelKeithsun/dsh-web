@@ -29,11 +29,12 @@ import { makeRemoteApiRoutes, makeRemoteApiUpgradeRoutes } from './remote-api.ts
 import { startRemotePresencePet, type PresencePetSeam } from './remote-presence-pet.ts'
 import { claimPostureKey, postureTargets, probePosture, releasePostureKey } from './posture.ts'
 import { lanIPv4Addresses } from './lan.ts'
-import { ensureFirewallRule, firewallSummary, removeFirewallRule } from './firewall.ts'
+import { ensureFirewallRule, firewallSummary, removeFirewallRule, type FirewallSummary } from './firewall.ts'
 import { lanBindState, writeLanBind } from './lan-bind.ts'
 import { isHttpUrl, tunnelPlanOf } from './tunnel-plan.ts'
 import { loadRelayIdentity, RelayRegistrar, type RelayState } from './relay-registry.ts'
-import { desiredBindHost, desiredBindPort, firewallActionNeeded, pendingRestartOf, resolveManagedProfile, type AppliedFirewallState, type StartupFacts } from './lan-bind-plan.ts'
+import { desiredBindHost, desiredBindPort, firewallActionNeeded, isLanReachableBind, pendingRestartOf, refusedStartupHost, resolveManagedProfile, type AppliedFirewallState, type LanBindCapability, type StartupFacts } from './lan-bind-plan.ts'
+import { bindAccepted, bindUrlHostOf, isWildcardLiteral, wildcardBindSupported, type ConfigSchemaFactory } from './host-bind-capability.ts'
 import { createInnerAuth } from './inner-auth.ts'
 import { withIdentityEncoding } from './http.ts'
 import { TunnelManager, type TunnelInfo } from './tunnel.ts'
@@ -402,6 +403,121 @@ function launchedProfileName(ctx: Context): string | undefined {
  */
 export const apply = mountOnce('@linxin666/dsh-remote-web-ui', applyImpl)
 
+/**
+ * What the running host accepts as a bind, sampled once per boot: the installed
+ * webserver schema decides the wildcard (see host-bind-capability.ts) and the
+ * interface list is frozen for the same reason the QR bases are. The probe
+ * answers one literal on a host that refuses wildcards, so the managed block
+ * pins a concrete address instead of the one that refuses to boot.
+ * @param configOf - schema factory override (test seam); the installed package's own by default.
+ * @returns the capability the lan-bind plan is computed against.
+ */
+export function lanBindCapabilityOf(
+  configOf?: ConfigSchemaFactory,
+): LanBindCapability {
+  return {
+    wildcardSupported: wildcardBindSupported(configOf),
+    candidates: lanIPv4Addresses(),
+    // The managed block REPLACES the webserver row's config wholesale, so the
+    // CLI --host that lands in it is never validated by the row it overwrites:
+    // the planner asks the installed schema instead (issue #1893).
+    acceptsHost: (host: string) => bindAccepted(host, configOf),
+  }
+}
+
+/**
+ * The LAN URL bases a non-loopback bind is reachable by. A wildcard bind
+ * answers every interface, so each candidate gets its own base (a multi-homed
+ * machine can pick the network the phone actually reaches). A concrete literal
+ * is only reachable at that literal, so it is the only base advertised.
+ * @param host - the live bind, or the block host on a process whose bind is not settled.
+ * @param port - the bound port.
+ * @returns the bases, empty when the bind stays on this machine.
+ */
+export function lanBasesOf(host: string | undefined, port: number): { address: string; base: string }[] {
+  if (typeof host !== 'string' || !isLanReachableBind(host)) return []
+  const addresses = isWildcardLiteral(host)
+    ? lanIPv4Addresses()
+    // A literal with no URL form (a non-loopback IPv6 zone id) is unadvertisable:
+    // an invented base would cost a phone the whole pairing attempt.
+    : [bindUrlHostOf(host)].filter((address): address is string => address !== undefined && address !== '')
+  return addresses.map(address => ({ address, base: `http://${address}:${String(port)}` }))
+}
+
+/** The facts the LAN-bind status frame is built from, read at request time. */
+export interface LanBindFrameInput {
+  /** The managed profile. */
+  profile: string
+  /** The toggle: true/false once flipped, undefined while untouched. */
+  setting: boolean | undefined
+  /** The host the managed block currently pins, when it is present. */
+  blockHost: string | undefined
+  /** The live bind of the running web server. */
+  bindHost: string | undefined
+  /** The bound port, when it has settled. */
+  port: number | undefined
+  /** What the installed webserver schema accepts. */
+  wildcardSupported: boolean
+  /** The local non-loopback IPv4 literals this process could pin. */
+  candidates: string[]
+  /** The CLI startup facts the plan is computed against. */
+  startupHost: string | undefined
+  /** Whether the running host accepts a bind literal (bindAccepted; absent keeps the historical rule). */
+  acceptsHost?: (host: string) => boolean
+}
+
+/**
+ * The LAN-bind status frame the loopback-only `/api/pair/lan-bind` endpoint
+ * serves, built as one pure value so every field has direct unit coverage.
+ * @param input - the facts read at request time.
+ * @param firewallOf - firewall summary reader (injected in tests).
+ * @returns the frame the settings card reads.
+ */
+export function lanBindFrameOf(
+  input: LanBindFrameInput,
+  firewallOf: (port: number, lanOn: boolean) => FirewallSummary = firewallSummary,
+): Record<string, unknown> {
+  const capability: LanBindCapability = {
+    wildcardSupported: input.wildcardSupported,
+    candidates: input.candidates,
+    ...(input.acceptsHost !== undefined ? { acceptsHost: input.acceptsHost } : {}),
+  }
+  const desiredHost = input.setting === undefined
+    ? undefined
+    : desiredBindHost(input.setting === true, input.startupHost, capability)
+  // Reachability is decided by the live bind, and by the block while the
+  // process has not bound yet: a concrete interface literal reaches the LAN
+  // exactly like the wildcard does (issue #1893).
+  const reachHost = input.bindHost ?? input.blockHost
+  return {
+    profile: input.profile,
+    setting: input.setting ?? null,
+    blockHost: input.blockHost ?? null,
+    bindHost: input.bindHost,
+    port: input.port,
+    lanUrls: input.port !== undefined
+      ? lanBasesOf(reachHost, input.port).map(entry => entry.base)
+      : [],
+    firewall: input.port !== undefined
+      ? firewallOf(input.port, isLanReachableBind(reachHost))
+      : { ok: true, managed: false },
+    platform: process.platform,
+    /** What the next write or start pins; null when untouched or nothing can be pinned. */
+    desiredHost: desiredHost ?? null,
+    /** Whether the running host's schema accepts the wildcard bind. */
+    wildcardSupported: input.wildcardSupported,
+    /** The concrete LAN literals this process could pin. */
+    supportedHosts: input.candidates,
+    /** The toggle is on but nothing bindable could be pinned. */
+    lanBlocked: input.setting === true && desiredHost === undefined,
+    // The running bind does not follow the block on every deployment (the
+    // live patch watcher is profile-shape dependent): flag the divergence so
+    // the card can ask for a restart instead of looking broken. The comparison
+    // uses the effective desired host (a CLI --host wins over the toggle).
+    pendingRestart: pendingRestartOf(input.setting, desiredHost, input.bindHost),
+  }
+}
+
 function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   const envPublicBase = process.env.DSH_REMOTE_PUBLIC_BASE_URL?.trim() || undefined
   // The settings are read through the volatile references at every call rather
@@ -540,13 +656,14 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   // settled yet (host unset, port undefined); deriving LAN bases from that
   // would advertise :undefined links or clear a working set, so the bases
   // only update when both facts are readable.
-  const bindKnown = (ctx.webServer.host === '0.0.0.0' || ctx.webServer.host === '127.0.0.1')
+  // The reachability signal is "the bind is not loopback", never equality with
+  // the wildcard: a host that refuses wildcard binds serves the LAN from one
+  // concrete interface address, which an equality check would read as
+  // local-only (issue #1893).
+  const bindKnown = typeof ctx.webServer.host === 'string' && ctx.webServer.host !== ''
     && Number.isFinite(ctx.webServer.port)
   if (bindKnown) {
-    const lanBases = ctx.webServer.host === '0.0.0.0'
-      ? lanIPv4Addresses().map(address => ({ address, base: `http://${address}:${String(ctx.webServer.port)}` }))
-      : []
-    service.setLanBases(lanBases)
+    service.setLanBases(lanBasesOf(ctx.webServer.host, ctx.webServer.port as number))
   }
 
   // Push the effective configuration into the service and gate. The service
@@ -564,6 +681,12 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   // round are both reflected without a restart.
   let lastKnownPort: number | undefined
   let lastFirewallApplied: AppliedFirewallState | undefined
+  // What the running host accepts, sampled once per boot: the schema cannot
+  // change under a running process, and the candidate list is frozen for the
+  // same reason the QR bases are. One value therefore drives both the block the
+  // re-assert writes and the capability the status frame reports, so the card
+  // never explains a literal the write path would not have chosen.
+  const capability = lanBindCapabilityOf()
   const lanBindStatus = (): Record<string, unknown> => {
     const resolvedNow = resolve()
     let state: { blockPresent: boolean; host?: string; port?: number }
@@ -573,31 +696,19 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
       // An unsafe profile value must not take the whole status endpoint down.
       state = { blockPresent: false }
     }
-    const lanOn = state.host === '0.0.0.0'
     const port = Number.isFinite(ctx.webServer.port) ? ctx.webServer.port : lastKnownPort
     if (Number.isFinite(ctx.webServer.port)) lastKnownPort = ctx.webServer.port
-    const startup = ctx.get('webStartup') as StartupFacts | undefined
-    const desiredHost = resolvedNow.lanBind === undefined
-      ? undefined
-      : desiredBindHost(resolvedNow.lanBind === true, startup?.host)
-    return {
+    return lanBindFrameOf({
       profile: resolvedNow.profile,
-      setting: resolvedNow.lanBind ?? null,
-      blockHost: state.host ?? null,
+      setting: resolvedNow.lanBind,
+      blockHost: state.host,
       bindHost: ctx.webServer.host,
       port,
-      lanUrls: ctx.webServer.host === '0.0.0.0' && port !== undefined
-        ? lanIPv4Addresses().map(address => `http://${address}:${String(port)}`)
-        : [],
-      firewall: port !== undefined ? firewallSummary(port, lanOn) : { ok: true, managed: false },
-      platform: process.platform,
-      // The running bind does not follow the block on every deployment (the
-      // live patch watcher is profile-shape dependent): flag the divergence
-      // so the card can ask for a restart instead of looking broken. The
-      // comparison uses the effective desired host (a CLI --host wins over
-      // the toggle), not the raw toggle.
-      pendingRestart: pendingRestartOf(resolvedNow.lanBind, desiredHost, ctx.webServer.host),
-    }
+      wildcardSupported: capability.wildcardSupported,
+      candidates: capability.candidates,
+      startupHost: (ctx.get('webStartup') as StartupFacts | undefined)?.host,
+      ...(capability.acceptsHost !== undefined ? { acceptsHost: capability.acceptsHost } : {}),
+    })
   }
   // The process's inner browser credential: the proxied /api re-issues to
   // 127.0.0.1, where the connection route enforces the harness browser-auth
@@ -768,7 +879,7 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   // governed by the harness fence + browser-auth cookie, and this cohort's
   // api/gate seam has no emitter — so stop()/revoke() cannot invalidate a
   // browser credential a device has already redeemed.
-  if (ctx.webServer.host === '0.0.0.0') {
+  if (isLanReachableBind(ctx.webServer.host)) {
     console.warn('remote-web-ui: LAN-exposed bind — pairing gates the /remote channel; direct /api stays under the harness fence + browser auth (stop() does not revoke an already-redeemed browser credential)')
   }
 
@@ -802,11 +913,25 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   const applyLanBindWork = (value: ResolvedConfig): void => {
     if (value.lanBind !== undefined) {
       const startup = ctx.get('webStartup') as StartupFacts | undefined
-      const desiredHost = desiredBindHost(value.lanBind === true, startup?.host)
       const desiredPort = desiredBindPort(startup?.port, Number.isFinite(ctx.webServer.port) ? ctx.webServer.port : undefined)
+      const desiredHost = desiredBindHost(value.lanBind === true, startup?.host, capability)
       if (desiredPort === undefined) {
         console.error('remote-web-ui: cannot assert the lan-bind block — the web server port is not known yet')
+      } else if (desiredHost === undefined) {
+        // Nothing bindable could be pinned (the host refuses the wildcard and
+        // this machine has no advertisable LAN address): writing any block here
+        // would pin a literal the next start refuses, so the profile is left
+        // alone and the operator is told what to use instead.
+        console.error('remote-web-ui: the host rejects wildcard binds and no LAN IPv4 address is available; the lan-bind block cannot be pinned — LAN access stays off, use a tunnel instead')
       } else {
+        // A CLI --host the host refuses is dropped by the planner, the same way
+        // a wildcard flag already was. Say so once, naming the value and the
+        // literal pinned instead: silently ignoring an operator's flag is how a
+        // refused literal reached the block unnoticed in the first place.
+        const refusedHost = refusedStartupHost(startup?.host, capability)
+        if (refusedHost !== undefined) {
+          console.warn(`remote-web-ui: ignoring --host ${JSON.stringify(refusedHost)}: the webserver schema refuses that bind and takes a concrete IPv4 or IPv6 literal of a local interface instead; pinned ${desiredHost}`)
+        }
         try {
           const current = lanBindState(value.profile)
           if (current.host !== desiredHost || current.port !== desiredPort) {

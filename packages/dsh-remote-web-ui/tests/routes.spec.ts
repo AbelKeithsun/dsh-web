@@ -892,7 +892,23 @@ describe('/api/pair routes', () => {
       service,
       lanBindStatus: () => {
         calls.push('read')
-        return { profile: 'web', setting: true, blockHost: '0.0.0.0', bindHost: '0.0.0.0', port, lanUrls: [], firewall: { ok: true, managed: false }, platform: 'darwin', pendingRestart: false }
+        // The 0.2.1-rc.2 shape: the wildcard is refused, so the block pins a
+        // concrete address and the four capability fields ride along (#1893).
+        return {
+          profile: 'web',
+          setting: true,
+          blockHost: '192.168.1.5',
+          bindHost: '192.168.1.5',
+          port,
+          lanUrls: [`http://192.168.1.5:${String(port)}`],
+          firewall: { ok: true, managed: false },
+          platform: 'darwin',
+          pendingRestart: false,
+          desiredHost: '192.168.1.5',
+          wildcardSupported: false,
+          supportedHosts: ['192.168.1.5'],
+          lanBlocked: false,
+        }
       },
     }))
     try {
@@ -900,7 +916,16 @@ describe('/api/pair routes', () => {
       // (uncached) contract the card's 10s poll relies on.
       const ok = await call(port, 'GET', PAIR_PATHS.lanBind, {})
       expect(ok.status).toBe(200)
-      expect(ok.body).toMatchObject({ ok: true, profile: 'web', blockHost: '0.0.0.0', bindHost: '0.0.0.0' })
+      expect(ok.body).toMatchObject({
+        ok: true,
+        profile: 'web',
+        blockHost: '192.168.1.5',
+        bindHost: '192.168.1.5',
+        desiredHost: '192.168.1.5',
+        wildcardSupported: false,
+        supportedHosts: ['192.168.1.5'],
+        lanBlocked: false,
+      })
       expect(calls).toHaveLength(1)
       // A LAN origin is refused: the endpoint exposes host/network facts.
       const lan = await call(port, 'GET', PAIR_PATHS.lanBind, { host: '192.168.1.5:3080' })

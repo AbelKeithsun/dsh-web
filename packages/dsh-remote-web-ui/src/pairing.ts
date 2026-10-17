@@ -412,11 +412,16 @@ export class PairingService {
    * default is the public base (when configured) or the first interface.
    * Unknown addresses are refused.
    * @returns the token secret and its expiry.
-   * @throws {Error} when no reachable base exists (no all-interfaces bind and
+   * @throws {Error} when no reachable base exists (no non-loopback bind and
    * no public base) — callers surface this as the lan-required state instead
    * of minting an unusable QR.
    */
   issue(workspaceId?: string, address?: string): { token: string; expiresAt: number } {
+    // The rule lives in the bases the caller registered, not in this message:
+    // a non-loopback bind (the wildcard where the host still accepts it, a
+    // concrete interface literal where it does not — see lanBasesOf in
+    // index.ts) or a public base is what makes a QR reachable. The message
+    // keeps the wildcard wording only as the operator's most familiar form.
     if (this.lanBases.size === 0 && this.publicBase === undefined) {
       throw new Error('remote-web-ui: pairing requires a reachable bind (--host 0.0.0.0 or publicBaseUrl)')
     }

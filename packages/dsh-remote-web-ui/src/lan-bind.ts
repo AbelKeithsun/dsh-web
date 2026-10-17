@@ -1,6 +1,8 @@
 /**
  * LAN bind toggle: the managed cordis patch block that pins the web
- * server's bind. On = a block binding 0.0.0.0; off = the same block binding
+ * server's bind. On = a block binding the network, which is `0.0.0.0` only
+ * while the installed webserver schema accepts the wildcard and otherwise this
+ * machine's first LAN address (issue #1893); off = the same block binding
  * 127.0.0.1. The block takes effect on the next `dsh web` start (the live
  * patch watcher cannot rebind a running listener, and on this harness line
  * the user patch layer cannot evaluate webStartup-dependent expressions
@@ -30,8 +32,13 @@ const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 export const LAN_BIND_BLOCK_BEGIN = '# --- remote-web-ui lan-bind block (managed - do not edit) ---'
 export const LAN_BIND_BLOCK_END = '# --- end remote-web-ui lan-bind block ---'
 
-/** The two bind hosts the managed block pins. */
-export type LanBindHost = '0.0.0.0' | '127.0.0.1'
+/**
+ * A bind host the managed block may pin. `'0.0.0.0'` only on a host whose
+ * webserver schema still accepts the wildcard, `'127.0.0.1'` for the toggle
+ * off, and otherwise one concrete interface address of this machine (see
+ * lan-bind-plan.ts / host-bind-capability.ts, issue #1893).
+ */
+export type LanBindHost = string
 
 /**
  * The absolute path of the profile patch file this toggle manages. The value
@@ -219,6 +226,10 @@ function mergePatchContent(base: string, block: string, file: string): string {
  * user patch layer has no reliable lazy service evaluation, and the plugin
  * re-asserts the block at every boot so CLI flags (--port, --host) win by
  * rewriting it before the next start.
+ *
+ * The host is written verbatim, so this function must only be called with a
+ * literal the running host accepts (see desiredBindHost in lan-bind-plan.ts):
+ * the wildcard only where the installed schema still takes it.
  */
 export function managedBlock(host: LanBindHost, port: number): string {
   return [
@@ -287,6 +298,10 @@ export function lanBindState(profile: string, home: string = dshHome()): { block
  * The written file is always exactly one valid YAML document: a base the
  * plugin manager left in flow style is re-emitted as a block sequence before
  * the managed block is appended (see mergePatchContent).
+ *
+ * Only an approved literal reaches this function (see desiredBindHost in
+ * lan-bind-plan.ts); on a host that rejects wildcard binds it never writes
+ * `0.0.0.0`, because such a block refuses to boot.
  */
 export function writeLanBind(host: LanBindHost, port: number, profile: string, home: string = dshHome()): void {
   const file = profilePatchFile(profile, home)

@@ -229,6 +229,34 @@ export interface LanBindFrame {
   platform: string
   /** true when the running bind has not caught up with the toggle yet. */
   pendingRestart?: boolean
+  /**
+   * What the next write or start will pin: a concrete LAN literal on a host
+   * that refuses wildcard binds, '0.0.0.0' where the wildcard is still
+   * accepted, and null when the toggle was never set or nothing can be pinned.
+   * Optional so a pre-0.2.1-rc.2 host half still parses.
+   */
+  desiredHost?: string | null
+  /** Whether the running host's webserver schema accepts a wildcard bind. */
+  wildcardSupported?: boolean
+  /** The non-loopback IPv4 addresses of this process this host could pin. */
+  supportedHosts?: string[]
+  /** The toggle is on but nothing bindable could be pinned. */
+  lanBlocked?: boolean
+}
+
+/**
+ * Whether a bind literal reaches the LAN, which is what the card reports as
+ * "LAN access is on". The wildcard counts (legacy blocks written before
+ * 0.2.1-rc.2, and hosts that still accept it), and so does any other
+ * non-loopback literal — a concrete interface address, or an IPv6 literal that
+ * is not the loopback (a zone suffix such as fe80::1%eth0 included).
+ * @param host - the block host, the live bind, or undefined when absent.
+ * @returns whether the address is reachable from another device.
+ */
+export function isLanHost(host: string | null | undefined): boolean {
+  if (typeof host !== 'string' || host === '') return false
+  if (host === '0.0.0.0') return true
+  return host !== '127.0.0.1' && host !== '::1' && host !== 'localhost'
 }
 
 /** A failed LAN-bind read, carrying the HTTP status when the server answered. */

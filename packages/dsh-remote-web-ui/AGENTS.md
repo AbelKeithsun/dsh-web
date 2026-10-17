@@ -11,6 +11,9 @@ DSH 源码 checkout）。锚定 0.2.1-rc.2 cohort。
 - 安全语义（一次性配对令牌、按设备撤销、`/remote` 门控通道、配对即完全控制
   凭据、三个物理本地控制面 /api/pair、/api/update、
   /api/plugin-manager、局域网绑定受管块）修改时必须同步更新 README
-  双语与本仓库测试。
+  双语与本仓库测试。局域网绑定受管块永不写入运行中宿主的 webserver schema
+  所拒绝的地址（0.2.1-rc.2 起通配绑定即被拒绝；可写时写本机具体的局域网
+  IPv4，无候选则不写），这条规则本身改动时同样要求 README 双语与本包测试
+  一起移动。
 - 官方界面移动适配层（`src/client/mobile-adapt.ts`）的选择器以 CSS Modules
   语义后缀为键；官方 GUI 升级后必须做一轮真实 GUI 视觉 QA 再合入。

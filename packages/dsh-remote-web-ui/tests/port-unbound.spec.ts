@@ -75,3 +75,69 @@ describe('webServer port unsettled (0.2.1-rc.2)', () => {
     expect(clearAt).toBeLessThan(source.indexOf("'remote-web-ui: auto tunnel'"))
   })
 })
+
+/**
+ * Issue #1893: the managed block pinned host 0.0.0.0, which the webserver
+ * schema rejects since 0.2.1-rc.2, so every later start failed at config
+ * validation. The block can only be written from this one worker, and only
+ * with a literal the capability approved.
+ */
+describe('the lan-bind write path versus the bind capability (issue #1893)', () => {
+  it('operator loses no write when nothing bindable could be planned', () => {
+    // Given the boot re-assert, which owns the only call that writes the block
+    // When the plan comes back undefined (a host that rejects the wildcard and
+    // a machine with no advertisable LAN address)
+    // Then the write sits in the else branch of that guard, so an unplanned
+    // literal can never reach the patch file
+    const work = bodyOf('applyLanBindWork')
+    const guard = work.indexOf('desiredPort === undefined')
+    const blocked = work.indexOf('desiredHost === undefined')
+    const write = work.indexOf('writeLanBind(')
+    expect(guard).toBeGreaterThan(-1)
+    expect(blocked).toBeGreaterThan(guard)
+    expect(write).toBeGreaterThan(blocked)
+  })
+
+  it('operator gets the block planned against what the host accepts', () => {
+    // Given the boot re-assert on a host that may refuse the wildcard
+    // When it plans the bind host
+    // Then the capability sampled once per boot is passed in, so the planner
+    // can pin a concrete address instead of echoing the refused literal
+    const work = bodyOf('applyLanBindWork')
+    const plan = work.indexOf('desiredBindHost(')
+    expect(plan).toBeGreaterThan(-1)
+    expect(work.slice(plan, plan + 160)).toContain(', capability)')
+    // One sample per boot drives the block and the status frame alike, so the
+    // card never explains a literal the write path would not have chosen.
+    expect(source).toContain('const capability = lanBindCapabilityOf()')
+  })
+
+  it('operator is told when the CLI --host is refused and what was pinned instead', () => {
+    // Given a --host the installed schema will not bind (a wildcard, or any
+    // value that is not a concrete literal) while the block replaces the row's
+    // config wholesale, so nothing else validates that flag
+    // When the boot re-assert plans the block
+    // Then the planner drops the flag and one warning names the refused value
+    // and the literal pinned instead - the operator is never left guessing
+    // why their flag had no effect (issue #1893)
+    const work = bodyOf('applyLanBindWork')
+    expect(work).toContain('refusedStartupHost(startup?.host, capability)')
+    const warnAt = work.indexOf('console.warn(')
+    expect(warnAt).toBeGreaterThan(-1)
+    expect(work.slice(warnAt, warnAt + 240)).toContain('ignoring --host')
+    // The warning sits in the branch that does write, after the plan settled,
+    // so it can name the literal that was pinned instead.
+    expect(warnAt).toBeGreaterThan(work.indexOf('desiredBindHost('))
+    expect(warnAt).toBeGreaterThan(work.indexOf('desiredHost === undefined'))
+    expect(warnAt).toBeLessThan(work.indexOf('writeLanBind('))
+  })
+
+  it('operator sees the blocked state explained instead of a silent skip', () => {
+    // Given the same guard
+    // When nothing could be pinned
+    // Then one error line names the situation and points at the tunnel
+    const work = bodyOf('applyLanBindWork')
+    expect(work).toContain('the host rejects wildcard binds and no LAN IPv4 address is available')
+    expect(work).toContain('use a tunnel instead')
+  })
+})
