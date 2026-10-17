@@ -37,6 +37,7 @@ import { BridgeHub } from './core/hub.ts'
 import { PairingService } from './core/pairing.ts'
 import { WS_PATH } from './core/protocol.ts'
 import { SessionMeta, type ArchiveSetFace, type SessionStoreFace, type SessionTitleFace } from './core/session-meta.ts'
+import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
 import { dshHome } from './host/dsh-home.ts'
 import { makePairTokenRoute } from './host/routes.ts'
 import { isWebSocketUpgrade, presentedTokenOf, readSecWebSocketKey, refuseUpgrade, serveUpgrade } from './host/websocket.ts'
@@ -122,6 +123,27 @@ function sessionMetaFaces(ctx: Context) {
 }
 
 /**
+ * Resolve the host services permission presets are read and switched through, now.
+ *
+ * Read per call, never captured at mount, for the reason the metadata faces are:
+ * none of these is in this plugin's `inject` list, and a host that composes no
+ * permission plugin answers `unknown-method` instead of failing to start. The
+ * `Session` object the preset service needs is the store's own live instance —
+ * the same object `sessionTitle` already takes — so no second lookup path exists
+ * for it.
+ * @param ctx - the plugin's context.
+ * @returns the permission faces as they stand right now.
+ */
+function permissionFaces(ctx: Context) {
+  return {
+    sessions: ctx.get('sessions') as SessionStoreFace | undefined,
+    presets: ctx.get('permissionPresets') as PermissionPresetsFace | undefined,
+    sandbox: ctx.get('sandboxPolicy') as SandboxPolicyFace | undefined,
+    approval: ctx.get('approval') as ApprovalPolicyFace | undefined,
+  }
+}
+
+/**
  * Mount the bridge.
  * @param ctx - the plugin's context, carrying the gateway and web server.
  */
@@ -131,12 +153,14 @@ export function apply(ctx: Context): void {
   const pairing = new PairingService()
   const approvals = new ApprovalRegistry()
   const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
+  const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
   const hub = new BridgeHub({
     gateway: ctx.typertGateway,
     pairing,
     roster,
     approvals,
     sessionMeta,
+    permissions,
     now: () => Date.now(),
     clientTimeZone: localTimeZone,
     log,

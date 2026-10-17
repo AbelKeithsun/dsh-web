@@ -12,6 +12,11 @@ export const METHOD_SESSION_SNAPSHOT = 'session.snapshot'
 export const METHOD_SESSION_HISTORY = 'session.history'
 export const METHOD_SESSION_PROMPT = 'session.prompt'
 export const METHOD_SESSION_INTERRUPT = 'session.interrupt'
+export const METHOD_SESSION_ATTACHMENT = 'session.attachment'
+export const METHOD_SESSION_PERMISSIONS = 'session.permissions'
+export const METHOD_SESSION_SET_PERMISSION = 'session.setPermission'
+export const METHOD_SESSION_MODELS = 'session.models'
+export const METHOD_SESSION_SET_MODEL = 'session.setModel'
 export const METHOD_PAIR_BEGIN = 'pair.begin'
 export const METHOD_PAIR_FINISH = 'pair.finish'
 export const METHOD_APPROVAL_RESOLVE = 'approval.resolve'
@@ -58,6 +63,11 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_SESSION_HISTORY,
   METHOD_SESSION_PROMPT,
   METHOD_SESSION_INTERRUPT,
+  METHOD_SESSION_ATTACHMENT,
+  METHOD_SESSION_PERMISSIONS,
+  METHOD_SESSION_SET_PERMISSION,
+  METHOD_SESSION_MODELS,
+  METHOD_SESSION_SET_MODEL,
   METHOD_PAIR_BEGIN,
   METHOD_PAIR_FINISH,
   METHOD_APPROVAL_RESOLVE,

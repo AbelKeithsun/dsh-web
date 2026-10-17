@@ -9,6 +9,23 @@
  * @module dsh-remote-bridge/core/dsh-frames
  */
 
+/** One image a durable `user/message` carried, as far as a client renders it. */
+export interface UserMessageAttachment {
+  readonly attachmentId: string
+  readonly mediaType: string
+  readonly name?: string
+}
+
+/** Token usage one finished `assistant/message` reported, passed through unconverted. */
+export interface MessageUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly totalTokens?: number
+  readonly cacheReadTokens?: number
+  readonly cacheWriteTokens?: number
+  readonly reasoningTokens?: number
+}
+
 /** One protocol v1 delta, before the session id and event sequence are attached. */
 export type SessionDelta =
   | { readonly kind: 'text'; readonly text: string; readonly blockIndex: number }
@@ -16,9 +33,13 @@ export type SessionDelta =
   | { readonly kind: 'tool-call'; readonly callId: string; readonly name: string; readonly argumentsDelta: string }
   | { readonly kind: 'tool-result'; readonly callId: string; readonly output: string; readonly isError: boolean }
   | { readonly kind: 'turn-end'; readonly reason: string }
+  | { readonly kind: 'user-message'; readonly text: string; readonly messageId?: string; readonly attachments?: readonly UserMessageAttachment[] }
+  | { readonly kind: 'usage'; readonly usage: MessageUsage; readonly turn?: number; readonly step?: number }
 
 /** Highest number of tool calls one connection remembers by id. */
 export const TOOL_CALL_MEMORY = 512
+/** Highest number of published user messages one connection remembers by id. */
+export const USER_MESSAGE_MEMORY = 512
 
 /**
  * The durable entry types a protocol v1 client renders — `user/message`,
@@ -103,6 +124,33 @@ export class ToolCallIndex {
 }
 
 /**
+ * Remembers which durable user messages this connection already published.
+ *
+ * A client only ever appends a transcript, so one durable `user/message` must
+ * reach the wire once: a replayed event would draw the same prompt a second
+ * time. Bounded for the same reason {@link ToolCallIndex} is — a long-lived
+ * connection must not grow with every message it ever saw.
+ */
+export class MessageIndex {
+  readonly #ids = new Set<string>()
+
+  /** @returns whether this message already contributed a delta. */
+  has(id: string): boolean {
+    return this.#ids.has(id)
+  }
+
+  /** Remember one message, evicting the oldest entry past {@link USER_MESSAGE_MEMORY}. */
+  remember(id: string): void {
+    this.#ids.add(id)
+    while (this.#ids.size > USER_MESSAGE_MEMORY) {
+      const oldest = this.#ids.values().next()
+      if (oldest.done === true) break
+      this.#ids.delete(oldest.value)
+    }
+  }
+}
+
+/**
  * Read the opening frame of a follow stream.
  * @returns the cursor and records, or undefined when this frame is not a snapshot.
  */
@@ -119,8 +167,9 @@ export function readFollowBaseline(frame: unknown): FollowBaseline | undefined {
  * increment this protocol publishes.
  * @param frame - one `SessionFollowFrame`.
  * @param toolCalls - this connection's tool-call memory.
+ * @param messages - this connection's published-user-message memory.
  */
-export function deltaOfFollowFrame(frame: unknown, toolCalls: ToolCallIndex): SessionDelta | undefined {
+export function deltaOfFollowFrame(frame: unknown, toolCalls: ToolCallIndex, messages: MessageIndex): SessionDelta | undefined {
   if (!isRecord(frame)) return undefined
   if (frame.type === 'assistant-stream') return deltaOfAssistantStream(frame.frame, toolCalls)
   if (frame.type !== 'event') return undefined
@@ -131,6 +180,8 @@ export function deltaOfFollowFrame(frame: unknown, toolCalls: ToolCallIndex): Se
   if (type === 'tool/result') return toolResultDelta(data)
   if (type === 'turn/end') return turnEndDelta(data)
   if (type === 'tool/call') return assembledToolCallDelta(data, toolCalls)
+  if (type === 'user/message') return userMessageDelta(data, messages)
+  if (type === 'assistant/message') return usageDelta(data)
   return undefined
 }
 
@@ -195,6 +246,93 @@ function textOfBlocks(content: unknown): string {
     if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text)
   }
   return parts.join('\n')
+}
+
+/**
+ * Map one durable `user/message` to the increment that shows it on a subscribed
+ * phone, so a prompt typed on the desktop appears without a baseline reload.
+ *
+ * Published once per message id: a replayed event must not draw the message a
+ * second time. The text is the message's text blocks and nothing else — image
+ * and file blocks travel in `attachments`, never inside it.
+ */
+function userMessageDelta(data: unknown, messages: MessageIndex): SessionDelta | undefined {
+  if (!isRecord(data)) return undefined
+  const messageId = stringField(data, 'id')
+  if (messageId !== undefined) {
+    if (messages.has(messageId)) return undefined
+    messages.remember(messageId)
+  }
+  const attachments = imageAttachmentsOf(data.content)
+  return {
+    kind: 'user-message',
+    text: textOfBlocks(data.content),
+    ...(messageId === undefined ? {} : { messageId }),
+    ...(attachments.length === 0 ? {} : { attachments }),
+  }
+}
+
+/**
+ * The image references of one message's blocks, in content order.
+ *
+ * A durable image block nests its immutable reference under the block's own
+ * `attachment` key, so the id and media type are read from the reference — the
+ * block itself carries only its type and, once offloaded, that flag.
+ */
+function imageAttachmentsOf(content: unknown): UserMessageAttachment[] {
+  if (!Array.isArray(content)) return []
+  const attachments: UserMessageAttachment[] = []
+  for (const block of content) {
+    if (!isRecord(block) || block.type !== 'image') continue
+    const ref = block.attachment
+    if (!isRecord(ref)) continue
+    const attachmentId = stringField(ref, 'attachmentId')
+    const mediaType = stringField(ref, 'mediaType')
+    if (attachmentId === undefined || mediaType === undefined) continue
+    const name = stringField(ref, 'name')
+    attachments.push({ attachmentId, mediaType, ...(name === undefined || name === '' ? {} : { name }) })
+  }
+  return attachments
+}
+
+/**
+ * Map one finished `assistant/message` to its usage increment, or to nothing.
+ *
+ * An event without `usage` publishes NO delta: absent is not zero, and a client
+ * must never record a token count the harness did not report.
+ */
+function usageDelta(data: unknown): SessionDelta | undefined {
+  if (!isRecord(data)) return undefined
+  const usage = usageOf(data.usage)
+  if (usage === undefined) return undefined
+  const turn = numberOf(data.turn)
+  const step = numberOf(data.step)
+  return { kind: 'usage', usage, ...(turn === undefined ? {} : { turn }), ...(step === undefined ? {} : { step }) }
+}
+
+/** Read one `TokenUsage` verbatim; undefined when its two mandatory counters are not numbers. */
+function usageOf(value: unknown): MessageUsage | undefined {
+  if (!isRecord(value)) return undefined
+  const inputTokens = numberOf(value.inputTokens)
+  const outputTokens = numberOf(value.outputTokens)
+  if (inputTokens === undefined || outputTokens === undefined) return undefined
+  const totalTokens = numberOf(value.totalTokens)
+  const cacheReadTokens = numberOf(value.cacheReadTokens)
+  const cacheWriteTokens = numberOf(value.cacheWriteTokens)
+  const reasoningTokens = numberOf(value.reasoningTokens)
+  return {
+    inputTokens,
+    outputTokens,
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  }
+}
+
+/** @returns a finite number field, or undefined. */
+function numberOf(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 /**

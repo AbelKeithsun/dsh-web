@@ -18,8 +18,8 @@
 
 import type { ApprovalRegistry } from './approvals.ts'
 import type { DeviceRoster } from './devices.ts'
-import { deltaOfFollowFrame, pageTurns, readFollowBaseline, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
-import { EventSequence, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
+import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
+import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import type { PairingService } from './pairing.ts'
 import {
@@ -40,10 +40,15 @@ import {
   METHOD_HELLO,
   METHOD_PAIR_BEGIN,
   METHOD_PAIR_FINISH,
+  METHOD_SESSION_ATTACHMENT,
   METHOD_SESSION_HISTORY,
   METHOD_SESSION_INTERRUPT,
   METHOD_SESSION_LIST,
+  METHOD_SESSION_MODELS,
+  METHOD_SESSION_PERMISSIONS,
   METHOD_SESSION_PROMPT,
+  METHOD_SESSION_SET_MODEL,
+  METHOD_SESSION_SET_PERMISSION,
   METHOD_SESSION_SNAPSHOT,
   METHOD_SESSION_TITLES,
   MINOR,
@@ -54,6 +59,7 @@ import {
 } from './protocol.ts'
 import { base64UrlDecode, verifyEs256 } from './crypto.ts'
 import { TITLES_MAX_IDS, type SessionMeta } from './session-meta.ts'
+import type { SessionPermissions } from './session-permissions.ts'
 import type { BridgeGateway } from './wire.ts'
 import { CODE_SUBAGENT_ADDRESS_REQUIRED, sessionAddress, subagentAddress, wireArgs, type SessionAddress } from './wire.ts'
 
@@ -67,6 +73,8 @@ export const SNAPSHOT_MAX_MESSAGES = 200
 export const HISTORY_PAGE_BYTES = 512 * 1024
 /** Highest number of prompt receipts one connection remembers for idempotency. */
 export const PROMPT_RECEIPT_LIMIT = 512
+/** Largest base64 text one prompt attachment may carry: 6 MiB (protocol §10.2). */
+export const PROMPT_ATTACHMENT_MAX_BYTES = 6 * 1024 * 1024
 
 /** The carrier a connection writes through. */
 export interface BridgeTransport {
@@ -81,6 +89,8 @@ export interface BridgeConnectionOptions {
   readonly approvals: ApprovalRegistry
   /** Process-local session metadata: live titles and the host's archive set. */
   readonly sessionMeta: SessionMeta
+  /** Host-process permission presets, read and switched through their real service objects. */
+  readonly permissions: SessionPermissions
   readonly now: () => number
   /** This machine's IANA time zone, sent with every prompt. */
   readonly clientTimeZone: () => string | undefined
@@ -192,6 +202,83 @@ function capabilitiesOf(value: unknown): ReadonlySet<string> {
   return new Set(value.filter((name): name is string => typeof name === 'string' && name !== ''))
 }
 
+/** One model selection, in the field names the protocol publishes. */
+type ModelSelection = {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}
+
+/** @returns the selection this value describes, or undefined when it describes none. */
+function selectionOf(value: unknown): ModelSelection | undefined {
+  if (!isRecord(value)) return undefined
+  const provider = optionalText(value.provider)
+  const model = optionalText(value.model)
+  if (provider === undefined || model === undefined) return undefined
+  const reasoningEffort = optionalText(value.reasoningEffort)
+  return reasoningEffort === undefined ? { provider, model } : { provider, model, reasoningEffort }
+}
+
+/**
+ * The durable model-selection fold of one `session/projections` answer.
+ *
+ * Both halves stay optional: a session that never ran has neither, and the
+ * catalog default is then the only truthful current value.
+ */
+function modelSelectionOf(value: unknown): { readonly next?: ModelSelection; readonly lastUsed?: ModelSelection } {
+  if (!isRecord(value) || !isRecord(value.values)) return {}
+  const selection = value.values.modelSelection
+  if (!isRecord(selection)) return {}
+  const next = selectionOf(selection.next)
+  const lastUsed = selectionOf(selection.lastUsed)
+  return {
+    ...(next === undefined ? {} : { next }),
+    ...(lastUsed === undefined ? {} : { lastUsed }),
+  }
+}
+
+/** One prompt attachment, already projected to the harness's image content part. */
+type PromptAttachment = Readonly<Record<string, unknown>>
+
+/** The validated attachments of one prompt, or the refusal that withheld it. */
+type PromptAttachments = { readonly ok: true; readonly parts: readonly PromptAttachment[] } | CallFailure
+
+/**
+ * Validate `session.prompt`'s optional attachments and project them to the
+ * harness's image content parts, keeping the order the client sent.
+ *
+ * The per-attachment budget is checked here rather than at the harness: 6 MiB of
+ * base64 per attachment is what keeps a prompt frame inside the envelope's
+ * 10 MiB, and the refusal names the attachment and its exact byte count so the
+ * phone can say which pick made the send fail. Nothing is truncated and nothing
+ * is dropped — one rejected attachment withholds the whole prompt.
+ * @param value - the request's `attachments` member, or undefined.
+ */
+function promptAttachmentsOf(value: unknown): PromptAttachments {
+  if (value === undefined) return { ok: true, parts: [] }
+  if (!Array.isArray(value)) return refusal(CODE_INVALID_ARGS, 'session.prompt attachments must be an array')
+  const parts: PromptAttachment[] = []
+  for (const entry of value) {
+    if (!isRecord(entry)) return refusal(CODE_INVALID_ARGS, 'session.prompt attachments must be objects')
+    const name = optionalText(entry.name)
+    const label = name === undefined ? `attachment ${parts.length + 1}` : `attachment "${name}"`
+    const mediaType = optionalText(entry.mediaType)
+    const data = typeof entry.data === 'string' ? entry.data : undefined
+    if (mediaType === undefined || data === undefined || data === '') {
+      return refusal(CODE_INVALID_ARGS, `session.prompt ${label} requires mediaType and base64 data`)
+    }
+    const bytes = Buffer.byteLength(data, 'utf8')
+    if (bytes > PROMPT_ATTACHMENT_MAX_BYTES) {
+      return refusal(
+        CODE_INVALID_ARGS,
+        `session.prompt ${label} is ${bytes} base64 bytes, past the ${PROMPT_ATTACHMENT_MAX_BYTES} byte limit`,
+      )
+    }
+    parts.push({ type: 'image', mediaType, data, ...(name === undefined ? {} : { name }) })
+  }
+  return { ok: true, parts }
+}
+
 /**
  * Everything one connected device may do.
  *
@@ -206,6 +293,7 @@ export class BridgeConnection {
   readonly #subscriptions = new Map<string, Subscription>()
   readonly #receipts = new Set<string>()
   readonly #toolCalls = new ToolCallIndex()
+  readonly #messages = new MessageIndex()
   #capabilities: ReadonlySet<string> = new Set()
   /** Delegated children this connection has learned the durable parent of, by child id. */
   readonly #lineage = new Map<string, string>()
@@ -321,6 +409,11 @@ export class BridgeConnection {
       case METHOD_SESSION_HISTORY: return await this.#sessionHistory(frame.p, frame.id)
       case METHOD_SESSION_PROMPT: return await this.#sessionPrompt(frame.p)
       case METHOD_SESSION_INTERRUPT: return await this.#sessionInterrupt(frame.p)
+      case METHOD_SESSION_ATTACHMENT: return await this.#sessionAttachment(frame.p, frame.id)
+      case METHOD_SESSION_PERMISSIONS: return this.#sessionPermissions(frame.p)
+      case METHOD_SESSION_SET_PERMISSION: return this.#sessionSetPermission(frame.p)
+      case METHOD_SESSION_MODELS: return await this.#sessionModels(frame.p)
+      case METHOD_SESSION_SET_MODEL: return await this.#sessionSetModel(frame.p)
       case METHOD_APPROVAL_RESOLVE: return this.#approvalResolve(frame.p)
       default: return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
@@ -524,6 +617,11 @@ export class BridgeConnection {
     if (sessionId === undefined || text === undefined || requestId === undefined) {
       return refusal(CODE_INVALID_ARGS, 'session.prompt requires sessionId, text and requestId')
     }
+    // Attachments are settled before the receipt is read and before anything is
+    // sent: one rejected attachment withholds the whole prompt, so the harness is
+    // not even subscribed to, let alone prompted.
+    const attachments = promptAttachmentsOf(payload.attachments)
+    if (!attachments.ok) return attachments
     const receipt = `${sessionId}\u0000${requestId}`
     if (this.#receipts.has(receipt)) return { ok: true, r: { accepted: true } }
     // A client may prompt without snapshotting first; the subscription is what
@@ -534,7 +632,7 @@ export class BridgeConnection {
       requestId,
       sessionId,
       mode: 'queue',
-      content: [{ type: 'text', text }],
+      content: [{ type: 'text', text }, ...attachments.parts],
       ...(timeZone === undefined || timeZone === '' ? {} : { clientTimeZone: timeZone }),
     })
     if (!call.ok) return call
@@ -550,6 +648,117 @@ export class BridgeConnection {
     const call = await this.#unary('session', 'cancel', { sessionId })
     if (!call.ok) return call
     return { ok: true, r: { ok: true } }
+  }
+
+  /**
+   * Answer `session.attachment`: one durable image's bytes, straight from the
+   * harness.
+   *
+   * The bridge keeps no cache — an image can be offloaded after the fact, so
+   * every read goes to the session it belongs to — and it refuses rather than
+   * writing a frame past the envelope budget: an attachment that cannot cross at
+   * all is reported as such, never as an absent attachment.
+   * @param payload - `{sessionId, attachmentId}`.
+   * @param id - the request id the frame budget is measured against.
+   */
+  async #sessionAttachment(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    const attachmentId = stringArg(payload, 'attachmentId')
+    if (sessionId === undefined || attachmentId === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'session.attachment requires sessionId and attachmentId')
+    }
+    const call = await this.#unary('session', 'attachment', { sessionId, attachmentId })
+    if (!call.ok) return call
+    if (!isRecord(call.value)) return refusal(CODE_INTERNAL, 'session/attachment returned no attachment')
+    const bytes = Buffer.byteLength(JSON.stringify(responseFrame(id, call.value)), 'utf8')
+    if (bytes > MAX_FRAME_BYTES) {
+      return refusal(FRAME_TOO_LARGE, `attachment ${attachmentId} needs ${bytes} bytes, past the ${MAX_FRAME_BYTES} byte frame`)
+    }
+    return { ok: true, r: call.value }
+  }
+
+  /** Answer `session.permissions` out of the host's own preset service. */
+  #sessionPermissions(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
+    const sessionId = stringArg(payload, 'sessionId')
+    if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.permissions requires sessionId')
+    const answer = this.#options.permissions.describe(sessionId)
+    return 'code' in answer ? refusal(answer.code, answer.msg) : { ok: true, r: answer }
+  }
+
+  /**
+   * Switch one session's permission mode.
+   *
+   * This is the session-level persistent mode, deliberately apart from
+   * `approval.resolve`: that answers one tool question once, this changes what
+   * every later turn runs under.
+   */
+  #sessionSetPermission(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
+    const sessionId = stringArg(payload, 'sessionId')
+    const id = stringArg(payload, 'id')
+    if (sessionId === undefined || id === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'session.setPermission requires sessionId and id')
+    }
+    const answer = this.#options.permissions.set(sessionId, id)
+    return 'code' in answer ? refusal(answer.code, answer.msg) : { ok: true, r: { ok: true, current: answer.current } }
+  }
+
+  /**
+   * Answer `session.models`: the host's catalog plus this session's selection.
+   *
+   * `current` is the session's FOLD — next, else last used, else the catalog
+   * default — and never the default on its own: a phone that showed the default
+   * while another model was in force would name the wrong model for the next
+   * turn. The catalog's groups, failures and default cross unchanged.
+   * @param payload - `{sessionId}`.
+   */
+  async #sessionModels(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.models requires sessionId')
+    const catalog = await this.#unary('session', 'modelCatalog')
+    if (!catalog.ok) return catalog
+    if (!isRecord(catalog.value)) return refusal(CODE_INTERNAL, 'session/modelCatalog returned no catalog')
+    const fallback = selectionOf(catalog.value.default)
+    if (fallback === undefined) return refusal(CODE_INTERNAL, 'session/modelCatalog returned no default model')
+    const projections = await this.#unary('session', 'projections', { sessionId })
+    if (!projections.ok) return projections
+    const folded = modelSelectionOf(projections.value)
+    return {
+      ok: true,
+      r: {
+        current: folded.next ?? folded.lastUsed ?? fallback,
+        default: fallback,
+        groups: catalog.value.groups ?? [],
+        failures: catalog.value.failures ?? [],
+      },
+    }
+  }
+
+  /**
+   * Answer `session.setModel`: register the next turn's selection.
+   *
+   * The harness only records the choice for the NEXT request, so the answer
+   * echoes the `selected` selection it accepted and nothing here claims the
+   * running turn changed.
+   * @param payload - `{sessionId, provider, model, effort?}`.
+   */
+  async #sessionSetModel(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    const provider = stringArg(payload, 'provider')
+    const model = stringArg(payload, 'model')
+    if (sessionId === undefined || provider === undefined || model === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'session.setModel requires sessionId, provider and model')
+    }
+    const effort = optionalText(payload.effort)
+    const call = await this.#unary('session', 'selectModel', {
+      sessionId,
+      provider,
+      model,
+      ...(effort === undefined ? {} : { reasoningEffort: effort }),
+    })
+    if (!call.ok) return call
+    const selected = isRecord(call.value) ? selectionOf(call.value.selected) : undefined
+    if (selected === undefined) return refusal(CODE_INTERNAL, 'session/selectModel returned no selected model')
+    return { ok: true, r: { ok: true, current: selected } }
   }
 
   #approvalResolve(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
@@ -697,7 +906,7 @@ export class BridgeConnection {
       for (;;) {
         const next = await iterator.next()
         if (next.done === true) return
-        const delta = deltaOfFollowFrame(next.value, this.#toolCalls)
+        const delta = deltaOfFollowFrame(next.value, this.#toolCalls, this.#messages)
         if (delta === undefined) continue
         this.#emit(TOPIC_SESSION_DELTA, { sessionId: subscription.sessionId, ...delta })
       }

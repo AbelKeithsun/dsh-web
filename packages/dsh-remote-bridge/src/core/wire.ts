@@ -86,9 +86,9 @@ export interface WireRow {
 /**
  * Every endpoint of the frozen mapping table, in the order the parent card
  * lists them. Rows whose endpoint no method of protocol v1 exposes yet
- * (`session/modelCatalog`, `pluginInventory/list`,
- * `pluginManager/listPlugins`) stay in the table: they are the layout a future
- * method must not get wrong, and the table is the single place it is written.
+ * (`pluginInventory/list`, `pluginManager/listPlugins`) stay in the table: they
+ * are the layout a future method must not get wrong, and the table is the
+ * single place it is written.
  */
 export const WIRE_TABLE: readonly WireRow[] = [
   { namespace: 'session', method: 'list', wire: '_request' },
@@ -96,6 +96,8 @@ export const WIRE_TABLE: readonly WireRow[] = [
   { namespace: 'session', method: 'follow', wire: 'request' },
   { namespace: 'session', method: 'prompt', wire: 'request' },
   { namespace: 'session', method: 'cancel', wire: 'request' },
+  { namespace: 'session', method: 'attachment', wire: 'request' },
+  { namespace: 'session', method: 'projections', wire: 'request' },
   { namespace: 'session', method: 'modelCatalog', wire: 'none' },
   { namespace: 'session', method: 'selectModel', wire: 'request' },
   { namespace: 'pluginInventory', method: 'list', wire: 'none' },

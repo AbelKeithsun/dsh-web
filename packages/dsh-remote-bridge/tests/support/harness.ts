@@ -13,6 +13,7 @@ import { DeviceRoster } from '../../src/core/devices.ts'
 import { BridgeHub } from '../../src/core/hub.ts'
 import { PairingService } from '../../src/core/pairing.ts'
 import { SessionMeta, type SessionMetaFaces } from '../../src/core/session-meta.ts'
+import { SessionPermissions } from '../../src/core/session-permissions.ts'
 import type { BridgeGateway, GatewayInvokeRequest } from '../../src/core/wire.ts'
 
 /** One frame as it crossed the wire. */
@@ -181,6 +182,8 @@ export interface HarnessOptions {
   readonly roster?: DeviceRoster
   /** Session metadata source; the default models a host with no such service mounted. */
   readonly sessionMeta?: SessionMeta
+  /** Permission presets source; the default models a host with no such service mounted. */
+  readonly permissions?: SessionPermissions
   readonly heartbeatMs?: number
 }
 
@@ -237,6 +240,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     roster,
     approvals,
     sessionMeta: metaOf(options, message => { logs.push(message) }),
+    permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
     now: () => Date.now(),
     clientTimeZone: () => 'Asia/Shanghai',
     log: (message: string) => { logs.push(message) },
@@ -306,6 +310,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     roster: options.roster ?? new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' }),
     approvals,
     sessionMeta: metaOf(options, message => { logs.push(message) }),
+    permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
     now: () => Date.now(),
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },

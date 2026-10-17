@@ -47,7 +47,7 @@ describe('DSH Remote wire argument layout', () => {
     const inventory = WIRE_TABLE.filter(row => row.wire === 'none').length
     // Then exactly the three zero-parameter endpoints are marked, and the rest carry one named request
     expect(zeroArgument).toEqual(['session/modelCatalog', 'pluginInventory/list', 'pluginManager/listPlugins'])
-    expect(WIRE_TABLE.length - inventory).toBe(6)
+    expect(WIRE_TABLE.length - inventory).toBe(8)
   })
 
   it('operator adds an endpoint the table does not know and it defaults to the majority layout', () => {
