@@ -925,6 +925,15 @@ function recordDegraded(plugin, stage, error) {
 function listDegraded() {
 	return [...shellState().degraded.values()];
 }
+/** Every retired package name, sorted: what the shell skips without importing. Derived from
+*  RETIRED_FAMILIES so the two can never disagree. */
+const RETIRED_PLUGINS$1 = Object.freeze(Object.values({
+	"describe-image": "@linxin666/dsh-tool-describe-image",
+	"desktop-launcher": "@linxin666/dsh-desktop-launcher",
+	"doctor": "@linxin666/dsh-doctor",
+	"dsh-perf": "@linxin666/dsh-perf",
+	"model-capabilities": "@linxin666/dsh-client-ui-model-capabilities"
+}).sort());
 //#endregion
 //#region src/rows.ts
 /**
@@ -1107,12 +1116,18 @@ function isOverrideShape(config) {
 /**
 * Known retired family plugins: stale rows from older user profiles mount as
 * silent no-ops so upgrading the aggregate package never breaks the host boot.
+*
+* The list is generated from the aggregate.yml `retiredPlugins` section
+* (src/retired-plugins.generated.ts) and is therefore the single source for
+* this behavior: adding a retired family edits the manifest and reruns
+* `node scripts/aggregate.mjs`. It used to be a hand-written literal here,
+* and it drifted — the 2026-09-23 removal of dsh-doctor and
+* dsh-tool-describe-image never added its two package names, so their leftover
+* profile rows fell through to the import below and recorded a normal
+* retirement as a degraded plugin. The semantics are unchanged: a row naming a
+* retired plugin mounts empty and records nothing.
 */
-const RETIRED_PLUGINS = /* @__PURE__ */ new Set([
-	"@linxin666/dsh-perf",
-	"@linxin666/dsh-desktop-launcher",
-	"@linxin666/dsh-client-ui-model-capabilities"
-]);
+const RETIRED_PLUGINS = new Set(RETIRED_PLUGINS$1);
 /**
 * Whether a lifecycle transition belongs to the fiber one row mounted.
 *

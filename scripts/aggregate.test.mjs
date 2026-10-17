@@ -377,3 +377,74 @@ test('the plugin-manager family row id and subpath survive its standalone row re
   const childPatch = readFileSync(join(ROOT, 'packages/dsh-plugin-manager/cordis.patch.yml'), 'utf8')
   assert.match(childPatch, /- id: ui-plugin-manager-update-check/u, 'the standalone row keeps its own id')
 })
+
+/** Entries of one aggregate manifest section, parsed as single-line JSON flow mappings. */
+function flowEntriesOf(ymlPath, wantedSection) {
+  const entries = []
+  let section = null
+  for (const raw of readFileSync(join(ROOT, ymlPath), 'utf8').split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    const sectionMatch = line.match(/^[A-Za-z0-9_-]+:\s*$/)
+    if (sectionMatch) {
+      section = line.slice(0, -1)
+      continue
+    }
+    if (section !== wantedSection || !line.startsWith('- ')) continue
+    entries.push(JSON.parse(line.slice(2).trim().replace(/\s+#.*$/, '')))
+  }
+  return entries
+}
+
+/** Plain scalar list entries of one aggregate manifest section. */
+function scalarEntriesOf(ymlPath, wantedSection) {
+  const entries = []
+  let section = null
+  for (const raw of readFileSync(join(ROOT, ymlPath), 'utf8').split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    const sectionMatch = line.match(/^[A-Za-z0-9_-]+:\s*$/)
+    if (sectionMatch) {
+      section = line.slice(0, -1)
+      continue
+    }
+    if (section === wantedSection && line.startsWith('- ')) entries.push(line.slice(2).trim())
+  }
+  return entries
+}
+
+test('web-ui-all retired plugins are tombstones, not dependencies, and match the generated registry', () => {
+  // The shell skips an import for every package listed in the generated
+  // retirement registry. Two facts make that skip safe and one keeps it
+  // honest, so the manifest section behind all three is gated here: the family
+  // must be a tombstone (its subpath export has to stay alive for older
+  // profiles), the plugin must not also be a dependency (a mounted package must
+  // never be swallowed by the no-op branch), and the generated module must be
+  // exactly what the manifest says.
+  const yml = 'packages/dsh-web-all/aggregate.yml'
+  const retired = flowEntriesOf(yml, 'retiredPlugins')
+  assert.ok(retired.length > 0, 'aggregate.yml should declare the retired plugin registry')
+  const tombstones = new Set(scalarEntriesOf(yml, 'tombstones'))
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'packages/dsh-web-all/package.json'), 'utf8'))
+  const families = new Set()
+  const plugins = new Set()
+  for (const entry of retired) {
+    assert.match(entry.family, /^[a-z0-9-]+$/, 'retired family is a subpath: ' + entry.family)
+    assert.ok(tombstones.has(entry.family), 'retired family must keep its tombstone subpath export: ' + entry.family)
+    assert.ok(!(entry.plugin in pkg.dependencies), 'a retired plugin must not also be a dependency: ' + entry.plugin)
+    assert.ok(!families.has(entry.family), 'duplicate retired family: ' + entry.family)
+    assert.ok(!plugins.has(entry.plugin), 'duplicate retired plugin: ' + entry.plugin)
+    families.add(entry.family)
+    plugins.add(entry.plugin)
+  }
+  const generated = readFileSync(join(ROOT, 'packages/dsh-web-all/src/retired-plugins.generated.ts'), 'utf8')
+  for (const entry of retired) {
+    assert.ok(generated.includes("'" + entry.family + "': '" + entry.plugin + "'"), 'generated registry is missing ' + entry.family + ' -> ' + entry.plugin)
+  }
+  const generatedPluginCount = [...generated.matchAll(/^  '[^']+': '[^']+',$/gm)].length
+  assert.equal(generatedPluginCount, retired.length, 'generated registry must carry exactly the manifest entries')
+  // Issue #1889 regression: the 2026-09-23 removal never reached the shell's
+  // hand-written list, so both package names are pinned by name here.
+  assert.ok(plugins.has('@linxin666/dsh-tool-describe-image'), 'dsh-tool-describe-image must be registered as retired')
+  assert.ok(plugins.has('@linxin666/dsh-doctor'), 'dsh-doctor must be registered as retired')
+})
