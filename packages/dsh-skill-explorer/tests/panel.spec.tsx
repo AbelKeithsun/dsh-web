@@ -74,6 +74,21 @@ async function flush(): Promise<void> {
   await act(async () => { await Promise.resolve() })
 }
 
+/**
+ * Open every source group the panel starts collapsed.
+ *
+ * Only the workspace roots (project and user skills) are expanded on first
+ * use; system bundled, custom and runtime groups start folded so a wide
+ * catalog does not paint every row at once (issue #1881).
+ */
+async function expandGroups(container: HTMLElement): Promise<void> {
+  for (const toggle of Array.from(container.querySelectorAll<HTMLElement>('[data-dsh-part="group-toggle"]'))) {
+    if (toggle.getAttribute('aria-expanded') === 'false') {
+      await act(async () => { toggle.click() })
+    }
+  }
+}
+
 /** Click the tab whose label matches. */
 async function openTab(container: HTMLElement, label: string): Promise<void> {
   await act(async () => {
@@ -93,7 +108,7 @@ async function typeInto(element: HTMLElement, value: string): Promise<void> {
 }
 
 describe('SkillPanel shell', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
 
   it('user opening the panel sees a title header with no back control and no workspace path (#1215, #1785)', async () => {
     // Given a panel listing one skill
@@ -121,7 +136,7 @@ describe('SkillPanel shell', () => {
     // Then the panel root and its tab bar carry the family vocabulary
     expect(panel).toBeInstanceOf(HTMLDivElement)
     const tabs = Array.from(mount_.container.querySelectorAll('[data-dsh-part="tab"]'))
-    expect(tabs.map(tab => tab.textContent)).toEqual(['技能', '创建'])
+    expect(tabs.map(tab => tab.textContent)).toEqual(['技能', '创建', '导入'])
     expect(tabs[0]?.hasAttribute('data-active')).toBe(true)
     expect(tabs[1]?.hasAttribute('data-active')).toBe(false)
     mount_.dispose()
@@ -162,7 +177,7 @@ describe('SkillPanel shell', () => {
 })
 
 describe('SkillPanel create tab', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
 
   it('user creating a skill right after opening the panel gets the workspace resolved once', async () => {
     // Given an open panel whose skills tab has already loaded the list
@@ -213,7 +228,7 @@ describe('SkillPanel create tab', () => {
 })
 
 describe('SkillPanel loading state', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
 
   /** Whether the toolbar currently offers the refresh control. */
   function hasRefresh(container: HTMLElement): boolean {
@@ -264,7 +279,7 @@ describe('SkillPanel loading state', () => {
 })
 
 describe('SkillPanel last-good list policy', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
 
   it('user refreshing after a failure keeps the previous list and sees the error', async () => {
     // Given a listed skill and a refresh that will fail
@@ -350,7 +365,7 @@ describe('SkillPanel mutation identity', () => {
 })
 
 describe('SkillPanel pathless rows (#1842)', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
 
   /** A payload mixing a plugin-supplied file and a virtual registration. */
   const pathlessPayload: ListPayload = {
@@ -384,6 +399,7 @@ describe('SkillPanel pathless rows (#1842)', () => {
     const api = fakeApi([async () => pathlessPayload])
     const mount_ = mount(api)
     await flush()
+    await expandGroups(mount_.container)
 
     // When both rows render
     const providerRow = row(mount_.container, 'provider-skill')
@@ -403,6 +419,7 @@ describe('SkillPanel pathless rows (#1842)', () => {
     const api = fakeApi([async () => pathlessPayload])
     const mount_ = mount(api)
     await flush()
+    await expandGroups(mount_.container)
 
     // When the rows render
     const providerRow = row(mount_.container, 'provider-skill')
@@ -430,6 +447,7 @@ describe('SkillPanel pathless rows (#1842)', () => {
     const api = fakeApi([async () => pathlessPayload], { setProviderEnabled, setEnabled })
     const mount_ = mount(api)
     await flush()
+    await expandGroups(mount_.container)
 
     // When the user flips that row's enable switch
     const toggle = row(mount_.container, 'provider-skill').querySelector('[role="switch"]') as HTMLButtonElement
@@ -445,7 +463,7 @@ describe('SkillPanel pathless rows (#1842)', () => {
 })
 
 describe('SkillPanel search filter (#1423)', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
 
   const searchPayload: ListPayload = {
     cwd: '/work',
@@ -504,7 +522,7 @@ describe('SkillPanel search filter (#1423)', () => {
 })
 
 describe('SkillPanel edit flow (#1622)', () => {
-  afterEach(() => { document.body.innerHTML = '' })
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
 
   it('user editing a skill from its card saves the edited fields', async () => {
     // Given a panel listing one skill, with a host that reads and updates it
@@ -579,6 +597,389 @@ describe('SkillPanel edit flow (#1622)', () => {
 
     // Then the panel reports the failure instead of an empty form
     expect(mount_.container.textContent).toContain('读取失败：gone')
+    mount_.dispose()
+  })
+})
+
+/** A skill entry with the panel's required shape. */
+function entry(name: string, extra: Partial<import('../src/client/api.ts').SkillEntry> = {}) {
+  return {
+    name,
+    description: name + ' description',
+    provider: 'filesystem',
+    level: 'user-dsh',
+    path: '/work/' + name + '/SKILL.md',
+    fileState: 'editable' as const,
+    modelInvocable: true,
+    userInvocable: true,
+    ...extra,
+  }
+}
+
+/** Two source groups: a workspace root that opens and a global one that folds. */
+function groupedPayload(): ListPayload {
+  return {
+    cwd: '/work',
+    projectRoots: [],
+    complete: true,
+    groups: [
+      {
+        key: 'user-dsh',
+        title: 'User skills',
+        hint: 'global skills',
+        skills: [
+          entry('user-on'),
+          entry('user-off', { modelInvocable: false }),
+          entry('user-virtual', { fileState: 'virtual', path: undefined }),
+        ],
+      },
+      {
+        key: 'bundled',
+        title: 'System bundled',
+        hint: 'shipped with DSH',
+        skills: [entry('bundled-on', { level: 'bundled' })],
+      },
+    ],
+  }
+}
+
+/** Every skill name the panel currently renders, in document order. */
+function renderedNames(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll('[data-dsh-part="skill-row"]'))
+    .map(row => row.querySelector('span')?.textContent ?? '')
+}
+
+/** The source-group toggle whose title starts with the given text. */
+function groupToggle(container: HTMLElement, title: string): HTMLElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLElement>('[data-dsh-part="group-toggle"]'))
+    .find(toggle => toggle.textContent?.startsWith(title))
+}
+
+/** The toolbar's facet-panel toggle. */
+function filtersToggle(container: HTMLElement): HTMLElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLElement>('[data-dsh-part="filter-bar"] button'))
+    .find(button => button.textContent?.startsWith('筛选'))
+}
+
+/** A facet chip whose label starts with the given text. */
+function facetChip(container: HTMLElement, label: string): HTMLElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLElement>('[data-dsh-part="facet-bar"] button'))
+    .find(button => button.textContent?.startsWith(label))
+}
+
+/** Open the facet panel, which starts collapsed. */
+async function openFilters(container: HTMLElement): Promise<void> {
+  await act(async () => { filtersToggle(container)?.click() })
+}
+
+describe('SkillPanel source-group collapse (#1881)', () => {
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
+
+  it('user opening the panel sees the workspace root expanded and the global source folded', async () => {
+    // Given a catalog with one user group and one bundled group
+    const api = fakeApi([async () => groupedPayload()])
+    const mount_ = mount(api)
+    await flush()
+    // When the list renders for the first time
+    // Then only the user rows are visible
+    expect(renderedNames(mount_.container)).toEqual(['user-on', 'user-off', 'user-virtual'])
+    expect(groupToggle(mount_.container, '用户技能')?.getAttribute('aria-expanded')).toBe('true')
+    // And the global source is folded, still announcing its size
+    const bundled = groupToggle(mount_.container, '系统内置')
+    expect(bundled?.getAttribute('aria-expanded')).toBe('false')
+    expect(bundled?.textContent).toContain('1 个')
+    mount_.dispose()
+  })
+
+  it('user clicking a group header folds its rows away and clicking again brings them back', async () => {
+    // Given an open user group
+    const api = fakeApi([async () => groupedPayload()])
+    const mount_ = mount(api)
+    await flush()
+    // When the user clicks its header
+    await act(async () => { groupToggle(mount_.container, '用户技能')?.click() })
+    // Then its rows are gone and the header reports the folded state
+    expect(renderedNames(mount_.container)).toEqual([])
+    expect(groupToggle(mount_.container, '用户技能')?.getAttribute('aria-expanded')).toBe('false')
+    // And clicking again restores them
+    await act(async () => { groupToggle(mount_.container, '用户技能')?.click() })
+    expect(renderedNames(mount_.container)).toEqual(['user-on', 'user-off', 'user-virtual'])
+    mount_.dispose()
+  })
+
+  it('user who folded a group finds it still folded after leaving and reopening the panel', async () => {
+    // Given a user who folded the user group
+    const first = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    await act(async () => { groupToggle(first.container, '用户技能')?.click() })
+    first.dispose()
+    // When the panel is mounted again from the stored view
+    const second = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    // Then the fold survived, even though only the bundled rows remain visible
+    expect(groupToggle(second.container, '用户技能')?.getAttribute('aria-expanded')).toBe('false')
+    expect(renderedNames(second.container)).toEqual([])
+    second.dispose()
+  })
+})
+
+describe('SkillPanel facets (#1881)', () => {
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
+
+  it('user opening the filter panel sees one chip per source group', async () => {
+    // Given the grouped catalog
+    const mount_ = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    // When the user opens the facet panel
+    await openFilters(mount_.container)
+    // Then both source groups are offered as chips with their sizes
+    expect(facetChip(mount_.container, '用户技能')?.textContent).toContain('3')
+    expect(facetChip(mount_.container, '系统内置')?.textContent).toContain('1')
+    mount_.dispose()
+  })
+
+  it('user ticking one source chip sees only that source', async () => {
+    // Given the facet panel open
+    const mount_ = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    await openFilters(mount_.container)
+    // When the user ticks the bundled source
+    await act(async () => { facetChip(mount_.container, '系统内置')?.click() })
+    // Then only the bundled group is listed, and it is still folded
+    expect(Array.from(mount_.container.querySelectorAll('[data-dsh-part="group-toggle"]')).length).toBe(1)
+    expect(facetChip(mount_.container, '系统内置')?.getAttribute('aria-pressed')).toBe('true')
+    mount_.dispose()
+  })
+
+  it('user picking the disabled facet sees only disabled skills', async () => {
+    // Given the facet panel open
+    const mount_ = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    await openFilters(mount_.container)
+    // When the user narrows to disabled skills
+    await act(async () => { facetChip(mount_.container, '已禁用')?.click() })
+    // Then only the disabled row survives
+    expect(renderedNames(mount_.container)).toEqual(['user-off'])
+    mount_.dispose()
+  })
+
+  it('user ticking the no-local-file mark sees only pathless rows', async () => {
+    // Given the facet panel open
+    const mount_ = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    await openFilters(mount_.container)
+    // When the user narrows to skills with no local file
+    await act(async () => { facetChip(mount_.container, '无本地文件')?.click() })
+    // Then only the fileless registration remains
+    expect(renderedNames(mount_.container)).toEqual(['user-virtual'])
+    mount_.dispose()
+  })
+
+  it('user whose facets leave nothing sees the empty state rather than a blank list', async () => {
+    // Given the facet panel open
+    const mount_ = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    await openFilters(mount_.container)
+    // When the disabled facet meets a query that only matches enabled rows
+    await act(async () => { facetChip(mount_.container, '已禁用')?.click() })
+    await act(async () => {
+      const search = mount_.container.querySelector('input[type="search"]') as HTMLInputElement
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+      setter?.call(search, 'user-on')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    // Then the panel names the query it could not satisfy instead of
+    // rendering an unexplained blank list
+    expect(renderedNames(mount_.container)).toEqual([])
+    expect(mount_.container.textContent).toContain('没有匹配「user-on」的技能')
+    mount_.dispose()
+  })
+
+  it('user clicking clear drops every facet and sees the whole catalog again', async () => {
+    // Given a user who narrowed the list twice
+    const mount_ = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    await openFilters(mount_.container)
+    await act(async () => { facetChip(mount_.container, '已禁用')?.click() })
+    await act(async () => { facetChip(mount_.container, '无本地文件')?.click() })
+    // When they clear the facets
+    await act(async () => { facetChip(mount_.container, '清除筛选')?.click() })
+    // Then the whole user group is back
+    expect(renderedNames(mount_.container)).toEqual(['user-on', 'user-off', 'user-virtual'])
+    mount_.dispose()
+  })
+
+  it('user whose stored source facet names a group that is gone gets the whole catalog back', async () => {
+    // Given a stored facet naming a source group this payload no longer has
+    localStorage.setItem('dsh-skill-explorer:list-view:v1', JSON.stringify({
+      levels: ['custom-gone'],
+      status: 'all',
+      marks: [],
+      collapsed: {},
+    }))
+    // When the panel loads
+    const mount_ = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    // Then the stale facet is dropped instead of hiding every row behind a
+    // chip the filter bar cannot even show
+    expect(renderedNames(mount_.container)).toEqual(['user-on', 'user-off', 'user-virtual'])
+    expect(filtersToggle(mount_.container)?.textContent).toBe('筛选')
+    mount_.dispose()
+  })
+
+  it('user who narrowed the list finds the same facets after reopening the panel', async () => {
+    // Given a user who narrowed to disabled skills and folded the bundled group open
+    const first = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    await openFilters(first.container)
+    await act(async () => { facetChip(first.container, '已禁用')?.click() })
+    first.dispose()
+    // When the panel is mounted again
+    const second = mount(fakeApi([async () => groupedPayload()]))
+    await flush()
+    // Then the facet is still applied and the toolbar still advertises it
+    expect(renderedNames(second.container)).toEqual(['user-off'])
+    expect(filtersToggle(second.container)?.textContent).toContain('(1)')
+    second.dispose()
+  })
+})
+
+describe('SkillPanel duplicate as template (#1881)', () => {
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
+
+  it('user duplicating a row lands on the create form with the source fields filled in', async () => {
+    // Given a row whose content the read route can serve
+    const api = fakeApi([async () => payload(['demo-skill'])], {
+      read: async (name: string, path: string) => ({
+        name,
+        path,
+        description: 'source description',
+        whenToUse: 'source when to use',
+        content: 'source body',
+      }),
+    })
+    const mount_ = mount(api)
+    await flush()
+    // When the user clicks the row's duplicate action
+    await act(async () => {
+      const button = Array.from(mount_.container.querySelectorAll('button'))
+        .find(candidate => candidate.textContent?.trim() === '复制为模板')
+      button?.click()
+    })
+    await flush()
+    // Then the create tab is open, prefilled, and says where it came from
+    const activeTab = mount_.container.querySelector('[data-dsh-part="tab"][data-active]')
+    expect(activeTab?.textContent).toBe('创建')
+    expect(mount_.container.textContent).toContain('来自模板「demo-skill」')
+    const inputs = Array.from(mount_.container.querySelectorAll<HTMLInputElement>('form input:not([type])'))
+    expect(inputs.map(input => input.value)).toEqual(['demo-skill-copy', 'source description', 'source when to use'])
+    const textareas = Array.from(mount_.container.querySelectorAll<HTMLTextAreaElement>('form textarea'))
+    expect(textareas.map(area => area.value)).toEqual(['source body'])
+    mount_.dispose()
+  })
+
+  it('user clearing the template gets a blank form again', async () => {
+    // Given a prefilled create form
+    const api = fakeApi([async () => payload(['demo-skill'])], {
+      read: async (name: string, path: string) => ({ name, path, description: 'source description', content: 'source body' }),
+    })
+    const mount_ = mount(api)
+    await flush()
+    await act(async () => {
+      const button = Array.from(mount_.container.querySelectorAll('button'))
+        .find(candidate => candidate.textContent?.trim() === '复制为模板')
+      button?.click()
+    })
+    await flush()
+    // When the user clears the template
+    await act(async () => {
+      const button = Array.from(mount_.container.querySelectorAll('button'))
+        .find(candidate => candidate.textContent?.trim() === '清除模板')
+      button?.click()
+    })
+    // Then the fields are empty and the banner is gone
+    const inputs = Array.from(mount_.container.querySelectorAll<HTMLInputElement>('form input:not([type])'))
+    expect(inputs.map(input => input.value)).toEqual(['', '', ''])
+    expect(mount_.container.textContent).not.toContain('来自模板')
+    mount_.dispose()
+  })
+})
+
+describe('SkillPanel import tab (#1881)', () => {
+  afterEach(() => { document.body.innerHTML = ''; localStorage.clear() })
+
+  /** The import report the fake host answers with. */
+  const report = {
+    ok: true as const,
+    level: 'user-dsh',
+    imported: 1,
+    skipped: 1,
+    outcomes: [
+      { name: 'alpha-skill', origin: 'alpha-skill/SKILL.md', status: 'imported' as const, path: '/home/skills/alpha-skill/SKILL.md' },
+      { name: 'beta-skill', origin: 'beta-skill/SKILL.md', status: 'skipped' as const, reason: 'exists' as const },
+    ],
+  }
+
+  /** Open the import tab from the list toolbar. */
+  async function openImportTab(container: HTMLElement): Promise<void> {
+    await act(async () => {
+      const button = Array.from(container.querySelectorAll<HTMLElement>('[data-dsh-part="filter-bar"] button'))
+        .find(candidate => candidate.textContent?.trim() === '导入')
+      button?.click()
+    })
+  }
+
+  it('user clicking import on the list lands on the import tab', async () => {
+    // Given the skills tab
+    const mount_ = mount(fakeApi([async () => payload(['demo-skill'])]))
+    await flush()
+    // When the user clicks the toolbar's import entry
+    await openImportTab(mount_.container)
+    // Then the import tab is the active one and its form is rendered
+    expect(mount_.container.querySelector('[data-dsh-part="tab"][data-active]')?.textContent).toBe('导入')
+    expect(mount_.container.querySelector('input[type="radio"]')).toBeInstanceOf(HTMLInputElement)
+    mount_.dispose()
+  })
+
+  it('user importing a directory sees what was created and what was skipped', async () => {
+    // Given an import route that answers with a mixed report
+    const importSkills = async () => report
+    const api = fakeApi([async () => payload(['demo-skill'])], { importSkills })
+    const mount_ = mount(api)
+    await flush()
+    await openImportTab(mount_.container)
+    await typeInto(mount_.container.querySelector('input[placeholder]')!, '/work/import-source')
+    // When the user submits the import
+    await act(async () => {
+      const button = Array.from(mount_.container.querySelectorAll('button'))
+        .find(candidate => candidate.textContent?.trim() === '开始导入')
+      button?.click()
+    })
+    await flush()
+    // Then the summary counts both halves and each candidate says its fate
+    expect(mount_.container.textContent).toContain('已导入 1 个，跳过 1 个。')
+    const outcomes = Array.from(mount_.container.querySelectorAll('[data-dsh-part="import-report"] li'))
+    expect(outcomes.map(item => item.getAttribute('data-status'))).toEqual(['imported', 'skipped'])
+    expect(outcomes[1].textContent).toContain('该位置已有同名技能')
+    mount_.dispose()
+  })
+
+  it('user submitting an import without a directory is told what is missing', async () => {
+    // Given the import form with no path typed
+    const api = fakeApi([async () => payload(['demo-skill'])], { importSkills: async () => report })
+    const mount_ = mount(api)
+    await flush()
+    await openImportTab(mount_.container)
+    // When the user submits anyway
+    await act(async () => {
+      const button = Array.from(mount_.container.querySelectorAll('button'))
+        .find(candidate => candidate.textContent?.trim() === '开始导入')
+      button?.click()
+    })
+    await flush()
+    // Then the form says which input is missing and nothing was requested
+    expect(mount_.container.textContent).toContain('请填写要导入的目录')
+    expect(mount_.container.querySelector('[data-dsh-part="import-report"]')).toBeNull()
     mount_.dispose()
   })
 })

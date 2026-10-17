@@ -9,12 +9,20 @@ DSH Web GUI 的**技能中心**插件：侧边栏「技能中心」入口打开�
 ## 本包要点
 
 - host 半区（`src/index.ts` + `src/routes.ts` + `src/access.ts` +
-  `src/collect.ts` + `src/frontmatter.ts` + `src/provider-toggles.ts`）提供
+  `src/collect.ts` + `src/frontmatter.ts` + `src/provider-toggles.ts` +
+  `src/import.ts`）提供
   `/api/dsh-skill-explorer/*`
-  路由族（list / set-enabled / set-provider-enabled / create / delete /
+  路由族（list / set-enabled / set-provider-enabled / create / import / delete /
   health），默认 loopback
   围栏，已配对设备 cookie 为额外放行路径（不硬依赖 remote-web-ui）；数据来自
   文件系统扫描（官方根约定）+ `ctx.skills` 注册表合并。
+- **导入是独立的创建面**（`import.ts`）：它只能读用户指名的目录一层
+  （`<名>/SKILL.md` 或 `<名>.md`，跳过符号链接与点目录）或浏览器提交的
+  `.zip`，只往用户/项目根新建 `<名>/SKILL.md`，从不改写已有文件；冲突用
+  `SKILL_SOURCE_RANK`（同级 `exists`、更强来源 `shadowed`）裁决，候选校验
+  复用 `isSkillName` 与 `parseFrontmatter`。请求形状错误用
+  `ImportRequestError`（路由映射为 400），不要退化成 500。现有写路由的
+  「只信任面板展示路径」规则不因导入而放宽。
 - **自定义根有两个来源**：本插件 config 的 `customSkillDirs`，以及在用
   `skill-filesystem` loader 行上的同名配置（官方文档推荐的配法）。只读前者会让
   注册表报告的 custom 来源技能全部无 path，控件与写路由一起失效（#1801）。
@@ -36,6 +44,11 @@ DSH Web GUI 的**技能中心**插件：侧边栏「技能中心」入口打开�
   `panel/controller.ts`，因为布局只在该面板被选中时挂载页面，组件本地 state
   会在切面板时丢失；页面只读 controller 快照。占位完全由布局的 keyed `main`
   槽决定，本包不再参与任何家族互斥协议。
+- **视图偏好属于浏览器**（`src/client/panel-prefs.ts`）：技能列表的筛选维度
+  （来源 / 状态 / 标记）与来源分组的折叠决定存在 `localStorage`，因为布局在
+  切面板时会卸载本页；默认只展开项目与用户根。存储内容按不可信输入处理，
+  任一字段损坏只回退该字段。纯匹配规则在 `src/client/skill-filter.ts`
+  （`selectGroups` 的各维度），不要在组件里重写。
 - 纯逻辑（扫描/分组/frontmatter 解析）在 host 侧单测锁定行为
   （`tests/collect.spec.ts`、`tests/frontmatter.spec.ts`、
   `tests/routes.spec.ts`、`tests/access.spec.ts`）；路由围栏与错误路径必须带测试。

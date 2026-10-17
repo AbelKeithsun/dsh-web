@@ -9,7 +9,10 @@
  * resolves it itself and the list refetches when it returns.
  *
  * The edit tab appears only while a skill is being edited: the list row hands
- * the chosen skill over, and leaving the editor returns to the list.
+ * the chosen skill over, and leaving the editor returns to the list. The
+ * import tab is always listed, and the list's import button opens it; a row's
+ * "duplicate as template" action hands a draft to the create tab through the
+ * controller for the same mount reason.
  */
 import { useSyncExternalStore } from 'react'
 import { SkillApi } from '../api.ts'
@@ -17,6 +20,7 @@ import { tt } from '../panel-helpers.ts'
 import type { PanelController, SkillTab } from './controller.ts'
 import { CreateTab } from './CreateTab.tsx'
 import { EditTab } from './EditTab.tsx'
+import { ImportTab } from './ImportTab.tsx'
 import { SkillsTab } from './SkillsTab.tsx'
 import css from './panel.module.css'
 
@@ -38,6 +42,7 @@ export function SkillPanel({ controller, api }: SkillPanelProps) {
   const tabs: ReadonlyArray<{ id: SkillTab; label: () => string }> = [
     { id: 'skills', label: () => tt('tab.list') },
     { id: 'create', label: () => tt('tab.create') },
+    { id: 'import', label: () => tt('tab.import') },
     ...(editing === undefined ? [] : [{ id: 'edit' as SkillTab, label: () => tt('tab.edit') }]),
   ]
 
@@ -66,8 +71,16 @@ export function SkillPanel({ controller, api }: SkillPanelProps) {
         ))}
       </div>
       <div className={css.panelContent}>
-        {activeTab === 'skills' && <SkillsTab api={api} onEdit={skill => { controller.openEditor(skill) }} />}
-        {activeTab === 'create' && <CreateTab api={api} />}
+        {activeTab === 'skills' && (
+          <SkillsTab
+            api={api}
+            onEdit={skill => { controller.openEditor(skill) }}
+            onImport={() => { controller.setActiveTab('import') }}
+            onDuplicate={draft => { controller.openCreateFromTemplate(draft) }}
+          />
+        )}
+        {activeTab === 'create' && <CreateTab api={api} controller={controller} />}
+        {activeTab === 'import' && <ImportTab api={api} />}
         {activeTab === 'edit' && editing !== undefined && (
           <EditTab
             api={api}

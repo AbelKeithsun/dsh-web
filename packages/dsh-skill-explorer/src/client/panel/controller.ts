@@ -19,7 +19,23 @@ import type { SkillEntry } from '../api.ts'
 export const SKILL_EXPLORER_PANEL_ID = 'skill-explorer'
 
 /** The panel's tab identifiers. */
-export type SkillTab = 'skills' | 'create' | 'edit'
+export type SkillTab = 'skills' | 'create' | 'import' | 'edit'
+
+/**
+ * A new-skill draft prefilled from an existing skill ("duplicate as
+ * template"). It travels through the controller rather than through props
+ * because the create tab mounts only while it is selected, so the list row
+ * cannot hand it over directly.
+ */
+export interface SkillDraft {
+  /** The skill the draft was copied from, named in the create tab. */
+  from: string
+  /** The proposed new name, a valid kebab-case variant of the source name. */
+  name: string
+  description: string
+  whenToUse?: string
+  content: string
+}
 
 /** Immutable controller snapshot for UI subscriptions. */
 export interface PanelControllerSnapshot {
@@ -29,6 +45,8 @@ export interface PanelControllerSnapshot {
   activeTab: SkillTab
   /** The skill being edited; the edit tab exists only while it is set. */
   editing: SkillEntry | undefined
+  /** A draft the create tab should prefill, consumed on create or dismiss. */
+  template: SkillDraft | undefined
 }
 
 /**
@@ -53,9 +71,10 @@ export class PanelController {
   private panelOpen = false
   private activeTab: SkillTab = 'skills'
   private editing: SkillEntry | undefined
+  private template: SkillDraft | undefined
   private listeners = new Set<() => void>()
   /** Cached so getSnapshot stays referentially stable between changes. */
-  private snapshot: PanelControllerSnapshot = { panelOpen: false, activeTab: 'skills', editing: undefined }
+  private snapshot: PanelControllerSnapshot = { panelOpen: false, activeTab: 'skills', editing: undefined, template: undefined }
 
   constructor(private readonly deps: PanelControllerDeps = {}) {}
 
@@ -128,8 +147,33 @@ export class PanelController {
     this.commit()
   }
 
+  /**
+   * Open the create tab prefilled from an existing skill. Leaving the editor
+   * target alone keeps a half-finished edit reachable from its own tab.
+   */
+  openCreateFromTemplate(draft: SkillDraft): void {
+    this.template = draft
+    this.activeTab = 'create'
+    this.commit()
+  }
+
+  /**
+   * Drop the pending template, so a later visit to the create tab starts from
+   * a blank form. Called when the template has been used or dismissed.
+   */
+  clearTemplate(): void {
+    if (this.template === undefined) return
+    this.template = undefined
+    this.commit()
+  }
+
   private commit(): void {
-    this.snapshot = { panelOpen: this.panelOpen, activeTab: this.activeTab, editing: this.editing }
+    this.snapshot = {
+      panelOpen: this.panelOpen,
+      activeTab: this.activeTab,
+      editing: this.editing,
+      template: this.template,
+    }
     for (const fn of [...this.listeners]) fn()
   }
 
