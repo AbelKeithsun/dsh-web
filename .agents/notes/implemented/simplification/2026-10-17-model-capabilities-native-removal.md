@@ -28,6 +28,7 @@ One compatibility seam survives: the aggregate keeps the `model-capabilities` to
 - The family no longer claims the `settings.models.provider-card` keyed cell, so no family plugin can collide there; the claim protocol (refusal naming the occupant, retry on unload) retires with the only package that used it.
 - The aggregate ships 16 family packages; `scripts/verify-version.mjs`, the publish-prep table, the i18n audit package list and the aggregate consistency tests all drop the seventeenth.
 - The `shell-metadata/` tree and the `./<family>/icon` + `./<family>/locale/<lang>.json` exports are new generated artifacts this removal shares with the 0.2.1-rc.2 cohort adaptation; the `model-capabilities` subpath is the first entry kept purely as a tombstone.
+- The row id is deliberately not tombstoned. A profile that recorded `web-ui-model-capabilities` through the plugin manager's per-row toggle carries an override for an id nothing declares, which the loader warns about on every boot while still composing; the plugin-manager update path prunes that orphan instead of the aggregate keeping a row that mounts nothing ([orphan row-override pruning](../bug-fix/2026-10-17-plugin-manager-orphan-row-override-pruning.md)).
 
 ## Testing
 

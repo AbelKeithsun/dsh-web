@@ -1133,3 +1133,234 @@ describe('CliGateway finished-job retention', () => {
     expect(gateway.status(queued.jobId)).toMatchObject({ phase: 'done' })
   })
 })
+
+/**
+ * A 0.4.6 user layer: an override the plugin manager owns for a row the
+ * aggregate has retired, an override for a row that still exists, and a
+ * config row this manager never writes (its id survives only in the file).
+ */
+const USER_LAYER = [
+  '# user overrides written by the plugin manager',
+  '- id: web-ui-model-capabilities',
+  '  name: "@linxin666/dsh-model-capabilities"',
+  '  disabled: true',
+  '- id: web-ui-pet',
+  '  name: "@linxin666/dsh-web-all/pet"',
+  '  disabled: false',
+  '- id: web-ui-skin-center',
+  '  name: "@linxin666/dsh-web-all/skin-center"',
+  '  config:',
+  '    theme: blue-fantasy',
+  '',
+].join('\n')
+
+/** The same layer after the retired row's override is pruned. */
+const PRUNED_LAYER = [
+  '# user overrides written by the plugin manager',
+  '- id: web-ui-pet',
+  '  name: "@linxin666/dsh-web-all/pet"',
+  '  disabled: false',
+  '- id: web-ui-skin-center',
+  '  name: "@linxin666/dsh-web-all/skin-center"',
+  '  config:',
+  '    theme: blue-fantasy',
+  '',
+].join('\n')
+
+/**
+ * The profile composition an updated 0.4.7 profile resolves to, in the CLI's
+ * own `--dump-config` shape: one block per layer, composed entries as
+ * column-0 `- id:` items. The retired row is gone; the pet row and the
+ * manager's own dependency are still there.
+ */
+const COMPOSED_DUMP = [
+  '# == dsh-memoir',
+  '- id: dsh-memoir',
+  '  name: dsh-memoir',
+  '# == @linxin666/dsh-web-all',
+  '- id: web-ui-pet',
+  '  name: "@linxin666/dsh-web-all/pet"',
+  '  disabled: false',
+  '',
+].join('\n')
+
+describe('CliGateway orphan row-override pruning', () => {
+  /** A gateway whose fake CLI installs the update and composes a dump. */
+  function updateGateway(
+    facts: ProfileFacts,
+    dump: () => { code: number; output?: string },
+    calls: string[][] = [],
+  ): CliGateway {
+    return gatewayFor(facts, (args) => {
+      if (args.includes('--dump-config')) return dump()
+      if (args[0] === 'plugin' && args[3] === 'add') installPackage(facts.profileDir, 'dsh-memoir', { version: '1.1.0' })
+      return { code: 0 }
+    }, calls)
+  }
+
+  it('operator: drops the retired row override after an update and backs the file up first', async () => {
+    // Given a profile carrying an override for a row the target composition
+    // no longer declares, plus valid and unowned rows beside it
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    writeFileSync(facts.patchPath, USER_LAYER)
+    const gateway = updateGateway(facts, () => ({ code: 0, output: COMPOSED_DUMP }))
+
+    // When the update to the release that retired the row runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then the update lands, the orphan entry is gone, every other byte of the
+    // layer is untouched, and the pre-prune file survives as the backup
+    expect(job.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(PRUNED_LAYER)
+    expect(readFileSync(`${facts.patchPath}.bak-plugin-manager`, 'utf8')).toBe(USER_LAYER)
+  })
+
+  it('operator: sees no write and no second backup when the same update runs again', async () => {
+    // Given a profile whose orphan override was already pruned by a first run
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    writeFileSync(facts.patchPath, USER_LAYER)
+    const gateway = updateGateway(facts, () => ({ code: 0, output: COMPOSED_DUMP }))
+    const first = await settle(gateway, gateway.update('dsh-memoir', '1.1.0').jobId)
+    expect(first.phase).toBe('done')
+
+    // When the same update runs a second time over the pruned profile
+    const second = await settle(gateway, gateway.update('dsh-memoir', '1.1.0').jobId)
+
+    // Then nothing was written: the layer is unchanged and the backup still
+    // holds the pre-prune text, so no second backup was taken
+    expect(second.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(PRUNED_LAYER)
+    expect(readFileSync(`${facts.patchPath}.bak-plugin-manager`, 'utf8')).toBe(USER_LAYER)
+  })
+
+  it('operator: keeps every override when the target composition still carries them', async () => {
+    // Given a profile whose overrides all point at rows the composition keeps
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    const layer = [
+      '- id: web-ui-pet',
+      '  name: "@linxin666/dsh-web-all/pet"',
+      '  disabled: true',
+      '',
+    ].join('\n')
+    writeFileSync(facts.patchPath, layer)
+    const gateway = updateGateway(facts, () => ({ code: 0, output: COMPOSED_DUMP }))
+
+    // When the update runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then the layer is byte-identical and no backup was taken, exactly as
+    // before this guard existed
+    expect(job.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(layer)
+    expect(existsSync(`${facts.patchPath}.bak-plugin-manager`)).toBe(false)
+  })
+
+  it('operator: fails the update when the pruned layer cannot be written, leaving the backup', async () => {
+    // Given a profile whose layer cannot be rewritten (a directory occupies
+    // the temporary path the atomic write needs)
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    writeFileSync(facts.patchPath, USER_LAYER)
+    mkdirSync(`${facts.patchPath}.tmp`)
+    const gateway = updateGateway(facts, () => ({ code: 0, output: COMPOSED_DUMP }))
+
+    // When the update runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then the failure is reported like every other post-mutation write in the
+    // transaction, the layer is untouched, and the backup is recoverable
+    expect(job.phase).toBe('error')
+    expect(job.error).toContain('失效行覆盖清理写回失败')
+    expect(job.error).toContain('.bak-plugin-manager')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(USER_LAYER)
+    expect(readFileSync(`${facts.patchPath}.bak-plugin-manager`, 'utf8')).toBe(USER_LAYER)
+  })
+
+  it('operator: leaves an application-owned layer alone when no composition can be read', async () => {
+    // Given a desktop-owned profile on a runtime with no usable CLI probe
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    writeFileSync(facts.patchPath, USER_LAYER)
+    const gateway = new CliGateway({ ...facts, profileName: 'desktop', desktop: true }, {} as NodeJS.ProcessEnv, {
+      spawnImpl: (() => { throw new Error('no CLI on this runtime') }) as never,
+      findBinary: () => '/fake/dsh',
+      nativeManager: () => ({
+        installBundle: async (spec: string) => {
+          if (spec === 'dsh-memoir@1.1.0') installPackage(facts.profileDir, 'dsh-memoir', { version: '1.1.0' })
+          return { application: 'applied' }
+        },
+        removeBundle: async () => ({ application: 'applied' }),
+      }),
+    })
+
+    // When the update runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then no entry is guessed at: the update lands and the layer keeps every
+    // override, pruned or not, because nothing could tell which ids exist
+    expect(job.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(USER_LAYER)
+    expect(existsSync(`${facts.patchPath}.bak-plugin-manager`)).toBe(false)
+  })
+
+  it('operator: prunes the retired override during a legacy aggregate migration', async () => {
+    // Given a legacy aggregate profile carrying an override for a row the
+    // current aggregate no longer declares
+    const legacy = '@linxin666/dsh-web-ui-all'
+    const current = '@linxin666/dsh-web-all'
+    const { facts, dir } = makeProfile({ [legacy]: { version: '0.3.2', bundle: true } }, { bundles: [legacy] })
+    tempDirs.push(dir)
+    writeFileSync(facts.patchPath, USER_LAYER)
+    const gateway = gatewayFor(facts, (args) => {
+      if (args[0] !== 'plugin') return { code: 0, output: COMPOSED_DUMP }
+      if (args[3] === 'add' && args[4] === `${current}@0.3.3`) installPackage(facts.profileDir, current, { version: '0.3.3', bundle: true })
+      if (args[3] === 'remove' && args[4] === legacy) removePackage(facts.profileDir, legacy)
+      return { code: 0 }
+    }, [])
+
+    // When the migration runs
+    const { jobId } = gateway.migrate(legacy, current, '0.3.3', `${current}@0.3.3`)
+    const job = await settle(gateway, jobId)
+
+    // Then the row the retired aggregate declared is pruned there as well
+    expect(job.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(PRUNED_LAYER)
+  })
+
+  it('operator: also prunes an application-owned profile after its manager update', async () => {
+    // Given a desktop-owned profile updated through the official manager, with
+    // the CLI available for the read-only composition only
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    writeFileSync(facts.patchPath, USER_LAYER)
+    const gateway = new CliGateway({ ...facts, profileName: 'desktop', desktop: true }, {} as NodeJS.ProcessEnv, {
+      spawnImpl: fakeSpawn((args) => {
+        if (args.includes('--dump-config')) return { code: 0, output: COMPOSED_DUMP }
+        throw new Error('the CLI must never write an application-owned profile')
+      }, []) as never,
+      findBinary: () => '/fake/dsh',
+      nativeManager: () => ({
+        installBundle: async (spec: string) => {
+          if (spec === 'dsh-memoir@1.1.0') installPackage(facts.profileDir, 'dsh-memoir', { version: '1.1.0' })
+          return { application: 'applied' }
+        },
+        removeBundle: async () => ({ application: 'applied' }),
+      }),
+    })
+
+    // When the update runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then the orphan is pruned there too, and no CLI write was attempted
+    expect(job.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(PRUNED_LAYER)
+  })
+})

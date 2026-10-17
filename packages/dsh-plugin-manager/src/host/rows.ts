@@ -285,3 +285,87 @@ export function setRowEnabled(text: string, filename: string, id: string, name: 
   }
   return document.toString({ lineWidth: 0 }) + '\n'
 }
+
+/** The complete key set of an enablement override row this package writes. */
+const OVERRIDE_ROW_KEYS: ReadonlySet<string> = new Set(['id', 'name', 'disabled'])
+
+/**
+ * The entry id of an enablement override row this package owns, when the item
+ * is one: a bare row carrying a string `id`, a boolean `disabled`, and no
+ * other key. Anything else is somebody else's row — a config row carrying
+ * options, a row with an unknown shape, an insert wrapper — and the manager
+ * never edits or removes it.
+ * @param item - one top-level patch item.
+ * @returns the override's entry id, or undefined when the item is not ours.
+ */
+export function overrideRowId(item: unknown): string | undefined {
+  if (!isBareRow(item)) return undefined
+  const id = bareRowId(item)
+  if (id === undefined) return undefined
+  const disabled = item.get('disabled', true)
+  if (!(isScalar(disabled) && typeof disabled.value === 'boolean')) return undefined
+  for (const pair of item.items) {
+    const key = pair.key
+    if (!isScalar(key) || !OVERRIDE_ROW_KEYS.has(String(key.value))) return undefined
+  }
+  return id
+}
+
+/** The rewritten patch text and the entry ids that were dropped. */
+export interface PrunedOverrides {
+  /** The new file text; the original text when nothing was pruned. */
+  readonly text: string
+  /** The pruned entry ids, in file order. */
+  readonly pruned: string[]
+}
+
+/**
+ * Drop this package's own enablement overrides whose entry id the composed
+ * profile no longer carries — a retired row leaves a stale override behind,
+ * which the loader reports on every boot as `patch: entry "<id>" not found`.
+ * The prunable set is decided by the caller from the composed entry ids: an
+ * id the composition does not carry has no row left to override. Only rows
+ * {@link overrideRowId} recognizes are removed, comments and every other row
+ * are kept, and an already-pruned file returns its input text unchanged so the
+ * caller can skip the write entirely.
+ * @param text - current patch file text.
+ * @param filename - absolute path (diagnostics only).
+ * @param composedIds - the entry ids the composed profile carries.
+ * @returns the rewritten text and the pruned ids.
+ */
+export function pruneOrphanRowOverrides(text: string, filename: string, composedIds: ReadonlySet<string>): PrunedOverrides {
+  const { document, root } = parsePatch(text, filename)
+  const pruned: string[] = []
+  for (let index = root.items.length - 1; index >= 0; index -= 1) {
+    const item = root.items[index]
+    const id = overrideRowId(item)
+    if (id === undefined || composedIds.has(id)) continue
+    pruned.unshift(id)
+    // A comment block above a row is the user's text, not the row's: keep it
+    // on the row that follows (or at the end of the file when none does), so
+    // pruning never silently deletes a written explanation.
+    const comment = isMap(item) ? item.commentBefore : undefined
+    root.items.splice(index, 1)
+    if (comment === undefined || comment === null || comment === '') continue
+    const next = root.items[index]
+    if (isMap(next) || isSeq(next)) {
+      next.commentBefore = appendComment(comment, next.commentBefore)
+    } else {
+      document.comment = appendComment(comment, document.comment)
+    }
+  }
+  if (pruned.length === 0) return { text, pruned }
+  const serialized = document.toString({ lineWidth: 0 })
+  const body = serialized.endsWith('\n') ? serialized.slice(0, -1) : serialized
+  return { text: `${body}${text.endsWith('\n') ? '\n' : ''}`, pruned }
+}
+
+/**
+ * One node's comment block followed by another's.
+ * @param first - the comment block to keep first.
+ * @param second - the existing block, when there is one.
+ * @returns the combined block.
+ */
+function appendComment(first: string, second: string | null | undefined): string {
+  return second === undefined || second === null || second === '' ? first : `${first}\n${second}`
+}

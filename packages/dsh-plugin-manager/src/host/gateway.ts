@@ -23,7 +23,7 @@ import type { ControlChange } from '../core/conflict.ts'
 import { diffLayer, overlappingIds, significantChanges, type LayerChange, type LayerSnapshot } from '../core/patch-diff.ts'
 import { duplicateMountBundles } from './bundle-guard.ts'
 import { readProfileManifest, reorderProfileBundle, stripProfileBundles, type ProfileFacts } from './profile.ts'
-import { insertRowsOf, parsePatch, bareRowEnabled, bareRowId } from './rows.ts'
+import { insertRowsOf, parsePatch, bareRowEnabled, bareRowId, pruneOrphanRowOverrides, writePatchAtomic, type PrunedOverrides } from './rows.ts'
 import { buildPluginRow, claimedEntryIdsOf } from './state.ts'
 import { createOutputCapture, type OutputCapture } from './console-output.ts'
 
@@ -566,6 +566,29 @@ export function spawnDsh(binary: string, args: string[], env: NodeJS.ProcessEnv)
 const OFFICIAL_INSTALLER_PATTERN = /^\s*-?\s*id:\s*['"]?plugin-(?:installer|control)['"]?\s*$/m
 
 /**
+ * The entry ids of a composed profile dump (`dsh --profile <name>
+ * --dump-config`). The dump prints one YAML block per patch layer under a
+ * `# ==` header, with the composed entries as column-0 `- id:` items — an
+ * entry a profile patch overrides appears once, carrying the override's keys,
+ * so those lines are exactly the loader's own entry set. Nested config keeps
+ * its own `id` keys indented and is never mistaken for an entry.
+ * @param dump - the dump's captured text.
+ * @returns the composed entry ids, or undefined when the dump carried none.
+ */
+export function composedEntryIdsOf(dump: string): Set<string> | undefined {
+  const ids = new Set<string>()
+  for (const rawLine of dump.split('\n')) {
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
+    const match = /^-[ \t]+id:[ \t]*(.+?)[ \t]*$/.exec(line)
+    if (match === null) continue
+    const value = match[1]
+    const unquoted = /^'(.*)'$/.exec(value)?.[1] ?? /^"(.*)"$/.exec(value)?.[1] ?? value
+    if (unquoted !== '') ids.add(unquoted)
+  }
+  return ids.size === 0 ? undefined : ids
+}
+
+/**
  * Detect whether the official installer channels exist on this runtime by
  * dumping the boot composition once: the npm-published web never contains
  * `plugin-installer` entries, DSHCode and the checkout web do. The browser
@@ -890,6 +913,10 @@ export class CliGateway {
       job.error = `plugin-manager: 迁移后的启动预检失败${verify.output === '' ? '' : `：\n${verify.output}`}`
       return
     }
+    // The migration replaces the row-id universe the same way an update does:
+    // an override for a row only the retired aggregate declared is an orphan
+    // from here on.
+    if (await this.pruneOrphanOverrides(job, verify.output) === undefined) return
     const manifest = await readProfileManifest(this.facts.packageJsonPath)
     const updated = await buildPluginRow(
       this.facts,
@@ -1150,6 +1177,10 @@ export class CliGateway {
       job.error = `plugin-manager: 官方插件管理器报告成功，但 ${targetId} 仍为 ${updated.version}，预期 ${targetVersion}（更新未生效）`
       return
     }
+    // An application-owned profile composes through the same read-only probe,
+    // so orphaned overrides are pruned here too; a runtime that cannot compose
+    // leaves the patch file exactly as it is (see {@link pruneOrphanOverrides}).
+    if (await this.pruneOrphanOverrides(job) === undefined) return
     job.plugin = updated
     job.conflicts = significantChanges(diffLayer(before.layer, after.layer)).map(change => ({
       id: change.id,
@@ -1448,8 +1479,13 @@ export class CliGateway {
         return
       }
       job.plugin = updated
-      await this.verifyBoot(job, before, after, conflicts)
+      const dump = await this.verifyBoot(job, before, after, conflicts)
       if (job.phase === 'error') return
+      // The composed target profile — not the profile patch and not the
+      // source profile — is the authority for which row ids still exist: an
+      // update that retires a row leaves the user's old override pointing at
+      // nothing, which the loader warns about on every boot.
+      if (await this.pruneOrphanOverrides(job, dump) === undefined) return
     } else {
       // B8 (remove): a success exit code must mean the dependency is gone.
       const removed = before.dependencies.find(candidate => !after.dependencies.includes(candidate))
@@ -1498,6 +1534,81 @@ export class CliGateway {
     } catch (error) {
       job.phase = 'error'
       job.error = `plugin-manager: 重复挂载保护写回失败：${error instanceof Error ? error.message : String(error)}（profile 的 dsh.profile.bundles 可能仍处于重复挂载状态，下次启动前请手动检查 ${this.facts.packageJsonPath}）`
+      return undefined
+    }
+  }
+
+  /**
+   * Compose the profile with the CLI's read-only `--dump-config` probe and
+   * return the dump text. Composition writes nothing and binds no port, so it
+   * is safe on every runtime — including an application-owned profile whose
+   * *writes* the CLI refuses. A run that cannot compose (no CLI on this
+   * runtime, a non-zero exit, a spawn failure) reports undefined, and the
+   * caller must then leave the profile alone instead of guessing at the entry
+   * set.
+   * @returns the composed dump text, or undefined when it is unavailable.
+   */
+  private async compositionOf(): Promise<string | undefined> {
+    const binary = this.binary()
+    if (binary === null) return undefined
+    try {
+      const output = createOutputCapture(MAX_OUTPUT_BYTES)
+      const child = this.spawnCli(binary, ['--profile', this.facts.profileName, '--dump-config'])
+      child.stdout?.on('data', (chunk: Buffer) => { capture(chunk, output) })
+      child.stderr?.on('data', (chunk: Buffer) => { capture(chunk, output) })
+      const code = await awaitCliExit(child, output, 90_000)
+      return code === 0 ? output.read() : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Post-update orphan guard: drop this package's own enablement overrides
+   * whose entry id the composed *target* profile no longer carries. The
+   * authority is the loader's own composition after the update
+   * ({@link composedEntryIdsOf}), not the profile patch and not the source
+   * profile: an override is only orphaned once the target composition stops
+   * declaring that id, and ids the official base or another bundle still
+   * mounts stay valid. A retired row would otherwise leave a stale override
+   * that the loader reports on every boot as `patch: entry "<id>" not found`.
+   *
+   * Nothing is written when nothing is orphaned — a second run over a pruned
+   * profile returns the input text untouched, so no write and no second backup
+   * happen — and an unobtainable composition leaves the file as it is instead
+   * of emptying it. A write that does fail settles the job as an error the way
+   * every other post-mutation patch write in this transaction does, with the
+   * backup the write helper takes first left in place.
+   * @param job - the settling job (error target on write failure).
+   * @param dumpText - an already captured composition, when the caller has one.
+   * @returns the pruned entry ids, or undefined when the job failed.
+   */
+  private async pruneOrphanOverrides(job: GatewayJob, dumpText?: string): Promise<string[] | undefined> {
+    const dump = dumpText ?? await this.compositionOf()
+    if (dump === undefined) return []
+    const composed = composedEntryIdsOf(dump)
+    if (composed === undefined) return []
+    let text: string
+    try {
+      text = await readFile(this.facts.patchPath, 'utf8')
+    } catch {
+      return []
+    }
+    let pruned: PrunedOverrides
+    try {
+      pruned = pruneOrphanRowOverrides(text, this.facts.patchPath, composed)
+    } catch {
+      // A patch file this gateway cannot parse is not its to repair: the CLI
+      // owns that file and reports its own parse error.
+      return []
+    }
+    if (pruned.pruned.length === 0) return []
+    try {
+      await writePatchAtomic(this.facts.patchPath, pruned.text)
+      return pruned.pruned
+    } catch (error) {
+      job.phase = 'error'
+      job.error = `plugin-manager: 失效行覆盖清理写回失败：${error instanceof Error ? error.message : String(error)}（备份在 ${this.facts.patchPath}.bak-plugin-manager，下次启动前请手动检查 ${this.facts.patchPath}）`
       return undefined
     }
   }
@@ -1583,26 +1694,32 @@ export class CliGateway {
   }
 
   /**
-   * Boot preflight after an install: compose the profile with the CLI's
-   * `--dump-config` (resolves every entry without binding the port). A failure
-   * that implicates the new plugin disables it so the next start cannot fail;
-   * an unrelated failure is reported without touching anything.
+   * Boot preflight after an install or update: compose the profile with the
+   * CLI's `--dump-config` (resolves every entry without binding the port). A
+   * failure that implicates the new plugin disables it so the next start
+   * cannot fail; an unrelated failure is reported without touching anything.
+   * The captured dump is returned on success so the update path can read the
+   * composed entry set from the same probe (see {@link pruneOrphanOverrides}).
+   * @returns the composed dump text, or undefined when the preflight did not
+   *   produce one (no CLI on this runtime, or a failure the caller must read
+   *   from `job`).
    */
-  private async verifyBoot(job: GatewayJob, before: CapturedState, after: CapturedState, conflicts: LayerChange[]): Promise<void> {
+  private async verifyBoot(job: GatewayJob, before: CapturedState, after: CapturedState, conflicts: LayerChange[]): Promise<string | undefined> {
     const binary = this.binary()
-    if (binary === null) return
+    if (binary === null) return undefined
     const name = this.newDependency(before, after)
     const verifyOutput = createOutputCapture(MAX_OUTPUT_BYTES)
     const child = this.spawnCli(binary, ['--profile', this.facts.profileName, '--dump-config'])
     child.stdout?.on('data', (chunk: Buffer) => { capture(chunk, verifyOutput) })
     child.stderr?.on('data', (chunk: Buffer) => { capture(chunk, verifyOutput) })
     const code = await awaitCliExit(child, verifyOutput, 90_000)
-    if (code === 0) return
-    const tail = verifyOutput.read().trim()
+    const dump = verifyOutput.read()
+    if (code === 0) return dump
+    const tail = dump.trim()
     if (name === undefined) {
       job.phase = 'error'
       job.error = tail === '' ? 'plugin-manager: boot preflight failed' : tail
-      return
+      return undefined
     }
     const claimed = await this.claimedEntriesOf(name)
     const implicated = tail.includes(name) || claimed.some(id => tail.includes(id))
@@ -1616,5 +1733,6 @@ export class CliGateway {
         ? 'plugin-manager: 启动预检失败（与本次安装无关）'
         : `plugin-manager: 启动预检失败（与本次安装无关）：\n${tail}`
     }
+    return undefined
   }
 }

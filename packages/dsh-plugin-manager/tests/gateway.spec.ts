@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { detectOfficialChannels, dshSpawnCommand, findDshBinary, unsafeSpecReason, windowsCmdShimArgs, withPrependedPath } from '../src/host/gateway.ts'
+import { composedEntryIdsOf, detectOfficialChannels, dshSpawnCommand, findDshBinary, unsafeSpecReason, windowsCmdShimArgs, withPrependedPath } from '../src/host/gateway.ts'
 import { sourceKindOf } from '../src/host/state.ts'
 
 describe('findDshBinary', () => {
@@ -203,6 +203,56 @@ describe('desktop .cmd execution', () => {
   it('rejects cmd expansion characters before constructing a shell line', () => {
     expect(() => windowsCmdShimArgs('C:\\dsh.cmd', ['pkg%PATH%'])).toThrow(/unsafe/)
     expect(unsafeSpecReason('pkg%PATH%')).toBeDefined()
+  })
+})
+
+/**
+ * Real `dsh --profile web --dump-config` output, captured from the CLI: one
+ * block per layer under a `# ==` header, composed entries as column-0
+ * `- id:` items, and an overridden entry carrying the profile patch's keys.
+ * The nested `config.nested` list repeats the `id` key at an indentation the
+ * loader never uses for an entry.
+ */
+const REAL_DUMP = [
+  '# == fake-plugin, patched by /tmp/dsh-verify/profiles/web/cordis.patch.yml',
+  '- id: quoted-row',
+  '  name: fake-plugin',
+  '  config:',
+  '    nested:',
+  '      - id: nested-item',
+  '        x: 1',
+  '  disabled: true',
+  '# == fake-plugin',
+  '- id: single-row',
+  '  name: fake-plugin',
+  '# == other-layer',
+  "- id: 'single-quoted-row'",
+  '  name: other',
+  '- id: "double-quoted-row"',
+  '  name: other',
+  '',
+].join('\n')
+
+describe('composedEntryIdsOf', () => {
+  it('operator: reads the composed entry ids of a real profile dump', () => {
+    // Given the CLI's own composed dump for a profile whose patch overrides
+    // one entry and whose config nests its own id-shaped keys
+    // When the entry ids are read from it
+    const ids = composedEntryIdsOf(REAL_DUMP)
+
+    // Then exactly the composed entries are collected, quoting removed, and a
+    // nested config id is not mistaken for an entry
+    expect(ids).toEqual(new Set(['quoted-row', 'single-row', 'single-quoted-row', 'double-quoted-row']))
+    expect(ids?.has('nested-item')).toBe(false)
+  })
+
+  it('operator: reports no authority for a dump that composed nothing', () => {
+    // Given a failed or empty composition, which prints no entry at all
+    // When the entry ids are read from it
+    // Then the caller gets undefined instead of an empty set, so no pruning
+    // can treat "unknown" as "everything is orphaned"
+    expect(composedEntryIdsOf('')).toBeUndefined()
+    expect(composedEntryIdsOf('dsh: patch: entry "retired" not found\n')).toBeUndefined()
   })
 })
 
