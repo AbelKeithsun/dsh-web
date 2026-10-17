@@ -1805,6 +1805,19 @@
       "npm": "dsh-vitals",
       "category": "utility",
       "subcategory": "stats"
+    },
+    {
+      "id": "dsh-streamfold",
+      "name": "流式折叠",
+      "rank": 142,
+      "nameEn": "Stream Fold",
+      "author": "rezon-aki",
+      "description": "在官方对话流上做展示增强：运行中自动展开最新的思考小窗、旧过程行折成一条摘要；一轮跑完把思考与工具调用折起，穿插正文保留。折叠按 3 行一组错峰、逐帧推进，不依赖历史是否加载完；折叠内容保持可搜索（hidden=until-found），Ctrl+F 仍能命中；跑完平滑回到你那一问。启用「折叠」档会接管官方「对话显示」设置：把官方 transcriptView 写成 verbose 并隐藏官方那一行；从本插件切回官方档会写回所选档，卸载后官方档停在「完全展开」，需要时到官方设置里改回。",
+      "descriptionEn": "A display enhancement over the official transcript: while a turn runs, the newest thinking window opens itself and older process rows fold into one summary; at the end of a turn, thinking and tool calls fold away while interleaved prose stays. Folding advances per frame without waiting for history to load, folded rows stay searchable (hidden=until-found) so Ctrl+F still finds them, and a finished turn scrolls back to your question. While its Fold mode is active it takes over the official transcript display setting: the official transcriptView is parked on Verbose and that row is hidden. Switching back to an official mode from this plugin writes the chosen mode back; uninstalling leaves the official value on Verbose until it is changed in the official settings.",
+      "repo": "https://github.com/rezon-aki/dsh-streamfold",
+      "npm": "dsh-streamfold",
+      "category": "ui",
+      "subcategory": "chat"
     }
   ]
 }
