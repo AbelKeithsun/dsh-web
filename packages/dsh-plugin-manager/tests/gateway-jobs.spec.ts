@@ -1364,3 +1364,105 @@ describe('CliGateway orphan row-override pruning', () => {
     expect(readFileSync(facts.patchPath, 'utf8')).toBe(PRUNED_LAYER)
   })
 })
+
+/**
+ * The bundle layer of the aggregate family as the desktop profile carries it:
+ * a row that mounts the remote-web-ui plugin with nothing but `plugin`, so
+ * `autoTunnel` falls back to its `false` default, and a row the user turns on
+ * through a bare override.
+ */
+const AGGREGATE_LAYER = [
+  '- insert:',
+  '    - id: web-ui-remote-web-ui',
+  "      name: '@linxin666/dsh-web-all/remote-web-ui'",
+  '      config:',
+  "        plugin: '@linxin666/dsh-remote-web-ui'",
+  '    - id: ui-schedule',
+  "      name: '@deepseek-ai/dsh-client-ui-schedule'",
+  '',
+].join('\n')
+
+/** The desktop user layer: the quick-tunnel switches beside a bare override. */
+const DESKTOP_USER_LAYER = [
+  '# --- remote-web-ui: quick tunnel + relay for the paired phone ---',
+  '- id: web-ui-remote-web-ui',
+  "  name: '@linxin666/dsh-web-all/remote-web-ui'",
+  '  config:',
+  "    plugin: '@linxin666/dsh-remote-web-ui'",
+  '    autoTunnel: true',
+  '    relay: true',
+  '- id: ui-schedule',
+  '  disabled: false',
+  '',
+].join('\n')
+
+/**
+ * The composition a host reports while the aggregate is being replaced: the
+ * bundle's own rows are missing because its package is momentarily gone, which
+ * is exactly the state the prune used to read as "these rows were retired".
+ */
+const STALE_DUMP = [
+  '# == dsh-memoir',
+  '- id: dsh-memoir',
+  '  name: dsh-memoir',
+  '',
+].join('\n')
+
+describe('CliGateway orphan pruning keeps overrides of rows that still exist', () => {
+  /** A gateway whose fake CLI installs `target` and reports `dump` as the composition. */
+  function updateGateway(
+    facts: ProfileFacts,
+    target: { name: string; version: string; patch?: string },
+    dump: () => { code: number; output?: string },
+  ): CliGateway {
+    return gatewayFor(facts, (args) => {
+      if (args.includes('--dump-config')) return dump()
+      if (args[0] === 'plugin' && args[3] === 'add') installPackage(facts.profileDir, target.name, { version: target.version, bundle: true, patch: target.patch })
+      return { code: 0 }
+    }, [])
+  }
+
+  it('operator: keeps the desktop quick-tunnel override when the composition lost the bundle rows', async () => {
+    // Given a desktop-style profile whose aggregate bundle declares the
+    // remote-web-ui and schedule rows, a user layer overriding both, and a
+    // composition probe taken while that bundle was being replaced
+    const { facts, dir } = makeProfile({ '@linxin666/dsh-web-all': { version: '0.4.6', bundle: true, patch: AGGREGATE_LAYER } })
+    tempDirs.push(dir)
+    writeFileSync(facts.patchPath, DESKTOP_USER_LAYER)
+    const gateway = updateGateway(facts, { name: '@linxin666/dsh-web-all', version: '0.4.7', patch: AGGREGATE_LAYER }, () => ({ code: 0, output: STALE_DUMP }))
+
+    // When the aggregate update runs
+    const { jobId } = gateway.update('@linxin666/dsh-web-all', '0.4.7')
+    const job = await settle(gateway, jobId)
+
+    // Then the merged result is still the user's layer: both rows the bundle
+    // layer declares survive byte for byte, so autoTunnel stays true, and
+    // nothing was pruned so no backup was taken
+    expect(job.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(DESKTOP_USER_LAYER)
+    expect(existsSync(`${facts.patchPath}.bak-plugin-manager`)).toBe(false)
+  })
+
+  it('operator: prunes nothing while a declared bundle layer cannot be read', async () => {
+    // Given a profile whose manifest still lists a bundle whose package is not
+    // installed right now, beside an override the composition really lost
+    const { facts, dir } = makeProfile({
+      'dsh-memoir': { version: '1.0.0' },
+      'dsh-mid-upgrade': { version: '1.0.0', bundle: true, patch: AGGREGATE_LAYER },
+    })
+    tempDirs.push(dir)
+    rmSync(join(facts.profileDir, 'node_modules', 'dsh-mid-upgrade'), { recursive: true, force: true })
+    writeFileSync(facts.patchPath, USER_LAYER)
+    const gateway = updateGateway(facts, { name: 'dsh-memoir', version: '1.1.0' }, () => ({ code: 0, output: STALE_DUMP }))
+
+    // When an update runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then the layer is left exactly as it was: an unreadable layer proves
+    // nothing about which ids still exist, so the guard writes nothing
+    expect(job.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(USER_LAYER)
+    expect(existsSync(`${facts.patchPath}.bak-plugin-manager`)).toBe(false)
+  })
+})

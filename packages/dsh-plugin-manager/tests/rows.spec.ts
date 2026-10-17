@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bareRowEnabled, bareRowId, claimedIdsOf, overrideRowId, parsePatch, pruneOrphanRowOverrides, rowDefaultEnabledOf, setRowEnabled } from '../src/host/rows.ts'
+import { bareRowEnabled, bareRowId, claimedIdsOf, declaredRowIds, overrideRowId, parsePatch, pruneOrphanRowOverrides, rowDefaultEnabledOf, setRowEnabled } from '../src/host/rows.ts'
 
 const SAMPLE = `[
   # a top-level comment that must survive every edit
@@ -290,5 +290,44 @@ describe('pruneOrphanRowOverrides', () => {
     expect(overrideRowId(noFlag)).toBeUndefined()
     expect(overrideRowId(extraKey)).toBeUndefined()
     expect(overrideRowId(insertWrapper)).toBeUndefined()
+  })
+})
+
+describe('declaredRowIds', () => {
+  it('operator: reports every id a layer declares, rows and insert entries alike', () => {
+    // Given a bundle layer carrying an insert list, a config row of its own and
+    // the same id twice
+    const layer = [
+      '- insert:',
+      '    - id: web-ui-remote-web-ui',
+      "      name: '@linxin666/dsh-web-all/remote-web-ui'",
+      '    - id: ui-schedule',
+      "      name: '@deepseek-ai/dsh-client-ui-schedule'",
+      '- id: web-ui-pet',
+      "  name: '@linxin666/dsh-pet'",
+      '  config:',
+      '    size: 160',
+      '    children:',
+      '      - id: nested-child',
+      '- id: ui-schedule',
+      '  disabled: false',
+      '',
+    ].join('\n')
+
+    // When the layer's declarations are read
+    const ids = declaredRowIds(layer, 'cordis.patch.yml')
+
+    // Then every layer entry is declared once, in file order, and an id nested
+    // inside a row's own config stays a child rather than a layer entry
+    expect(ids).toEqual(['web-ui-remote-web-ui', 'ui-schedule', 'web-ui-pet'])
+  })
+
+  it('operator: fails loud on a layer it cannot parse so the caller prunes nothing', () => {
+    // Given a layer that is not a patch list
+    const broken = '- id: [unclosed\n'
+
+    // When its declarations are read
+    // Then the read fails instead of reporting an empty layer
+    expect(() => declaredRowIds(broken, 'cordis.patch.yml')).toThrow()
   })
 })

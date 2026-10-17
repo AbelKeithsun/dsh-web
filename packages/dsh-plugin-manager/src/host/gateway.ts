@@ -23,7 +23,7 @@ import type { ControlChange } from '../core/conflict.ts'
 import { diffLayer, overlappingIds, significantChanges, type LayerChange, type LayerSnapshot } from '../core/patch-diff.ts'
 import { duplicateMountBundles } from './bundle-guard.ts'
 import { readProfileManifest, reorderProfileBundle, stripProfileBundles, type ProfileFacts } from './profile.ts'
-import { insertRowsOf, parsePatch, bareRowEnabled, bareRowId, pruneOrphanRowOverrides, writePatchAtomic, type PrunedOverrides } from './rows.ts'
+import { declaredRowIds, insertRowsOf, parsePatch, bareRowEnabled, bareRowId, pruneOrphanRowOverrides, writePatchAtomic, type PrunedOverrides } from './rows.ts'
 import { buildPluginRow, claimedEntryIdsOf } from './state.ts'
 import { createOutputCapture, type OutputCapture } from './console-output.ts'
 
@@ -1564,14 +1564,64 @@ export class CliGateway {
   }
 
   /**
+   * The entry ids a user-layer override may still point at: the composed ids
+   * plus every id the profile's own bundle layers still declare.
+   *
+   * The composition alone does not prove a row is retired. A host that
+   * composes while a bundle is being replaced — the remove-then-install half of
+   * an application-owned update, or an upgrade whose packages are half
+   * installed — composes *without* the rows of the bundle that is momentarily
+   * gone, and pruning on that probe deletes the user's override for a row that
+   * still exists (0.4.7 lost `web-ui-remote-web-ui` and `ui-schedule` this
+   * way). Declarations live in the bundle layers, so they survive that window.
+   * @param composed - the entry ids of the composition probe.
+   * @returns the ids to keep, or undefined when a declared layer cannot be
+   * read, which proves nothing either way and must leave the file alone.
+   */
+  private async liveOverrideIds(composed: ReadonlySet<string>): Promise<Set<string> | undefined> {
+    const live = new Set(composed)
+    let manifest
+    try {
+      manifest = await readProfileManifest(this.facts.packageJsonPath)
+    } catch {
+      return undefined
+    }
+    for (const name of manifest.bundles) {
+      const dir = join(this.facts.profileDir, 'node_modules', ...name.split('/'))
+      try {
+        await readFile(join(dir, 'package.json'), 'utf8')
+      } catch {
+        // The bundle's package is not resolvable right now (mid-install, or a
+        // link that moved): its rows cannot be known, so nothing may be pruned.
+        return undefined
+      }
+      let text: string
+      try {
+        text = await readFile(join(dir, 'cordis.patch.yml'), 'utf8')
+      } catch (error) {
+        // A plain plugin bundle declares no rows of its own; any other read
+        // failure leaves its declarations unknown.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+        return undefined
+      }
+      try {
+        for (const id of declaredRowIds(text, join(dir, 'cordis.patch.yml'))) live.add(id)
+      } catch {
+        return undefined
+      }
+    }
+    return live
+  }
+
+  /**
    * Post-update orphan guard: drop this package's own enablement overrides
-   * whose entry id the composed *target* profile no longer carries. The
-   * authority is the loader's own composition after the update
-   * ({@link composedEntryIdsOf}), not the profile patch and not the source
-   * profile: an override is only orphaned once the target composition stops
-   * declaring that id, and ids the official base or another bundle still
-   * mounts stay valid. A retired row would otherwise leave a stale override
-   * that the loader reports on every boot as `patch: entry "<id>" not found`.
+   * whose entry id neither the composed *target* profile nor any bundle layer
+   * still declares. The composition is the loader's own after the update
+   * ({@link composedEntryIdsOf}), widened by the bundle layers' declarations
+   * ({@link liveOverrideIds}) because a composition taken mid-upgrade omits
+   * rows that still exist. A retired row would otherwise leave a stale
+   * override that the loader reports on every boot as
+   * `patch: entry "<id>" not found`.
    *
    * Nothing is written when nothing is orphaned — a second run over a pruned
    * profile returns the input text untouched, so no write and no second backup
@@ -1588,6 +1638,8 @@ export class CliGateway {
     if (dump === undefined) return []
     const composed = composedEntryIdsOf(dump)
     if (composed === undefined) return []
+    const live = await this.liveOverrideIds(composed)
+    if (live === undefined) return []
     let text: string
     try {
       text = await readFile(this.facts.patchPath, 'utf8')
@@ -1596,7 +1648,7 @@ export class CliGateway {
     }
     let pruned: PrunedOverrides
     try {
-      pruned = pruneOrphanRowOverrides(text, this.facts.patchPath, composed)
+      pruned = pruneOrphanRowOverrides(text, this.facts.patchPath, live)
     } catch {
       // A patch file this gateway cannot parse is not its to repair: the CLI
       // owns that file and reports its own parse error.

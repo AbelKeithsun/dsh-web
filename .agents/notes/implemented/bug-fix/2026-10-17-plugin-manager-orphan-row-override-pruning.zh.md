@@ -14,15 +14,28 @@ Status: implemented
 
 插件管理器的更新事务把「清理自己的失效覆盖」当作又一道变更后守卫，与它已经在做的重复挂载剥离并列。启动时不做清理，不存在单独的命令，聚合 patch 也不改动：退场依旧是已发布的移除决定，迁移发生在本就拥有这次更新的写路径上。
 
-判定「这个行 id 是否还存在」的权威，是 loader 对**更新后** profile 自己的组合结果——即启动预检本就已经捕获的 `--dump-config` 文本，由 `composedEntryIdsOf` 读取其中列首的 `- id:` 条目。它是组合后的目标条目集合，不是源 profile，也不是 profile patch：
+判定「这个行 id 是否还存在」的权威，是 loader 对**更新后** profile 自己的组合结果——即启动预检本就已经捕获的 `--dump-config` 文本，由 `composedEntryIdsOf` 读取其中列首的 `- id:` 条目——**再并上 profile 的 bundle 层仍然声明的每一个 id**（`liveOverrideIds` 对 `dsh.profile.bundles` 里每个包自己的 `cordis.patch.yml` 跑 `declaredRowIds`）。它是组合后的目标条目集合，不是源 profile，也不是 profile patch：
 
 - profile patch 回答不了。它只持有覆盖；覆盖指向的 id 落在管理器从不读取的 bundle patch 里，而一条「行还在」的覆盖与一条「行已没了」的覆盖在文本上完全一样。
 - 源 profile 也回答不了。更新之后旧的组合仍然声明那个已退场的 id，而那正是要修的状态。
 - 只有组合结果能看到官方 base 层。指向 `@deepseek-ai/dsh-base` 或其他已安装 bundle 所挂载 id 的覆盖依然是有效的，即便没有任何家族 patch 提到它；因此本地自行拼出的 id 集合（家族 bundle patch 加 profile）会把仍然活着的行误判为失效。
+- 组合结果是**运行中宿主的快照**，所以它只被叠加，不被替换。宿主在某个 bundle 正被替换时组合出来的结果会缺这个 bundle 的行，尽管该 bundle 仍然声明着它们（见[组合结果本身不是证明](#组合结果本身不是证明)）。bundle 层自己的声明就是这段窗口里存活的地板；而「某行确实已退场」依旧只能由组合结果证明，因为只有它看得见官方 base。
 
 清理发生在三处，都在变更落地且版本校验通过之后：CLI 更新分支（`runInner`，复用预检的 dump 而不额外再起一次探针）、旧聚合包迁移（`runMigration`，复用它的 `--dump-config` 输出），以及应用自有 profile 的路径（`runNativeUpdate`）——那里 CLI 被拒绝执行任何写入，但组合走的是同一个只读探针。安装与卸载不清理：它们不改变行 id 的全集，那里出现的失效行是既有状态，不是这两个动作造成的。
 
 归属按形状判定，而不是靠猜。`overrideRowId` 只在以下情况认领一个顶层条目：它是裸行（没有 `insert` 键）、`id` 是字符串、`disabled` 是布尔值，且键集合整体为 `id`/`name`/`disabled`——正是 `setRowEnabled` 写出的形状。带 `config:` 的配置行、insert 包装行，以及任何携带本包不写之键的行，即便 id 不在组合里也绝不删除、绝不改写。被删行上方的注释块属于用户文本，因此它会挪到紧随其后的行（没有则挪到文件末尾），而不是随条目一起消失。
+
+### 组合结果本身不是证明
+
+`0.4.7` 交付这道守卫时把组合结果当作唯一权威。2026-10-17 19:32，一个真实的桌面 profile 因此丢了行：那次更新在聚合包正被替换时完成组合，组合里没有 `web-ui-remote-web-ui` 与 `ui-schedule`，而 bundle 层仍然声明着这两条。`ui-schedule` 的裸覆盖被从用户文件里清理掉，remote 行回落到 bundle 默认值——`autoTunnel: false`——于是 quick tunnel 不再启动、relay 仍指向已注销的 `trycloudflare` 域名，手机的 `hello` 在边缘被切断。
+
+教训在探针**什么时候**跑，而不在它读什么。应用自有 profile 的更新是「先卸再装」（必须卸，是因为进程内管理器对 profile 已携带的包执行 `installBundle` 会以 `already-installed` 拒绝），因此有一瞬间 profile 自己的清单里不再有那个 bundle。在这个窗口里取的组合，反映的是「宿主还没重载」，不是「行已退场」。
+
+因此现在有三条规则：
+
+- 任何 bundle 层仍然声明其 id 的行，无论探针说什么都不清理。
+- 读不到的层——包此刻解析不到，或它的 patch 解析失败——让声明变成未知，守卫整体不写。没有 patch 文件的 bundle 与 patch 为 `[]` 的 bundle 声明零条行，不算错误。
+- 退场仍由组合结果证明：id 必须既不在探针里，也不在任何层的声明里。真正退场的行没有任何层声明它，所以原本的迁移依旧收敛。
 
 ## Contract
 
@@ -46,10 +59,14 @@ Status: implemented
 - 守卫只认得本管理器写出的覆盖形状。手工写成、指向已退场 id、还带了额外键（例如 `config:` 块）的行按设计保持不动，这类用户会继续看到 loader 警告，直到自己改掉那行——清理绝不用「删除管理器无法复现的内容」去换掉一条警告。
 - 应用自有（桌面）路径只在其运行时仍能组合 profile 时才清理。CLI 无法运行 `--dump-config` 的宿主会原样保留所有覆盖：文件是安全的，但清理被推迟到能组合的运行时。
 - 最坏情况下一次更新会多一次写入（清理），常见情况下一次写入都不多；CLI 路径上的 `--dump-config` 探针不会被拉起两次，因为清理复用了预检的 dump。
+- 守卫比 `0.4.7` 更窄：bundle 仍声明、但运行中宿主没有挂载的 id（被拒绝或不兼容的 bundle、正在安装的包）会活下来，留下一条失效覆盖；等该 bundle 真的消失后的下一次更新会把它清掉——宁可留下噪音残留，也不删除仍然活着的覆盖。
+- 地板的代价：仅在清理路径上、且变更已落地之后，每个 bundle 层一次 `readFile`，外加解析它的 patch。层多的 profile 每次更新付一次，不是每次启动付。
 
 ## Testing
 
 - `packages/dsh-plugin-manager/tests/rows.spec.ts` 固定纯编辑行为：失效覆盖被删除，注释块、仍然有效的覆盖与配置行逐字节不变；对已清理的层再次运行返回原文本且不报告任何清理；配置行、insert 包装行与带额外键的行永远不会被判为覆盖。
+- `0.4.7` 事故的桌面回归用例在 `packages/dsh-plugin-manager/tests/gateway-jobs.spec.ts`：一个声明 `web-ui-remote-web-ui` 与 `ui-schedule` 的聚合 bundle、一个携带 quick tunnel 覆盖（`autoTunnel: true`、`relay: true`）与 `ui-schedule` 裸覆盖的用户层，以及一个在该 bundle 缺席时取的组合探针。更新结束后用户层逐字节不变且没有备份，因为没有任何条目失效。第二个用例删掉某个已列 bundle 的包目录，断言即便组合里真的缺了行、该层也原样保留——声明是未知，不是空。
+- `packages/dsh-plugin-manager/tests/rows.spec.ts` 固定 `declaredRowIds`：层的 insert 条目、它自己的行、被声明两次的同一个 id，以及落在某行自身 `config:` 里的 id（那是子条目，不是层条目）各自去重后得到该层的 id 集合；解析失败的层抛错，使调用方无法把它读作空。
 - `packages/dsh-plugin-manager/tests/gateway-jobs.spec.ts` 固定事务行为：带有失效 id 的层经更新后被清理，`cordis.patch.yml.bak-plugin-manager` 保存清理前的文本；同一次更新再跑一次不写入（备份仍是清理前的文本）；覆盖全部有效的层逐字节不变且不产生备份；写入失败把任务结算为 `error` 且备份在位；桌面自有 profile 的更新经只读探针完成清理，拿不到组合时则原样保留该层。
 
 ## 已知限制：制造失效覆盖的那次升级跑不到清理逻辑

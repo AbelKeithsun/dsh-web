@@ -14,15 +14,28 @@ A recorded row id is not a recorded package specifier. The module subpath tombst
 
 The plugin-manager update transaction prunes its own orphan overrides as one more post-mutation guard, next to the duplicate-mount strip it already performs. Nothing prunes on boot, no separate command exists, and the aggregate patch is untouched: the retirement stays a shipped removal, the migration happens on the write path that already owns the update.
 
-The authority for "does this row id still exist" is the loader's own composition of the *updated* profile — the `--dump-config` probe whose text the boot preflight already captures, parsed by `composedEntryIdsOf` for its column-0 `- id:` items. It is the composed target entry set, not the source profile and not the profile patch:
+The authority for "does this row id still exist" is the loader's own composition of the *updated* profile — the `--dump-config` probe whose text the boot preflight already captures, parsed by `composedEntryIdsOf` for its column-0 `- id:` items — **widened by every id the profile's bundle layers still declare** (`declaredRowIds` over each `dsh.profile.bundles` package's own `cordis.patch.yml`, read by `liveOverrideIds`). It is the composed target entry set, not the source profile and not the profile patch:
 
 - The profile patch cannot answer it. It only holds overrides; the ids they point at live in bundle patches the manager never reads, and an override whose row exists looks identical to one whose row does not.
 - The source profile cannot answer it either. After an update the old composition still declares the retired id, which is exactly the state being repaired.
 - Only the composition sees the official base layer. An override for an id that `@deepseek-ai/dsh-base` or another installed bundle mounts is valid even though no family patch mentions it, so a locally computed id set (family bundle patches plus the profile) would prune live rows.
+- The composition is a *snapshot of a running host*, so it is added to, never substituted for. A host that composes while a bundle is being replaced omits that bundle's rows even though the bundle still declares them (see [Composition is not proof on its own](#composition-is-not-proof-on-its-own)). The bundle layers' own declarations are the floor that survives that window; the composition is still what proves a row retired, because only it sees the official base.
 
 Pruning runs in three places, all after the mutation has landed and the version check has passed: the CLI update branch (`runInner`, reusing the preflight's dump instead of spawning a second probe), the legacy aggregate migration (`runMigration`, reusing its `--dump-config` output), and the application-owned path (`runNativeUpdate`), which composes through the same read-only probe even though the CLI is refused every write there. Installs and removals do not prune: they do not change the row-id universe, so a stale row there is a pre-existing state, not something those actions created.
 
 Ownership is a shape, not a hunch. `overrideRowId` claims a top-level item only when it is a bare row (no `insert` key) whose `id` is a string, whose `disabled` is a boolean, and whose entire key set is `id`/`name`/`disabled` — the shape `setRowEnabled` writes. A config row carrying `config:`, an insert wrapper, or any row with a key this package does not write is never removed and never rewritten, even when its id is absent from the composition. A comment block above a removed row is user text, so it moves to the row that follows (or to the end of the file when none does) instead of disappearing with the entry.
+
+### Composition is not proof on its own
+
+0.4.7 shipped this guard with the composition as its only authority. On 2026-10-17 19:32 a real desktop profile lost rows to it: an update that ran while the aggregate bundle was being replaced composed without `web-ui-remote-web-ui` and `ui-schedule`, both of which the bundle layer still declared. The bare override for `ui-schedule` was pruned out of the user's file, and the profile fell back to the bundle defaults for the remote row — `autoTunnel: false` — so the quick tunnel never started, the relay kept a dead `trycloudflare` hostname, and the phone's `hello` was cut off at the edge.
+
+The lesson is about *when* the probe runs, not about what it reads. An application-owned update is a remove-then-install (removal is needed because the in-process manager refuses `installBundle` for a package the profile already carries, `already-installed`), so for a moment the profile's own manifest no longer carries that bundle. A composition taken in that window reports a host that has not reloaded yet, not a retirement.
+
+Three rules therefore hold now:
+
+- A row whose id any bundle layer still declares is never pruned, whatever the probe says.
+- A layer that cannot be read — its package is not resolvable right now, or its patch does not parse — makes the declarations unknown, and the guard writes nothing at all. A bundle without a patch file, or one whose patch is `[]`, declares no rows and is not an error.
+- Retirement is still proven by the composition: the id must be absent from the probe *and* from every layer's declarations. A retired row is declared by no layer at all, so the original migration still converges.
 
 ## Contract
 
@@ -46,10 +59,14 @@ Ownership is a shape, not a hunch. `overrideRowId` claims a top-level item only 
 - The guard only recognises the override shape this manager writes. A hand-written row that targets a retired id and carries extra keys (a `config:` block, say) is left alone by design, so that user keeps the loader warning until they edit the row themselves — pruning never trades a warning for deleting content the manager cannot reproduce.
 - The application-owned (desktop) path prunes only when its runtime can still compose the profile. A host whose CLI cannot run `--dump-config` leaves every override untouched, which keeps the file safe but defers the cleanup to a runtime that can compose.
 - An update now performs one more write in the worst case (prune) and no write at all in the common case; the `--dump-config` probe is not spawned twice on the CLI path because the pruning reuses the preflight's dump.
+- The guard is narrower than 0.4.7's: an id a bundle still declares survives even when the running host has not mounted it (a denied or incompatible bundle, a package mid-install). That leaves a stale override in place, which the next update running once the bundle is really gone clears — a noise residue is accepted over deleting a live override.
+- Cost of the floor: one `readFile` per bundle layer plus a parse of each layer's patch on the pruning path only, after the mutation landed. A profile whose layer list is long pays it once per update, not per boot.
 
 ## Testing
 
 - `packages/dsh-plugin-manager/tests/rows.spec.ts` pins the pure edit: the retired override is dropped while the comment block, a live override and a config row stay byte-identical; an already-pruned layer returns the input text with nothing pruned; a config row, an insert wrapper and a row with an extra key are never classified as overrides.
+- The desktop regression of the 0.4.7 incident is a case in `packages/dsh-plugin-manager/tests/gateway-jobs.spec.ts`: an aggregate bundle declaring `web-ui-remote-web-ui` and `ui-schedule`, a user layer carrying the quick-tunnel override (`autoTunnel: true`, `relay: true`) and a bare `ui-schedule` override, and a composition probe taken while the bundle was gone. The update ends with the user layer byte-identical and no backup, because nothing is orphaned. A second case removes a listed bundle's package directory and asserts the layer is left untouched even though the composition really lacks a row — the declarations are unknown, not empty.
+- `packages/dsh-plugin-manager/tests/rows.spec.ts` pins `declaredRowIds`: a layer's insert entries, its own rows, one id declared twice, and an id nested inside a row's own `config:` (a child, not a layer entry) resolve to the layer's ids once each; a layer that does not parse throws so the caller cannot read it as empty.
 - `packages/dsh-plugin-manager/tests/gateway-jobs.spec.ts` pins the transaction: an update over a layer carrying a retired id ends pruned with `cordis.patch.yml.bak-plugin-manager` holding the pre-prune text; the same update run again writes nothing (the backup still holds the pre-prune text); a layer whose overrides are all live is byte-identical and leaves no backup; a write failure settles the job as `error` with the backup in place; a desktop-owned update prunes through the read-only probe, and leaves the layer untouched when no composition can be read.
 
 ## Known limitation: the transition that creates the orphan cannot run the prune

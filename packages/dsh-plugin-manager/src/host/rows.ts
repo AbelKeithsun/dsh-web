@@ -159,6 +159,47 @@ export function claimedIdsOf(patchText: string): string[] {
   return ids
 }
 
+/**
+ * Every entry id a layer declares: its top-level `- id:` rows (bare override
+ * rows and config rows alike) plus the entries of its `- insert:` lists. Ids
+ * nested inside a row's own `config:` are composition children of that entry,
+ * not layer entries, and are not declared here.
+ *
+ * This answers "does this layer still declare that row?" without composing, so
+ * it stays true in the states where a composition probe is not: a host that
+ * composes mid-upgrade, or while a bundle's package is being replaced, drops
+ * rows whose layers still exist.
+ * @param patchText - a patch layer's text.
+ * @param filename - absolute path (diagnostics only).
+ * @returns the declared ids, in file order, without duplicates.
+ * @throws when the layer does not parse; a caller must then treat this layer's
+ * declarations as unknown rather than empty.
+ */
+export function declaredRowIds(patchText: string, filename: string): string[] {
+  const { root } = parsePatch(patchText, filename)
+  const ids: string[] = []
+  const push = (value: string | undefined): void => {
+    if (value === undefined || ids.includes(value)) return
+    ids.push(value)
+  }
+  const idOf = (node: YAMLMap): string | undefined => {
+    const id = node.get('id', true)
+    return isScalar(id) && typeof id.value === 'string' ? id.value : undefined
+  }
+  for (const item of root.items) {
+    if (!isMap(item)) continue
+    const insert = item.get('insert', true)
+    if (isSeq(insert)) {
+      for (const entry of insert.items) {
+        if (isMap(entry)) push(idOf(entry))
+      }
+      continue
+    }
+    push(idOf(item))
+  }
+  return ids
+}
+
 /** One insert entry of a bundle patch: the claimed id and the plugin package name. */
 export interface InsertRow {
   id?: string
