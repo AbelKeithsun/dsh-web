@@ -79,7 +79,7 @@ export {
   type ScopedRestrictor,
   type SessionPolicyReader,
 } from './pwsh-replacement.ts'
-export { WIN_BASH_TOOL, renderResult, readJobRegistry, truncationNotice } from './tool.ts'
+export { WIN_BASH_TOOL, renderResult, readJobRegistry, stripTerminalEscapes, truncationNotice } from './tool.ts'
 export type { RenderFacts } from './tool.ts'
 export {
   ShellRegistry,

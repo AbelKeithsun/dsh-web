@@ -31,6 +31,13 @@ session is what makes that true.
   separated streams, and the command's real exit code. Output past the budget
   is reported as truncated, in the text the model reads, rather than being cut
   silently.
+- Renders terminal escapes out of that text. On Windows, colour libraries
+  decide on the platform rather than on whether a terminal is attached, so a
+  piped `vitest` or `pnpm` run still emits colour codes; the tool carries the
+  bytes through and drops them where the text is rendered, so a caller reads
+  the message instead of `ESC [ 3 3 m`. A line a progress renderer repainted in
+  place shows the frame it finished on. The streams and the spill files keep
+  the exact bytes.
 - Optionally runs a command as a background job in its own pinned bash process
   and returns a job id at once, so a long build or watch does not hold the call
   open or die with the session's shell. See [Background commands](#background-commands).

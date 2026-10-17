@@ -141,6 +141,62 @@ function byteLength(text: string): number {
 }
 
 /**
+ * The CSI escape sequences a Windows child process emits with no terminal
+ * attached: colour (SGR) and the cursor/erase families a progress renderer
+ * uses. OSC, which Windows Terminal uses for JSON semantic-prompt marks, is
+ * matched as a whole so its embedded JSON never leaks into the text.
+ *
+ * WHY THIS IS STRIPPED HERE AND NOWHERE ELSE. The colour libraries a build
+ * tool uses (`picocolors`, `tinyrainbow`) short-circuit the "no TTY means no
+ * colour" rule on Windows itself — `platform === 'win32' ||` is one of their
+ * disjuncts — so `TERM=dumb`, which {@link shellEnvironment} already sets, does
+ * not turn them off, and neither does piping. The bytes below arrive in
+ * ordinary vitest and pnpm output on this very platform. This tool passes raw
+ * bytes through on purpose (that is what the pipe model buys); rendering them
+ * as text is the step that makes ``\u001b[33m`` and ``\u001b[1m`` legible to
+ * nobody. Both streams go through it, since a red error message is as
+ * unreadable as a red test summary. The loss is confined to this rendered view:
+ * the byte budgets, the exit code and any spill file still describe the exact
+ * stream, because colour is not information the text was carrying.
+ */
+// eslint-disable-next-line no-control-regex -- matching control characters IS the job
+const ANSI_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g
+
+/**
+ * Keep only the frame a repainting line ended on.
+ *
+ * A progress renderer overwrites one line with carriage returns instead of
+ * writing new ones, so the raw stream holds every frame glued together. A
+ * terminal shows the last one; text shows all of them. CRLF is not a repaint —
+ * it is how a Windows command ends a line — so a pair is left exactly as it
+ * was written.
+ * @param text - the text whose lines may have been repainted in place.
+ * @returns the text where each line shows the frame it finished on.
+ */
+function collapseRepaints(text: string): string {
+  if (!text.includes('\r')) return text
+  const lines = text.split('\n')
+  return lines.map((line, index) => {
+    const endsLine = index < lines.length - 1 && line.endsWith('\r')
+    const body = endsLine ? line.slice(0, -1) : line
+    const cut = body.lastIndexOf('\r')
+    const kept = cut === -1 ? body : body.slice(cut + 1)
+    return endsLine ? kept + '\r' : kept
+  }).join('\n')
+}
+
+/**
+ * Make a rendered string readable: drop the escape sequences, then let each
+ * repainted line show the frame it ended on.
+ * @param text - the string about to be shown to a caller.
+ * @returns the text with escapes stripped and overwritten frames collapsed.
+ */
+export function stripTerminalEscapes(text: string): string {
+  const unescaped = text.includes('\u001b') ? text.replace(ANSI_SEQUENCE, '') : text
+  return collapseRepaints(unescaped)
+}
+
+/**
  * The line that tells the model its view of one stream is incomplete.
  *
  * WHY THIS IS NOT DECORATION. The visible text is the TAIL of the stream: the
@@ -171,12 +227,20 @@ export function truncationNotice(
   return parts.join('')
 }
 
-/** Render one result the way the host's own shell tools render theirs. */
+/**
+ * Render one result the way the host's own shell tools render theirs.
+ *
+ * This is where the raw stream becomes something a caller can read: escape
+ * sequences are stripped (see {@link stripTerminalEscapes}), so a Windows build
+ * tool that colours its piped output does not hand back a wall of ``\u001b[1m``
+ * to the model and to the terminal card. The truncation notices below are this
+ * tool's own text and are appended AFTER stripping, so they survive intact.
+ */
 export function renderResult(value: RenderFacts): string {
-  let body = value.stdout
+  let body = stripTerminalEscapes(value.stdout)
   if (value.stderr !== '') {
     if (body !== '' && !body.endsWith('\n')) body += '\n'
-    body += '[stderr]\n' + value.stderr
+    body += '[stderr]\n' + stripTerminalEscapes(value.stderr)
   }
   if (body === '') body = '(no output)'
   const parts = [body]
