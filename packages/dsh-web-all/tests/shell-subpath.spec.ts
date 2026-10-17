@@ -116,8 +116,13 @@ describe('family subpath display names', () => {
         expect(manifest.exports[`./${sub}/locale/${locale}.json`]).toBe(target)
         const metadata = JSON.parse(readFileSync(join(PACKAGE_DIR, 'shell-metadata', sub, 'locale', `${locale}.json`), 'utf8')) as { meta?: { title?: string; description?: string } }
         expect(metadata.meta?.title).toBe(`web-all/${sub}`)
-        expect(metadata.meta?.description?.trim()).toBeTruthy()
-        descriptions[locale] = metadata.meta?.description ?? ''
+        const description = metadata.meta?.description ?? ''
+        // Real copy, not a placeholder: present, already trimmed, and never a
+        // restatement of the row title it sits under.
+        expect(description).not.toBe('')
+        expect(description).toBe(description.trim())
+        expect(description).not.toBe(metadata.meta?.title)
+        descriptions[locale] = description
       }
       // The Chinese note must stay on one line under the title
       const han = [...descriptions.zh].filter(char => /\p{Script=Han}/u.test(char)).length
@@ -151,6 +156,9 @@ describe('family subpath display names', () => {
     // The main face walk still reaches the package root and its client face.
     const root = nearestPackage(join(PACKAGE_DIR, 'lib/index.js'))
     expect(root.manifest.name).toBe(manifest.name)
-    expect((root.manifest.dsh as Record<string, unknown>).client).toBeDefined()
+    // The walk must return the manifest as it is declared on disk, client face
+    // included — not merely "some object with a dsh key".
+    const declared = JSON.parse(readFileSync(join(PACKAGE_DIR, 'package.json'), 'utf8')) as { dsh?: unknown }
+    expect(root.manifest.dsh).toEqual(declared.dsh)
   })
 })
