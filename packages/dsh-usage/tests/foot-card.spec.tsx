@@ -471,6 +471,23 @@ describe('UsageFootCard DeepSeek pricing clock', () => {
     expect(badge?.textContent).toBe('空闲')
   })
 
+  it('user sees the off-peak marker on a public-holiday weekday', () => {
+    // Given the clock stands at Thursday 10:00 Beijing time on National Day, a
+    // weekday the published rule bills off-peak for the whole day
+    document.documentElement.lang = 'zh'
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-01T02:00:00Z'))
+    const over = overview([deepseekBalance], { calls: 45, cost: 12.34 })
+
+    // When the card renders on the DeepSeek route
+    const { container } = render(<UsageFootCard {...cardProps(over)} />)
+
+    // Then the holiday overrides the weekday window: the marker stays off-peak
+    const badge = container.querySelector('[data-dsh-part="peak-status"]')
+    expect(badge?.getAttribute('data-peak')).toBe('off')
+    expect(badge?.textContent).toBe('空闲')
+  })
+
   it('user sees the marker on the collapsed strip as well', () => {
     // Given a collapsed card inside a peak window
     document.documentElement.lang = 'zh'
