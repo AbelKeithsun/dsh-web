@@ -168,17 +168,18 @@ describe('remote desktop event-stream upgrades', () => {
     }
   })
 
-  it('refuses with 503 while the port is unbound and upgrades once it binds', async () => {
-    // Mirror of the HTTP leg: before the listener binds the upgrade must
-    // refuse explicitly instead of opening a handshake at an :undefined port.
+  it('user receives 503 while the port is unbound and upgrades once it binds', async () => {
+    // Given a paired remote client and an upgrade route whose upstream port is initially unbound
     const service = makeService()
     const cookie = pairedCookie(service)
     const upstream = await startUpstream()
     let bound: number | undefined
     const [route] = makeRemoteApiUpgradeRoutes({ service, port: () => bound })
+    // When the user requests a WebSocket upgrade before and after the port binds
     const refused = await driveUpgrade(route.handler, { cookie, 'sec-websocket-key': 'k', 'sec-websocket-version': '13' })
     const refusal = await readAll(refused.client)
     try {
+      // Then the unbound upgrade is refused with 503 and the bound upgrade succeeds
       expect(refusal).toContain('503 Service Unavailable')
       expect(upstream.seen.length).toBe(0)
 

@@ -97,12 +97,15 @@ describe('family subpath display names', () => {
     }
   })
 
-  it('every family subpath exports the metadata resources the host reads', () => {
+  it('operator sees every family subpath export the metadata resources the host reads', () => {
+    // Given the aggregate package manifest and its shell subpath exports
     expect(manifest.files).toContain('shell-metadata')
+    // When inspecting every family shell subpath
     const shellSubs = Object.entries(manifest.exports)
       .filter(([key, target]) => target === './lib/shells/shell.js' && key.slice(2).split('/').length === 1)
       .map(([key]) => key.slice(2))
     expect(shellSubs.length).toBeGreaterThan(0)
+    // Then each subpath exports its icon and en/zh locale metadata files
     for (const sub of shellSubs) {
       expect(manifest.exports[`./${sub}/icon`]).toBe('./icon.svg')
       for (const locale of ['en', 'zh']) {

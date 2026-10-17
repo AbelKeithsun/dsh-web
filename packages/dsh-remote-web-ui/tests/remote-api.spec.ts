@@ -213,10 +213,9 @@ describe('remote desktop channel (/remote)', () => {
     }
   })
 
-  it('refuses with 503 while the port is unbound and proxies once it binds', async () => {
-    // The 0.2.1-rc.2 webServer type leaves ctx.webServer.port undefined until
-    // the listener binds (a recompose pass mounts routes ahead of the bind):
-    // a paired request must get an explicit refusal, never an :undefined URL.
+  it('user receives 503 while the port is unbound and is proxied once it binds', async () => {
+    // Given a paired remote client and a route whose upstream port is initially unbound
+    // (0.2.1-rc.2 leaves ctx.webServer.port undefined until listen binds)
     const service = makeService()
     const cookie = pairedCookie(service)
     const upstream = await startUpstream(() => ({
@@ -226,10 +225,12 @@ describe('remote desktop channel (/remote)', () => {
     let bound: number | undefined
     const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => bound }))
     try {
+      // When the user calls /remote/api before and after the port binds
       const refused = await call(port, 'POST', '/remote/api/session.list', {
         body: ENVELOPE('rpc-p', 'session.list', {}),
         cookie,
       })
+      // Then the unbound call is refused with 503 and the bound call is proxied
       expect(refused.status).toBe(503)
       const refusalBody = JSON.parse(refused.body) as { result: { ok: boolean; error: { code: string } } }
       expect(refusalBody.result.ok).toBe(false)

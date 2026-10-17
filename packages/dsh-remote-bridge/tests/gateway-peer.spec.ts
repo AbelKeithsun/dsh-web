@@ -27,7 +27,7 @@ async function rosterFile(): Promise<string> {
 }
 
 describe('gateway calls and the in-process owner peer', () => {
-  it('paired connection invokes the host speaking for the bridge owner peer', async () => {
+  it('user on a paired connection invokes the host speaking for the bridge owner peer', async () => {
     // Given a paired connection
     const harness = makeConnection({ paired: true })
     harness.gateway.handler = async () => ({ items: [] })
@@ -44,7 +44,7 @@ describe('gateway calls and the in-process owner peer', () => {
     expect(String(call?.peer.id)).toMatch(/^remote-bridge-owner:/)
   })
 
-  it('paired connection opens the follow stream for the same peer and its own signal still crosses', async () => {
+  it('user on a paired connection opens the follow stream for the same peer and its own signal still crosses', async () => {
     // Given a paired connection and a follow stream the test drives
     const harness = makeConnection({ paired: true })
     const follow = new ControllableStream()
@@ -60,11 +60,11 @@ describe('gateway calls and the in-process owner peer', () => {
     expect(call?.peer).toBe(harness.ownerPeer)
     expect(call?.peer.principal).toEqual({ kind: 'owner' })
     expect(call?.peer.interactions).toBe('none')
-    expect(call?.signal).toBeDefined()
+    expect(call?.signal).toBeInstanceOf(AbortSignal)
     expect(call?.signal).not.toBe(harness.ownerPeer.signal)
   })
 
-  it('connection that pairs mid-session reaches the host only after the pairing gate', async () => {
+  it('user on a connection that pairs mid-session reaches the host only after the pairing gate', async () => {
     // Given an unpaired connection that completes the real pairing handshake
     const harness = makeConnection({ rosterFile: await rosterFile() })
     const key = p256()
@@ -85,7 +85,7 @@ describe('gateway calls and the in-process owner peer', () => {
     expect(harness.gateway.invocations[0]?.peer).toBe(harness.ownerPeer)
   })
 
-  it('unpaired connection is refused by the bridge itself and no peer crosses', async () => {
+  it('guest on an unpaired connection is refused by the bridge itself and no peer crosses', async () => {
     // Given a connection with no device token
     const harness = makeConnection()
     // When it reaches for the session surface, unary and streamed alike
@@ -99,7 +99,7 @@ describe('gateway calls and the in-process owner peer', () => {
     expect(harness.gateway.streamRequests).toEqual([])
   })
 
-  it('client naming a principal in its payload does not change whom the call speaks for', async () => {
+  it('user naming a principal in its payload does not change whom the call speaks for', async () => {
     // Given a paired connection
     const harness = makeConnection({ paired: true })
     harness.gateway.handler = async () => ({ items: [] })
@@ -111,7 +111,7 @@ describe('gateway calls and the in-process owner peer', () => {
     expect(harness.gateway.invocations[0]?.peer.principal).toEqual({ kind: 'owner' })
   })
 
-  it('client sending a principal inside a prompt leaves the wire args untouched', async () => {
+  it('user sending a principal inside a prompt leaves the wire args untouched', async () => {
     // Given a paired connection
     const harness = makeConnection({ paired: true })
     // When the user prompts with an identity field riding along
@@ -132,7 +132,7 @@ describe('gateway calls and the in-process owner peer', () => {
     })
   })
 
-  it('owner peer aborts its signal on dispose and racing disposals share one completion', async () => {
+  it('operator sees the owner peer abort its signal on dispose and racing disposals share one completion', async () => {
     // Given a freshly minted owner peer bound to a plugin context
     const peer = createOwnerPeer(new Context())
     expect(peer.signal.aborted).toBe(false)
