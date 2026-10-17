@@ -22985,6 +22985,34 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			}
 			return null;
 		}
+		/** Seat attribute marking the branch chip's own slot inside the hero row. */
+		const HERO_SEAT_ATTR = "data-gitgraph-hero-seat";
+		/**
+		* Resolve the hero-row cell the chip belongs in: immediately after the
+		* agent-preset seat and BEFORE the right-aligned `conversation.hero.options`
+		* box, so the chip stays part of the row's leading chip group.
+		*
+		* Portaling straight into the row appended the chip after every official
+		* child, which parked it at the row's right edge beside the right-aligned
+		* options box. Inserting a dedicated inline-flex cell keeps the row's own
+		* flex order and gap, and the cell travels with DOM re-renders instead of
+		* being dropped by React's reconciliation of the official children.
+		*/
+		function heroSeatOf(heroRow) {
+			const seat = heroRow.querySelector(":scope > [data-gitgraph-hero-seat]");
+			if (seat !== null) return seat;
+			const rows = Array.from(heroRow.children);
+			const presetOutlet = heroRow.querySelector("[data-slot=\"conversation.hero.agentPreset\"]");
+			const optionsBox = rows.find((child) => child.className.includes("heroOptions")) ?? null;
+			const seatAfter = (presetOutlet !== null && presetOutlet.parentElement === heroRow ? presetOutlet : optionsBox) ?? rows[rows.length - 1] ?? null;
+			const cell = document.createElement("div");
+			cell.setAttribute(HERO_SEAT_ATTR, "");
+			cell.style.display = "inline-flex";
+			cell.style.alignItems = "center";
+			if (seatAfter === null) heroRow.append(cell);
+			else seatAfter.after(cell);
+			return cell;
+		}
 		/**
 		* The git branch selector chip for blank sessions.
 		* @param props - the composed entry props of whichever seat it mounted in.
@@ -23009,22 +23037,24 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			const [graphOpen, setGraphOpen] = (0, react.useState)(false);
 			const [worktreeCreateOpen, setWorktreeCreateOpen] = (0, react.useState)(false);
 			const [worktreeManageOpen, setWorktreeManageOpen] = (0, react.useState)(false);
-			const [heroRow, setHeroRow] = (0, react.useState)(null);
+			const [heroSeatEl, setHeroSeatEl] = (0, react.useState)(null);
 			const anchorRef = (0, react.useRef)(null);
 			(0, react.useLayoutEffect)(() => {
 				if (!heroSeat || repo === void 0 || repo === null) {
-					setHeroRow(null);
+					setHeroSeatEl(null);
 					return;
 				}
 				const update = () => {
-					const found = findHeroRow(anchorRef.current);
-					setHeroRow((prev) => prev === found ? prev : found);
+					const row = findHeroRow(anchorRef.current);
+					const seat = row === null ? null : heroSeatOf(row);
+					setHeroSeatEl((prev) => prev === seat ? prev : seat);
 				};
 				update();
-				const parent = anchorRef.current?.parentElement;
-				if (parent === null || parent === void 0 || typeof MutationObserver === "undefined") return void 0;
+				const row = findHeroRow(anchorRef.current);
+				const scope = row?.parentElement ?? row;
+				if (scope === null || scope === void 0 || typeof MutationObserver === "undefined") return void 0;
 				const observer = new MutationObserver(update);
-				observer.observe(parent.parentElement ?? parent, {
+				observer.observe(scope, {
 					childList: true,
 					subtree: true
 				});
@@ -23032,6 +23062,9 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					observer.disconnect();
 				};
 			}, [heroSeat, repo !== void 0 && repo !== null]);
+			(0, react.useEffect)(() => () => {
+				heroSeatEl?.remove();
+			}, [heroSeatEl]);
 			const refetch = (0, react.useCallback)(() => {
 				let live = true;
 				props.repoStatus(sessionId).then((status) => {
@@ -23172,7 +23205,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			if (heroSeat) return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				ref: anchorRef,
 				style: { display: "none" }
-			}), heroRow !== null && isConnectedElement(heroRow) ? (0, react_dom.createPortal)(chipNode, heroRow) : chipNode] });
+			}), heroSeatEl !== null && isConnectedElement(heroSeatEl) ? (0, react_dom.createPortal)(chipNode, heroSeatEl) : chipNode] });
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				ref: anchorRef,
 				style: { display: "contents" },

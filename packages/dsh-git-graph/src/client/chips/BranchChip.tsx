@@ -94,6 +94,40 @@ function findHeroRow(anchor: HTMLElement | null): HTMLElement | null {
   return null
 }
 
+/** Seat attribute marking the branch chip's own slot inside the hero row. */
+const HERO_SEAT_ATTR = 'data-gitgraph-hero-seat'
+
+/**
+ * Resolve the hero-row cell the chip belongs in: immediately after the
+ * agent-preset seat and BEFORE the right-aligned `conversation.hero.options`
+ * box, so the chip stays part of the row's leading chip group.
+ *
+ * Portaling straight into the row appended the chip after every official
+ * child, which parked it at the row's right edge beside the right-aligned
+ * options box. Inserting a dedicated inline-flex cell keeps the row's own
+ * flex order and gap, and the cell travels with DOM re-renders instead of
+ * being dropped by React's reconciliation of the official children.
+ */
+function heroSeatOf(heroRow: HTMLElement): HTMLElement {
+  const seat = heroRow.querySelector(':scope > [' + HERO_SEAT_ATTR + ']') as HTMLElement | null
+  if (seat !== null) return seat
+  const rows = Array.from(heroRow.children) as HTMLElement[]
+  const presetOutlet = heroRow.querySelector('[data-slot="conversation.hero.agentPreset"]')
+  const optionsBox = rows.find(child => child.className.includes('heroOptions')) ?? null
+  // Insertion point: right after the preset outlet, or before the
+  // right-aligned options box when the preset seat is absent.
+  const seatAfter = (presetOutlet !== null && presetOutlet.parentElement === heroRow ? presetOutlet : optionsBox)
+    ?? rows[rows.length - 1]
+    ?? null
+  const cell = document.createElement('div')
+  cell.setAttribute(HERO_SEAT_ATTR, '')
+  cell.style.display = 'inline-flex'
+  cell.style.alignItems = 'center'
+  if (seatAfter === null) heroRow.append(cell)
+  else seatAfter.after(cell)
+  return cell
+}
+
 /**
  * The git branch selector chip for blank sessions.
  * @param props - the composed entry props of whichever seat it mounted in.
@@ -128,30 +162,42 @@ export function BranchChip(props: BranchChipProps) {
   const [graphOpen, setGraphOpen] = useState(false)
   const [worktreeCreateOpen, setWorktreeCreateOpen] = useState(false)
   const [worktreeManageOpen, setWorktreeManageOpen] = useState(false)
-  const [heroRow, setHeroRow] = useState<HTMLElement | null>(null)
+  const [heroSeatEl, setHeroSeatEl] = useState<HTMLElement | null>(null)
   const anchorRef = useRef<HTMLDivElement | null>(null)
 
-  // Hero-phase placement: the rc.6 shell renders the dock as its own row
-  // between the official hero chip row and the composer card. In the blank
-  // hero phase, the chip portals directly into that hero row to sit
-  // immediately after the agent-preset seat, matching the official row gap,
-  // tokens, and alignment without manual pixel measurement.
+  // Hero-phase placement: the shell renders the dock as its own row between
+  // the official hero chip row and the composer card. In the blank hero
+  // phase the chip moves into a cell of that hero row, right after the
+  // agent-preset seat and before the right-aligned options box, so it joins
+  // the leading chip group instead of landing at the row's far edge.
   useLayoutEffect(() => {
     if (!heroSeat || repo === undefined || repo === null) {
-      setHeroRow(null)
+      setHeroSeatEl(null)
       return undefined
     }
     const update = (): void => {
-      const found = findHeroRow(anchorRef.current)
-      setHeroRow(prev => (prev === found ? prev : found))
+      const row = findHeroRow(anchorRef.current)
+      const seat = row === null ? null : heroSeatOf(row)
+      setHeroSeatEl(prev => (prev === seat ? prev : seat))
     }
     update()
-    const parent = anchorRef.current?.parentElement
-    if (parent === null || parent === undefined || typeof MutationObserver === 'undefined') return undefined
+    // The seat is created imperatively in the row, outside React's tree, so
+    // the observer re-resolves it when the official children re-render (React
+    // never owns the cell) and when the shell swaps the whole row. A re-run
+    // that finds the existing cell sets the same value and bails out, so this
+    // settles instead of looping.
+    const row = findHeroRow(anchorRef.current)
+    const scope = row?.parentElement ?? row
+    if (scope === null || scope === undefined || typeof MutationObserver === 'undefined') return undefined
     const observer = new MutationObserver(update)
-    observer.observe(parent.parentElement ?? parent, { childList: true, subtree: true })
+    observer.observe(scope, { childList: true, subtree: true })
     return () => { observer.disconnect() }
   }, [heroSeat, repo !== undefined && repo !== null])
+
+  // The seat element is created imperatively, so remove it on unmount
+  useEffect(() => () => {
+    heroSeatEl?.remove()
+  }, [heroSeatEl])
 
   const refetch = useCallback(() => {
     let live = true
@@ -294,7 +340,7 @@ export function BranchChip(props: BranchChipProps) {
     return (
       <>
         <div ref={anchorRef} style={{ display: 'none' }} />
-        {heroRow !== null && isConnectedElement(heroRow) ? createPortal(chipNode, heroRow) : chipNode}
+        {heroSeatEl !== null && isConnectedElement(heroSeatEl) ? createPortal(chipNode, heroSeatEl) : chipNode}
       </>
     )
   }

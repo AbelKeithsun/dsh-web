@@ -266,28 +266,67 @@ describe('BranchChip', () => {
     expect(branchChip.className).toContain('chipHero')
   })
 
-  it('positions the hero dock chip in the hero workspace row', async () => {
+  it('user opening a blank session sees the branch chip right after the preset chip', async () => {
+    // Given a blank hero row with the agent-preset seat and the right-aligned
+    // options box, with the chip's own dock outlet below it
     const stack = document.createElement('div')
     const heroRow = document.createElement('div')
     heroRow.className = 'heroWorkspaceRow'
     const preset = document.createElement('span')
+    preset.setAttribute('data-slot', 'conversation.hero.agentPreset')
     preset.className = 'presetSeat'
+    // The official right-aligned options box: the chip must never land past
+    // it, which is what put the chip at the row's far edge before.
+    const options = document.createElement('div')
+    options.className = 'heroOptions'
+    heroRow.append(preset, options)
+    const outlet = document.createElement('div')
+    stack.append(heroRow, outlet)
+    document.body.append(stack)
+    try {
+      // When the blank-session hero renders the chip
+      bench({ blank: true, openState: 'open', container: outlet }, 'dock')
+      await waitFor(() => {
+        const chip = screen.getByRole('button', { name: '分支' })
+        const anchor = anchorOf(chip)
+        const seat = anchor.parentElement as HTMLElement
+
+        // Then the chip lives in its own cell between the preset seat and the
+        // options box, so it stays in the row's leading chip group.
+        expect(heroRow.contains(anchor)).toBe(true)
+        expect(seat.hasAttribute('data-gitgraph-hero-seat')).toBe(true)
+        expect(seat.parentElement).toBe(heroRow)
+        expect(preset.nextElementSibling).toBe(seat)
+        expect(seat.nextElementSibling).toBe(options)
+        expect(anchor.className).toContain('anchorHero')
+        expect(chip.className).toContain('chipHero')
+      })
+    } finally {
+      stack.remove()
+    }
+  })
+
+  it('user leaving the blank session leaves no branch cell behind in the row', async () => {
+    // Given a blank hero row carrying the chip's cell
+    const stack = document.createElement('div')
+    const heroRow = document.createElement('div')
+    heroRow.className = 'heroWorkspaceRow'
+    const preset = document.createElement('span')
+    preset.setAttribute('data-slot', 'conversation.hero.agentPreset')
     heroRow.append(preset)
     const outlet = document.createElement('div')
     stack.append(heroRow, outlet)
     document.body.append(stack)
     try {
       bench({ blank: true, openState: 'open', container: outlet }, 'dock')
-      await waitFor(() => {
-        const chip = screen.getByRole('button', { name: '分支' })
-        const anchor = anchorOf(chip)
+      await waitFor(() => { expect(heroRow.children.length).toBe(2) })
+      expect(heroRow.lastElementChild?.hasAttribute('data-gitgraph-hero-seat')).toBe(true)
 
-        expect(heroRow.contains(anchor)).toBe(true)
-        expect(anchor.parentElement).toBe(heroRow)
-        expect(preset.nextElementSibling).toBe(anchor)
-        expect(anchor.className).toContain('anchorHero')
-        expect(chip.className).toContain('chipHero')
-      })
+      // When the chip unmounts with the session leaving the hero phase
+      cleanup()
+
+      // Then the row is back to the official children only
+      expect(heroRow.children.length).toBe(1)
     } finally {
       stack.remove()
     }
