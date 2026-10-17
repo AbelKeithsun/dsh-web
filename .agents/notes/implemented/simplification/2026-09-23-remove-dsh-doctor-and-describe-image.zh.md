@@ -10,6 +10,8 @@ dsh-doctor（诊断设置面板）与 dsh-tool-describe-image（图像描述工�
 
 两个包从工作区删除（`packages/dsh-doctor/`、`packages/dsh-tool-describe-image/`），`packages/dsh-web-all/aggregate.yml` 删掉它们的 `patchFrom`/`deps` 行与 `inactive` 条目。聚合包为每个被移除的 id 保留一个 tombstone 空壳导出（`describe-image`、`doctor`，均指向 `./lib/shells/shell.js`），让 patch 文件里仍带挂载行的旧 profile 退化为惰性插件，而不是在模块解析时以 `ERR_PACKAGE_PATH_NOT_EXPORTED` 崩溃。残留的 `retire:` 块整体删除而非改指，因为 alpha.2 宿主已不再挂载它目标的行；`scripts/aggregate.test.mjs` 现在断言聚合不得声明未经证实的 retire 目标，并钉住移除契约（patch 不含 `web-ui-doctor` / `web-ui-describe-image` 行、deps 不含两包、两个 tombstone 必须在场）。
 
+两个被移除的包已登记进聚合包的退役登记（`packages/dsh-web-all/aggregate.yml` 的 `retiredPlugins` 段，生成到 `src/retired-plugins.generated.ts`），因此仍挂载它们的 profile 行在故障隔离壳里是静默 no-op：不 import 任何东西，也不记录任何东西。这份登记直到[生成式退役登记](../bug-fix/2026-10-17-aggregate-retired-plugin-registry.zh.md)落地才存在——壳里手写的清单在这次移除中未被同步，那些残留行因此落到 import 失败路径上并被报成 degraded 插件。
+
 引用清扫覆盖：`scripts/sync-shared.mjs`（SETTINGS_CONSUMERS 与各包拷贝目标）、`scripts/i18n-audit.mjs`（两行包条目）、两份 sync/i18n 基线 JSON、`.github/labeler.yml`（`area/tools` 标签与 doctor 行）、dsh-i18n（`ru/doctor.ts`、`ru/tool-describe-image.ts`、`ru/index.ts`、两份 README 表格）、dsh-web-settings（白名单命名空间与别名，客户端插件清单改为「task-board、remote-web-ui、pet」）、dsh-plugin-manager 测试夹具、skin-center semantic-attrs 契约（删 doctor 锚点，plugin 组计数 15 改 13）、`docs/publish-prep.md`（19 个包）、`docs/plugins.md`、`docs/architecture.md`（17 个子包）以及两份根 README。
 
 刻意不动：`desktop/runtime/profile-web` 钉的是已发布的 `@linxin666/dsh-web-all@0.3.19`，其中仍含这两个包——改那个 pin 会破坏它的 `minimumReleaseAgeExclude` 对账，桌面运行时在自己的升级之前继续发布它钉住的内容。`market/worker/src/npm-badge.js` 的 FAMILY_PACKAGES 保留两个 id，因为那张表是「曾经发布过」的累计注册表，不是当前成员名单。归档、发布说明与历史 Agent Note 不重写。

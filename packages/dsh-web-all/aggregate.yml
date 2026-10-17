@@ -167,3 +167,19 @@ tombstones:
   - preset-center
   - skin-center
   - community-plugins
+
+# 退役插件登记（retiredPlugins）：每个已退役家族的真实包名，单行 JSON flow mapping（与
+# rows: / shellNotes: 同风格）。这是唯一事实源：生成器把它写进
+# packages/dsh-web-all/src/retired-plugins.generated.ts（RETIRED_FAMILIES / RETIRED_PLUGINS），
+# 壳 src/shell.ts 由生成模块派生，不再手写包名清单。
+# 语义：老 profile 里残留的家族行，其 name 仍是子路径 @linxin666/dsh-web-all/<family>（靠
+# tombstones 段保证仍可解析），壳从该行的 config.plugin 读到已退役的真实包名后按静默 no-op
+# 处理（不 import、不记 degraded），一次正常退役不会在健康面板里变成「插件坏了」。
+# 约束（生成器 fail closed）：family 必须已在 tombstones 段里（子路径导出要为老 profile 保留），
+# 且不得同时出现在 deps 里（退役插件不能又是本包依赖）。新增退役家族时两段一起改。
+retiredPlugins:
+  - {"family":"desktop-launcher","plugin":"@linxin666/dsh-desktop-launcher"}
+  - {"family":"dsh-perf","plugin":"@linxin666/dsh-perf"}
+  - {"family":"describe-image","plugin":"@linxin666/dsh-tool-describe-image"}
+  - {"family":"doctor","plugin":"@linxin666/dsh-doctor"}
+  - {"family":"model-capabilities","plugin":"@linxin666/dsh-client-ui-model-capabilities"}

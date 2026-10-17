@@ -60,6 +60,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import z from '@deepseek-ai/schemastery'
 import { listDegraded, recordDegraded } from './degraded.ts'
+import { RETIRED_PLUGINS as RETIRED_PLUGINS_GENERATED } from './retired-plugins.generated.ts'
 import { listActiveRows, recordActiveRow, removeActiveRow } from './rows.ts'
 import { shellState } from './state.ts'
 
@@ -317,12 +318,18 @@ function isOverrideShape(config: unknown): boolean {
 /**
  * Known retired family plugins: stale rows from older user profiles mount as
  * silent no-ops so upgrading the aggregate package never breaks the host boot.
+ *
+ * The list is generated from the aggregate.yml `retiredPlugins` section
+ * (src/retired-plugins.generated.ts) and is therefore the single source for
+ * this behavior: adding a retired family edits the manifest and reruns
+ * `node scripts/aggregate.mjs`. It used to be a hand-written literal here,
+ * and it drifted — the 2026-09-23 removal of dsh-doctor and
+ * dsh-tool-describe-image never added its two package names, so their leftover
+ * profile rows fell through to the import below and recorded a normal
+ * retirement as a degraded plugin. The semantics are unchanged: a row naming a
+ * retired plugin mounts empty and records nothing.
  */
-const RETIRED_PLUGINS = new Set([
-  '@linxin666/dsh-perf',
-  '@linxin666/dsh-desktop-launcher',
-  '@linxin666/dsh-client-ui-model-capabilities',
-])
+const RETIRED_PLUGINS = new Set(RETIRED_PLUGINS_GENERATED)
 
 /**
  * Whether a lifecycle transition belongs to the fiber one row mounted.

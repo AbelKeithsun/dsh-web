@@ -42,6 +42,13 @@
   `lib/shells/shell.js`），避免老 profile 残留旧行名时 Node 抛
   ERR_PACKAGE_PATH_NOT_EXPORTED。迁出为独立仓库的 `pet` / `skin-center` /
   `community-plugins` 三个子路径必须留在本清单里。
+- `retiredPlugins:` 段（单行 JSON flow mapping，`{"family","plugin"}`）是壳的退役登记
+  唯一事实源：生成器把它写进 `src/retired-plugins.generated.ts`（`RETIRED_FAMILIES` /
+  `RETIRED_PLUGINS`），`src/shell.ts` 由生成模块派生。老 profile 里残留的家族行 `name`
+  仍是子路径 `@linxin666/dsh-web-all/<family>`（靠 `tombstones:` 保证可解析），壳从该行的
+  `config.plugin` 读到已退役的真实包名后走静默 no-op（不 import、不记 degraded），手写副本
+  不会再把一次正常退役报成插件损坏。family 必须已在 `tombstones:` 段、plugin 不得同时是
+  `deps` 依赖，两条都由生成器报错钉住。
 - `familyIds:` 段（`<子包行 id>: <聚合行 id>` 映射行）解耦两处 id：子包的独立安装行 id
   住在 loader 全局 id 空间，被官方 bundle 占用时必须换（#1794），而派生规则会把新的独立
   行 id 一并改名，连带移动已发布的聚合行 id 与家族子路径导出。覆盖后独立行改名、聚合行

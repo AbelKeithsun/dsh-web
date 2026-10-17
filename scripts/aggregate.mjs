@@ -75,6 +75,15 @@
  *     aggregate exports (tombstones included) needs an entry, and a missing,
  *     unknown, or duplicate id fails the run instead of shipping a row with no
  *     visible purpose.
+ *   - retiredPlugins entries (single-line JSON flow mappings) are the shell's
+ *     retirement registry: {"family": "<tombstone subpath>", "plugin": "<real
+ *     package name>"} for every family plugin that was removed while its row
+ *     may still sit in an older profile. They are written as a generated module
+ *     (src/retired-plugins.generated.ts) the shell imports, so the list of
+ *     no-op specifiers has one source; the hand-written copy beside it drifted
+ *     and reported a normal retirement as a degraded plugin. A family must be a
+ *     tombstone (its subpath export has to stay alive for those old rows) and
+ *     its plugin must not also be a dependency; both are hard errors.
  *
  * Idempotent: safe to rerun at any time. Writes only inside the aggregate
  * packages it owns; never touches other packages or git state.
@@ -211,6 +220,36 @@ function pruneShellMetadata(pkgDir, shellSubpaths) {
 }
 
 /**
+ * List the generated metadata the current manifest no longer owns, judged
+ * exactly like {@link pruneShellMetadata} deletes it: one entry per unexpected
+ * family directory, and one per unexpected file in a family's locale
+ * directory. Write mode prunes these; check mode must NAME them, or a stale
+ * family nobody writes any more is invisible to `--check` — the same drift
+ * class this generator exists to catch, one level up from file content.
+ * @param pkgDir - the aggregate package directory.
+ * @param shellSubpaths - family subpaths the manifest owns.
+ * @returns repo-confirmable paths that should not be on disk, sorted.
+ */
+function strayShellMetadata(pkgDir, shellSubpaths) {
+  const root = join(pkgDir, SHELL_METADATA_DIR)
+  if (!existsSync(root)) return []
+  const expected = new Set(shellSubpaths)
+  const stray = []
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.isDirectory() && !expected.has(entry.name)) stray.push(join(root, entry.name))
+  }
+  for (const sub of shellSubpaths) {
+    const localeDir = join(root, sub, 'locale')
+    if (!existsSync(localeDir)) continue
+    const expectedLocales = new Set(SHELL_METADATA_LOCALES.map((locale) => `${locale}.json`))
+    for (const entry of readdirSync(localeDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !expectedLocales.has(entry.name)) stray.push(join(localeDir, entry.name))
+    }
+  }
+  return stray.sort()
+}
+
+/**
  * Resolve the manifest's shellNotes section into one description per family
  * subpath, failing closed on anything that would ship a row without its
  * purpose line. The official reader renders whatever the locale JSON carries,
@@ -265,6 +304,108 @@ function resolveShellNotes(entries, shellSubpaths, rel, errors) {
     if (!declared.has(sub)) errors.push(`${rel}: shellNotes has no entry for family subpath "${sub}"`)
   }
   return notes
+}
+
+/**
+ * Resolve the manifest's retiredPlugins section into the shell's retirement
+ * registry, failing closed on anything that would ship a wrong no-op set.
+ *
+ * The registry exists for one behavior: a stale row in an older profile names
+ * a removed package, and the shell must skip the import instead of recording a
+ * failed import as a degraded plugin. So every entry is checked against the
+ * two facts that make that skip safe — the family is a tombstone (the subpath
+ * export those old rows resolve still exists; a retired family without one is
+ * the boot-level ERR_PACKAGE_PATH_NOT_EXPORTED failure) and the plugin is NOT
+ * one of this aggregate's dependencies (a package that is still mounted must
+ * never be swallowed by the no-op branch).
+ * @param entries - retiredPlugins section entries.
+ * @param tombstones - the manifest's tombstone subpaths.
+ * @param resolvedDeps - the aggregate's resolved dependencies.
+ * @returns {family, plugin} pairs sorted by family.
+ */
+function resolveRetiredPlugins(entries, tombstones, resolvedDeps, rel, errors) {
+  const tombstonesSet = new Set(tombstones)
+  const depNames = new Set(resolvedDeps.map((dep) => dep.name))
+  const families = new Set()
+  const plugins = new Set()
+  const retired = []
+  for (const entry of entries) {
+    const family = entry.family
+    const plugin = entry.plugin
+    if (typeof family !== 'string' || family === '') {
+      errors.push(`${rel}: retiredPlugins entry needs a string "family" (the tombstone subpath): ${JSON.stringify(entry)}`)
+      continue
+    }
+    if (typeof plugin !== 'string' || plugin === '') {
+      errors.push(`${rel}: retiredPlugins entry "${family}" needs a string "plugin" (the retired package name)`)
+      continue
+    }
+    if (!/^[a-z0-9-]+$/.test(family)) {
+      errors.push(`${rel}: retiredPlugins family "${family}" must match ^[a-z0-9-]+$ (it is a family subpath)`)
+      continue
+    }
+    if (!tombstonesSet.has(family)) {
+      errors.push(`${rel}: retiredPlugins family "${family}" is not a tombstone; a retired family keeps its subpath export for older profiles, so add "${family}" to tombstones in the same change`)
+      continue
+    }
+    if (families.has(family)) {
+      errors.push(`${rel}: duplicate retiredPlugins entry for family "${family}"`)
+      continue
+    }
+    if (plugins.has(plugin)) {
+      errors.push(`${rel}: duplicate retiredPlugins entry for plugin "${plugin}"`)
+      continue
+    }
+    if (depNames.has(plugin)) {
+      errors.push(`${rel}: retiredPlugins plugin "${plugin}" is also a dependency of this aggregate; a mounted plugin must never be skipped as retired`)
+      continue
+    }
+    families.add(family)
+    plugins.add(plugin)
+    retired.push({ family, plugin })
+  }
+  return retired.sort((left, right) => (left.family < right.family ? -1 : left.family > right.family ? 1 : 0))
+}
+
+const RETIRED_PLUGINS_HEADER = [
+  '/* Generated by scripts/aggregate.mjs from the aggregate.yml manifest — do not edit.',
+  ' * Retirement registry of the fault-isolation shell: every family plugin the',
+  ' * aggregate removed while older profiles may still carry a row that mounts',
+  ' * it by package name. The shell skips the import for a specifier listed here,',
+  ' * so a normal retirement stays a silent no-op instead of being recorded as a',
+  ' * degraded plugin on the health route. A hand-written copy of this list lived',
+  ' * beside the shell and drifted: the 2026-09-23 removal left its two package',
+  ' * names out of it, so a host whose profile still carried those rows recorded',
+  ' * them as failed imports on every boot. Edit aggregate.yml (retiredPlugins,',
+  ' * together with the matching tombstones entry) and rerun',
+  ' * `node scripts/aggregate.mjs`.',
+  ' */',
+]
+
+/**
+ * Render the generated retirement registry module the shell imports.
+ * @param retired - {family, plugin} pairs sorted by family.
+ * @returns the module source.
+ */
+function renderRetiredPlugins(retired) {
+  const lines = [...RETIRED_PLUGINS_HEADER]
+  lines.push(
+    '',
+    '/** Retired family subpath -> real package name of the plugin that used to mount there. */',
+    'export const RETIRED_FAMILIES: Readonly<Record<string, string>> = {',
+  )
+  for (const { family, plugin } of retired) lines.push(`  '${family}': '${plugin}',`)
+  lines.push(
+    '}',
+    '',
+    '/** Every retired package name, sorted: what the shell skips without importing. Derived from',
+    ' *  RETIRED_FAMILIES so the two can never disagree. */',
+    'export const RETIRED_PLUGINS: readonly string[] = Object.freeze(',
+    '  Object.values(RETIRED_FAMILIES).sort(),',
+    ')',
+    '',
+  )
+  return lines.join('\n')
 }
 
 /**
@@ -331,7 +472,7 @@ function findAggregates() {
  * while the generator can JSON.parse each entry).
  */
 function parseManifest(ymlPath, errors) {
-  const manifest = { patchFrom: [], deps: [], self: null, rows: [], patches: [], inactive: [], retire: [], tombstones: [], familyIds: {}, shellNotes: [] }
+  const manifest = { patchFrom: [], deps: [], self: null, rows: [], patches: [], inactive: [], retire: [], tombstones: [], familyIds: {}, shellNotes: [], retiredPlugins: [] }
   let section = null
   for (const raw of readFileSync(ymlPath, 'utf8').split(/\r?\n/)) {
     const line = raw.trim()
@@ -409,6 +550,19 @@ function parseManifest(ymlPath, errors) {
         continue
       }
       manifest.shellNotes.push(parsed)
+    } else if (section === 'retiredPlugins') {
+      let parsed
+      try {
+        parsed = JSON.parse(entry)
+      } catch {
+        errors.push(`${ymlPath}: retiredPlugins entry must be a JSON flow mapping: ${entry}`)
+        continue
+      }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        errors.push(`${ymlPath}: retiredPlugins entry must be an object: ${entry}`)
+        continue
+      }
+      manifest.retiredPlugins.push(parsed)
     } else if (section === 'self') {
       if (manifest.self !== null && manifest.self !== entry) {
         console.warn(`aggregate.yml defines several self entries (${manifest.self}, ${entry}); keeping the last one`)
@@ -1164,6 +1318,7 @@ for (const { pkgDir, ymlPath } of aggregates) {
   const shellNotes = resolveShellNotes(manifest.shellNotes, shellSubpaths, rel, errors)
   const patch = renderPatch(blocks, manifest.rows, manifest.patches ?? [], manifest.inactive ?? [], manifest.retire ?? [], manifest.familyIds, errors, rel, pkgDir)
   const resolvedDeps = resolveEntries(pkgDir, manifest.deps, 'deps', errors)
+  const retiredPlugins = resolveRetiredPlugins(manifest.retiredPlugins, manifest.tombstones, resolvedDeps, rel, errors)
   const pkgJson = renderPackageJson(join(pkgDir, 'package.json'), resolvedDeps, shellSubpaths)
   // The shell aggregate additionally emits the client-children mount list:
   // the browser-side mirror of its host-side folded rows.
@@ -1190,6 +1345,10 @@ for (const { pkgDir, ymlPath } of aggregates) {
     resolvedDeps,
     pkgJson,
     clientChildren,
+    // Only the shell aggregate generates the retirement registry: it is the
+    // package whose shell module performs the no-op skip.
+    retiredPluginsModule: ownName === AGGREGATE_SHELL_PACKAGE ? renderRetiredPlugins(retiredPlugins) : undefined,
+    retiredPluginCount: retiredPlugins.length,
     shellMetadata: shellMetadataFiles(pkgDir, shellSubpaths, shellNotes),
     shellSubpaths,
   })
@@ -1217,20 +1376,30 @@ for (const r of results) {
       ]
     : []
   const metadataFiles = r.shellMetadata.map(({ path, content }) => [relative(REPO_ROOT, path), path, content])
+  const retiredFile = r.retiredPluginsModule === undefined
+    ? []
+    : [['retired-plugins.generated.ts', join(REPO_ROOT, r.rel, 'src', 'retired-plugins.generated.ts'), r.retiredPluginsModule]]
   if (CHECK) {
     const diffs = []
     if (!existsSync(patchPath) || readFileSync(patchPath, 'utf8') !== r.patch) diffs.push(relative(REPO_ROOT, patchPath))
     if (!existsSync(pkgPath) || readFileSync(pkgPath, 'utf8') !== r.pkgJson) diffs.push(relative(REPO_ROOT, pkgPath))
-    for (const [, filePath, content] of [...childFiles, ...metadataFiles]) {
+    for (const [, filePath, content] of [...childFiles, ...metadataFiles, ...retiredFile]) {
       if (!existsSync(filePath) || readFileSync(filePath, 'utf8') !== content) diffs.push(relative(REPO_ROOT, filePath))
     }
-    if (diffs.length) {
+    // Symmetry with write mode: pruneShellMetadata deletes shell-metadata
+    // entries the manifest no longer owns, so check mode has to report them as
+    // drift — otherwise a family that lost its row keeps its directory (and
+    // its exports) forever and `--check` stays green.
+    const strays = strayShellMetadata(resolvePath(REPO_ROOT, r.rel), r.shellSubpaths)
+    if (diffs.length || strays.length) {
       for (const d of diffs) console.log(`[aggregate] check: ${d} differs from generated content`)
+      for (const stray of strays) console.log(`[aggregate] check: ${relative(REPO_ROOT, stray)} is not owned by the manifest (run without --check to prune it)`)
       failed = true
     } else {
       const rows = r.blocks.reduce((n, b) => n + b.rows.length, 0)
       const childrenNote = r.clientChildren ? `, ${r.clientChildren.count} client child(ren)` : ''
-      console.log(`[aggregate] check OK: ${r.rel} (${rows} row(s), ${r.resolvedDeps.length} dep(s)${childrenNote})`)
+      const retiredNote = r.retiredPluginsModule === undefined ? '' : `, ${r.retiredPluginCount} retired plugin(s)`
+      console.log(`[aggregate] check OK: ${r.rel} (${rows} row(s), ${r.resolvedDeps.length} dep(s)${childrenNote}${retiredNote})`)
     }
   } else {
     writeFileSync(patchPath, r.patch)
@@ -1239,7 +1408,7 @@ for (const r of results) {
     writeFileSync(pkgPath, r.pkgJson)
     console.log(`[aggregate] wrote ${relative(REPO_ROOT, pkgPath)} (${r.resolvedDeps.length} workspace dep(s))`)
     pruneShellMetadata(resolvePath(REPO_ROOT, r.rel), r.shellSubpaths)
-    for (const [label, filePath, content] of [...childFiles, ...metadataFiles]) {
+    for (const [label, filePath, content] of [...childFiles, ...metadataFiles, ...retiredFile]) {
       mkdirSync(dirname(filePath), { recursive: true })
       writeFileSync(filePath, content)
       console.log(`[aggregate] wrote ${relative(REPO_ROOT, filePath)} (${label})`)
