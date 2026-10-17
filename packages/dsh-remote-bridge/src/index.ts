@@ -159,13 +159,13 @@ export function apply(ctx: Context): void {
   const roster = new DeviceRoster({ file: join(dshHome(), ROSTER_PATH), log })
   const pairing = new PairingService()
   const approvals = new ApprovalRegistry()
-  const questions = new QuestionClaims({ gateway: ctx.typertGateway, log })
-  const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
-  const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
   // The owner peer is the full-control credential the gateway demands since
   // 0.2.1; it is safe to hold from mount because every call that can trigger
   // it is gated by the bridge's own pairing check (see core/owner-peer.ts).
   const ownerPeer = createOwnerPeer(ctx)
+  const questions = new QuestionClaims({ gateway: ctx.typertGateway, peer: ownerPeer, log })
+  const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
+  const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
   const hub = new BridgeHub({
     gateway: ctx.typertGateway,
     pairing,

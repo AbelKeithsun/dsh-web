@@ -39,7 +39,7 @@
 import { randomBase64Url } from './crypto.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import { CODE_INTERNAL, CODE_QUESTION_UNKNOWN } from './protocol.ts'
-import { wireArgs, type BridgeGateway } from './wire.ts'
+import { wireArgs, type BridgeGateway, type GatewayPeer } from './wire.ts'
 
 /** One selectable answer offered by the asker. */
 export interface QuestionOption {
@@ -180,6 +180,8 @@ interface Claim {
 
 export interface QuestionClaimsOptions {
   readonly gateway: BridgeGateway
+  /** The in-process owner peer every gateway call speaks for; the bridge never derives it from a client frame. */
+  readonly peer: GatewayPeer
   readonly log: (message: string) => void
   /** Id source, injectable so a test can answer the exact id it was given. */
   readonly random?: (byteLength: number) => string
@@ -227,12 +229,14 @@ export function projectQuestions(items: readonly QuestionItem[]): readonly Quest
  */
 export class QuestionClaims {
   readonly #gateway: BridgeGateway
+  readonly #peer: GatewayPeer
   readonly #log: (message: string) => void
   readonly #random: (byteLength: number) => string
   readonly #claims = new Map<string, Claim>()
 
   constructor(options: QuestionClaimsOptions) {
     this.#gateway = options.gateway
+    this.#peer = options.peer
     this.#log = options.log
     this.#random = options.random ?? randomBase64Url
   }
@@ -399,6 +403,7 @@ export class QuestionClaims {
         namespace: 'userQuestions',
         method: 'answer',
         args: wireArgs('userQuestions', 'answer', { agentId: sessionId, callId, answer: { answers: answer.answers } }),
+        peer: this.#peer,
       }))
       if (accepted !== true) {
         return { ok: false, code: CODE_QUESTION_UNKNOWN, msg: 'the host does not hold this question as answerable yet' }

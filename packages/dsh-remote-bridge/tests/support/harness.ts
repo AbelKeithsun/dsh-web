@@ -246,6 +246,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
   const ownerPeer = createOwnerPeer(new Context())
   const questions = new QuestionClaims({
     gateway,
+    peer: ownerPeer,
     log: message => { logs.push(message) },
     ...(options.questionIds === undefined ? {} : { random: options.questionIds }),
   })
@@ -328,6 +329,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
   const ownerPeer = createOwnerPeer(new Context())
   const questions = new QuestionClaims({
     gateway,
+    peer: ownerPeer,
     log: message => { logs.push(message) },
     ...(options.questionIds === undefined ? {} : { random: options.questionIds }),
   })
