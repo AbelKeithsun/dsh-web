@@ -70,7 +70,13 @@ export interface QuestionAnswer {
 }
 
 /** Whether a question still holds the foreground ask, or only its late reply. */
-export type QuestionState = 'open' | 'continued'
+/**
+ * `open` while the ask is still waiting, `continued` once the host's foreground
+ * wait ended but a late answer can still be steered in, and `settled` as the
+ * one-way notice that the phone's card is over — the host's own UI answered it or
+ * the last paired client left. `settled` is published, never held.
+ */
+export type QuestionState = 'open' | 'continued' | 'settled'
 
 /** `question.request`'s payload, as frozen by the contract. */
 export interface QuestionRequestPayload {
@@ -147,6 +153,13 @@ export interface OpenQuestionInput {
   readonly signal?: AbortSignal
   /** Called once when the host's deadline released the model but the question stayed answerable. */
   readonly onContinued?: (question: ClaimedQuestionView) => void
+  /**
+   * Called when the claim leaves this bridge without the phone answering it — the
+   * host's own UI answered first, or the last paired client went away. The phone
+   * still holds a card for it and has to be told, or it keeps offering a question
+   * that no longer exists.
+   */
+  readonly onSettled?: (question: ClaimedQuestionView) => void
 }
 
 /** One live claim, with every path that settles it. */
@@ -161,6 +174,8 @@ interface Claim {
   readonly delegate: () => void
   readonly detach: () => void
   readonly onContinued: ((question: ClaimedQuestionView) => void) | undefined
+  /** Tells the phone its card is over; set from the input's `onSettled`. */
+  readonly notifySettled: () => void
 }
 
 export interface QuestionClaimsOptions {
@@ -277,6 +292,9 @@ export class QuestionClaims {
       hosted: input.hosted,
       questions: projectQuestions(input.questions),
       state: 'open',
+      notifySettled: (): void => {
+        input.onSettled?.({ sessionId: input.sessionId, callId: input.callId, questions: projectQuestions(input.questions) })
+      },
       settle,
       fail,
       delegate: (): void => {
@@ -293,6 +311,7 @@ export class QuestionClaims {
         if (this.#claims.get(input.callId) !== record) return
         this.#claims.delete(input.callId)
         record.detach()
+        record.notifySettled()
         settle(answered)
       },
       () => undefined,
@@ -342,6 +361,7 @@ export class QuestionClaims {
       if (record === undefined) continue
       this.#claims.delete(callId)
       record.detach()
+      record.notifySettled()
       if (record.state !== 'open') continue
       record.delegate()
       withdrawn += 1

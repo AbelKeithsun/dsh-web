@@ -184,6 +184,11 @@ export class BridgeHub {
       questions: request.questions,
       next,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
+      onSettled: (question): void => {
+        // The phone's card has to go when the desktop answered it, or the phone
+        // keeps offering a question that no longer exists.
+        this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('settled', question))
+      },
       onContinued: (question): void => {
         // The foreground wait ended, but the question is still answerable: the
         // phone is told which state it is in instead of losing the question.
