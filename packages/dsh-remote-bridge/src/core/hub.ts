@@ -121,10 +121,6 @@ export class BridgeHub {
   }
 
   /**
-   * Publish one event to every paired device that announced a capability.
-   * @returns how many connections actually took the frame.
-   */
-  /**
    * Hand one freshly declared connection the questions it can now answer.
    *
    * Without this, a question raised while the phone was reconnecting stays on the
@@ -138,6 +134,10 @@ export class BridgeHub {
     }
   }
 
+  /**
+   * Publish one event to every paired device that announced a capability.
+   * @returns how many connections actually took the frame.
+   */
   broadcastTo(capability: string, topic: string, payload: unknown): number {
     let delivered = 0
     for (const connection of this.#connections) {

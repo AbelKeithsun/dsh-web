@@ -109,8 +109,15 @@ export const CODE_INTERNAL = 'internal'
 
 /** Protocol version this package speaks. */
 export const PROTO = 1
-/** Minor version this package speaks. */
-export const MINOR = 0
+/**
+ * Minor version this package speaks.
+ *
+ * 1 when the extension seam shipped: a client learns from it that a mounted
+ * plugin may answer methods outside {@link KNOWN_METHODS} once it declares the
+ * capability that plugin requires. The major version and every frozen field,
+ * method name and topic name are unchanged by that addition.
+ */
+export const MINOR = 1
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'
 

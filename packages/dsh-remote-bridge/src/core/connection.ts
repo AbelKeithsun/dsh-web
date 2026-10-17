@@ -20,6 +20,7 @@ import type { ApprovalRegistry } from './approvals.ts'
 import type { DeviceRoster } from './devices.ts'
 import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
 import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
+import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import type { PairingService } from './pairing.ts'
 import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
@@ -114,6 +115,12 @@ export interface BridgeConnectionOptions {
    */
   readonly onDeclare?: (connection: BridgeConnection) => void
   readonly heartbeatMs?: number
+  /**
+   * Methods plugins registered on the bridge's extension seam. Absent is the
+   * protocol exactly as this package defines it: every name outside
+   * `KNOWN_METHODS` answers `unknown-method`.
+   */
+  readonly extensions?: RemoteBridgeRegistry
 }
 
 /** A device the connection proved itself to be, resolved from the upgrade request. */
@@ -165,6 +172,23 @@ interface SessionRow {
 
 function refusal(code: string, msg: string): CallFailure {
   return { ok: false, code, msg }
+}
+
+/**
+ * Whether a plugin's answer is one of the two shapes the seam defines.
+ *
+ * An extension is ordinary JavaScript calling into this bridge, so a result the
+ * type system never saw still has to leave the client with an answer instead of
+ * a lost frame.
+ * @param value - what the extension method returned.
+ * @returns whether it carries a usable answer or refusal.
+ */
+function isMethodResult(value: unknown): value is RemoteBridgeMethodResult {
+  if (typeof value !== 'object' || value === null) return false
+  const result = value as { ok?: unknown; code?: unknown; msg?: unknown }
+  if (result.ok === true) return true
+  if (result.ok !== false) return false
+  return typeof result.code === 'string' && result.code !== '' && typeof result.msg === 'string'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -330,7 +354,15 @@ function promptAttachmentsOf(value: unknown): PromptAttachments {
  * one frame at a time by the carrier's reader, and the only background work is
  * a subscription's own drain loop.
  */
+/**
+ * Monotonic source for {@link BridgeConnection.id}. The counter is process-wide
+ * and never reused, so a plugin keying connection-scoped state can trust that a
+ * reclaimed id belongs to no later socket.
+ */
+let connectionSeq = 0
+
 export class BridgeConnection {
+  readonly #id = `c${connectionSeq += 1}`
   readonly #options: BridgeConnectionOptions
   readonly #transport: BridgeTransport
   readonly #sequence = new EventSequence()
@@ -368,6 +400,14 @@ export class BridgeConnection {
   /** @returns whether the connection has been torn down. */
   get disposed(): boolean {
     return this.#disposed
+  }
+
+  /**
+   * @returns this connection's identity for the extension seam. Stable for the
+   * life of the socket and never reused by a later one.
+   */
+  get id(): string {
+    return this.#id
   }
 
   /**
@@ -447,7 +487,12 @@ export class BridgeConnection {
   }
 
   async #dispatch(frame: ReqFrame): Promise<DispatchOutcome> {
-    if (!KNOWN_METHODS.has(frame.m)) return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    const builtIn = KNOWN_METHODS.has(frame.m)
+    // A method no plugin registered is refused here, before the pairing gate, so
+    // the answer costs no plugin lookup and names the method the client invented.
+    if (!builtIn && this.#options.extensions?.has(frame.m) !== true) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // `question.answer` exists only for a client that asked for the question
     // channel: without the capability it is an unknown method, which is exactly
     // what this frame was before the channel existed.
@@ -457,6 +502,11 @@ export class BridgeConnection {
     // Unconditional: a loopback Host buys nothing here. Without a device token
     // only the handshake and the two pairing steps run.
     if (!this.paired && !UNPAIRED_METHODS.has(frame.m)) return refusal(CODE_UNPAIRED, 'this connection is not paired')
+    // Extension methods run after both gates, so a registered name answers
+    // `unpaired` exactly as a protocol method does, and a client that never
+    // declared the capability is told the method does not exist rather than
+    // that it lacks rights to it.
+    if (!builtIn) return await this.#extension(frame)
     switch (frame.m) {
       case METHOD_HELLO: return this.#hello(frame.p)
       case METHOD_PAIR_BEGIN: return this.#pairBegin(frame.p)
@@ -475,6 +525,32 @@ export class BridgeConnection {
       case METHOD_APPROVAL_RESOLVE: return this.#approvalResolve(frame.p)
       case METHOD_QUESTION_ANSWER: return await this.#questionAnswer(frame.p)
       default: return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
+  }
+
+  /**
+   * Run one method a plugin registered on the extension seam.
+   *
+   * The plugin decides everything: whether the payload is usable, what an
+   * answer looks like, and which refusal codes exist in its own protocol. This
+   * bridge only forwards — and owns `internal`, because a handler that throws
+   * or answers nothing usable has left the client with no other honest code.
+   * @param frame - the request being served.
+   */
+  async #extension(frame: ReqFrame): Promise<DispatchOutcome> {
+    const handler = this.#options.extensions?.handlerFor(frame.m, capability => this.declares(capability))
+    // Reached when the name is registered but this client never declared the
+    // capability: the method is not part of its protocol.
+    if (handler === undefined) return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    try {
+      const result = await handler(frame.p, { connectionId: this.#id })
+      if (!isMethodResult(result)) return refusal(CODE_INTERNAL, `${frame.m} answered no result`)
+      return result.ok ? { ok: true, r: result.r } : refusal(result.code, result.msg)
+    } catch (error) {
+      // The plugin's own message is the diagnostic; the client is told the call
+      // failed in this bridge because no extension code would be truthful here.
+      this.#options.log(`${frame.m} failed: ${failureText(error)}`)
+      return refusal(CODE_INTERNAL, failureText(error))
     }
   }
 

@@ -38,6 +38,7 @@ import type {} from '@deepseek-ai/dsh-user-approval'
 import { ApprovalRegistry } from './core/approvals.ts'
 import type { ConnectionAuth } from './core/connection.ts'
 import { DeviceRoster } from './core/devices.ts'
+import { createRemoteBridgeFace, RemoteBridgeRegistry, REMOTE_BRIDGE_SERVICE } from './core/extension.ts'
 import { BridgeHub } from './core/hub.ts'
 import { createOwnerPeer } from './core/owner-peer.ts'
 import { PairingService } from './core/pairing.ts'
@@ -166,7 +167,12 @@ export function apply(ctx: Context): void {
   const questions = new QuestionClaims({ gateway: ctx.typertGateway, peer: ownerPeer, log })
   const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
   const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
+  // The extension seam publishes no protocol vocabulary of its own: another
+  // plugin registers the method names, payloads and topics it owns, and this
+  // package only dispatches and fans out what it was handed.
+  const extensions = new RemoteBridgeRegistry()
   const hub = new BridgeHub({
+    extensions,
     gateway: ctx.typertGateway,
     pairing,
     roster,
@@ -179,6 +185,13 @@ export function apply(ctx: Context): void {
     clientTimeZone: localTimeZone,
     log,
   })
+
+  // A capture-only test context implements no service registry; a Host always
+  // does. Without it the bridge still serves protocol v1, minus other plugins'
+  // methods, which is exactly what not publishing the seam means.
+  if (typeof (ctx as { provide?: unknown }).provide === 'function') {
+    ctx.provide(REMOTE_BRIDGE_SERVICE, createRemoteBridgeFace(extensions, hub))
+  }
 
   ctx.effect(() => {
     void roster.load()

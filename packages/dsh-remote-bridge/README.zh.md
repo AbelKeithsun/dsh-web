@@ -41,7 +41,7 @@
 
 | 方法 | 请求 `p` | 响应 `r` |
 | --- | --- | --- |
-| `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1","session.snapshot.trim.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" 或 "unpaired"}` |
+| `hello` | `{proto:1, minor:1, client:"ios/0.1", cap:["session.stream.v1","session.snapshot.trim.v1"]}` | `{proto:1, minor:1, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" 或 "unpaired"}` |
 | `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
 | `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId, maxBytes?}` | `{turns:[...], lastSeq:<uint>, hasMore?}` |
@@ -82,6 +82,19 @@
 | `turn-end` | `{reason}` | 回合结束；`completed` 之外都算异常结束 |
 
 `approval.request` 的摘要取自宿主按客户端语言给出的显示理由，缺失时回落英文、再回落工具名，并附带工具名本身。客户端用 `approval.resolve` 作答，`decision` 取 `allowed-once` 或 `rejected`；未知或过期的 `id` 会被拒绝，而无人应答的请求在两分钟后按 unavailable 结算，宿主视之为拒绝。桥只在下游有已配对客户端连接时才认领请求：一个都没有时，请求交给下一个应答者，而不是干等一台不在场的手机。
+
+## 扩展缝
+
+本包只发布一道通用扩展缝，自己的词表里不放任何业务词。已挂载的插件解析 cordis 服务 `remoteBridge`，即可向协议 v1 增加方法与事件，而桥不需要知道它们是什么意思：
+
+| 成员 | 契约 |
+| --- | --- |
+| `registerMethods({capability?, methods})` | 增加一张客户端可调用的方法表，返回撤回它们的 disposer；`KNOWN_METHODS` 里的名字、空名字或另一张表已占用的名字一律拒绝，且整张表一起拒绝 |
+| `broadcast(topic, payload, capability?)` | 向已配对的连接推送一个事件（指名能力时只投给声明了它的连接），返回实际收下该帧的连接数 |
+
+已注册方法的派发排在两道协议闸门之后：没有插件注册的名字最先回 `unknown-method`；没有有效设备令牌的连接回 `unpaired`，与协议方法完全一致；从未声明该表所需能力的客户端同样回 `unknown-method`——方法对它而言不存在，而不是没有权限。处理器收到请求载荷与本连接 id，回 `{ok:true, r}` 或 `{ok:false, code, msg}`；两种都原样穿过，因为错误码归注册它的插件所有。处理器抛错、或两种形状都没回时，以桥自己的 `internal` 穿过。
+
+自本扩展缝发布起 `hello` 回 `minor:1`。主版本 1 与全部冻结字段、方法名、主题名都没有变化，因此从未声明任何扩展能力的客户端看到的协议 v1 与之前完全相同。
 
 ## 错误码
 

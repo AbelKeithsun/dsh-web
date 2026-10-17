@@ -8,11 +8,11 @@ describe('protocol v1 authorization and dispatch', () => {
     // Given a connection that presented no device token
     const harness = makeConnection()
     // When the user sends the handshake
-    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, minor: 0, client: 'ios/0.1' }))
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, minor: 1, client: 'ios/0.1' }))
     // Then the handshake answers with this bridge's identity and the unpaired state
     expect(answerOf(harness, 1)).toEqual({
       ok: true,
-      r: { proto: 1, minor: 0, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' },
+      r: { proto: 1, minor: 1, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' },
     })
   })
 

@@ -11,6 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { BridgeConnection, type BridgeConnectionOptions, type BridgeTransport, type ConnectionAuth } from '../../src/core/connection.ts'
 import { ApprovalRegistry } from '../../src/core/approvals.ts'
 import { DeviceRoster } from '../../src/core/devices.ts'
+import { RemoteBridgeRegistry } from '../../src/core/extension.ts'
 import { BridgeHub } from '../../src/core/hub.ts'
 import { createOwnerPeer } from '../../src/core/owner-peer.ts'
 import { PairingService } from '../../src/core/pairing.ts'
@@ -177,6 +178,7 @@ export interface ConnectionHarness {
   readonly approvals: ApprovalRegistry
   readonly ownerPeer: GatewayPeer
   readonly questions: QuestionClaims
+  readonly extensions: RemoteBridgeRegistry
   readonly logs: string[]
 }
 
@@ -194,6 +196,8 @@ export interface HarnessOptions {
   readonly heartbeatMs?: number
   /** Id source for the call ids the question channel mints; the default is random. */
   readonly questionIds?: (byteLength: number) => string
+  /** The extension seam's method registry, when the suite inspects it. */
+  readonly extensions?: RemoteBridgeRegistry
 }
 
 /** Session metadata for a host whose session services are all present. */
@@ -250,7 +254,9 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     log: message => { logs.push(message) },
     ...(options.questionIds === undefined ? {} : { random: options.questionIds }),
   })
+  const extensions = options.extensions ?? new RemoteBridgeRegistry()
   const settings: BridgeConnectionOptions = {
+    extensions,
     gateway,
     pairing,
     roster,
@@ -266,7 +272,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
   }
   const auth: ConnectionAuth | undefined = options.paired === true ? { deviceId: 'dev_harness' } : undefined
   const connection = new BridgeConnection(settings, transport, auth)
-  return { connection, transport, gateway, pairing, roster, approvals, ownerPeer, questions, logs }
+  return { connection, transport, gateway, pairing, roster, approvals, ownerPeer, questions, extensions, logs }
 }
 
 /** One request frame, serialized the way a client sends it. */
@@ -300,6 +306,7 @@ export interface HubHarness {
   readonly approvals: ApprovalRegistry
   readonly ownerPeer: GatewayPeer
   readonly questions: QuestionClaims
+  readonly extensions: RemoteBridgeRegistry
   readonly logs: string[]
 }
 
@@ -318,6 +325,7 @@ export interface BareHubHarness {
   readonly approvals: ApprovalRegistry
   readonly ownerPeer: GatewayPeer
   readonly questions: QuestionClaims
+  readonly extensions: RemoteBridgeRegistry
   readonly logs: string[]
 }
 
@@ -333,7 +341,9 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     log: message => { logs.push(message) },
     ...(options.questionIds === undefined ? {} : { random: options.questionIds }),
   })
+  const extensions = options.extensions ?? new RemoteBridgeRegistry()
   const hub = new BridgeHub({
+    extensions,
     gateway,
     pairing: new PairingService(),
     roster: options.roster ?? new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' }),
@@ -346,7 +356,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },
   })
-  return { hub, gateway, approvals, ownerPeer, questions, logs }
+  return { hub, gateway, approvals, ownerPeer, questions, extensions, logs }
 }
 
 /** One response frame's `ok`, `r` and `e`, exactly as the client reads them. */

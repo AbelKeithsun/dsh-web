@@ -41,7 +41,7 @@ The package publishes one protocol and, beside it, one small browser surface. Wh
 
 | method | request `p` | response `r` |
 | --- | --- | --- |
-| `hello` | `{proto:1, minor:0, client:"ios/0.1", cap:["session.stream.v1","session.snapshot.trim.v1"]}` | `{proto:1, minor:0, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" or "unpaired"}` |
+| `hello` | `{proto:1, minor:1, client:"ios/0.1", cap:["session.stream.v1","session.snapshot.trim.v1"]}` | `{proto:1, minor:1, server:"dsh-remote-bridge", resume:"snapshot", auth:"paired" or "unpaired"}` |
 | `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
 | `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId, maxBytes?}` | `{turns:[...], lastSeq:<uint>, hasMore?}` |
@@ -82,6 +82,19 @@ A second capability bounds the opening screen itself: `session.snapshot.page.v1`
 | `turn-end` | `{reason}` | turn finished; anything other than `completed` is an abnormal end |
 
 An `approval.request` carries a summary taken from the harness's display reason in the client's language, falling back to English and then to the tool name, plus the tool name itself. The client answers it with `approval.resolve`, whose `decision` is either `allowed-once` or `rejected`; an unknown or expired `id` is refused, and a request nobody answers is resolved after two minutes as unavailable, which the harness reads as a rejection. The bridge claims a request only while a paired client is connected: with none, the request is left to the next answerer instead of waiting out a phone that is not there.
+
+## Extension seam
+
+The package publishes one generic seam and puts no vocabulary of its own in it. Mounted plugins resolve the cordis service `remoteBridge` and add methods and events to protocol v1 without the bridge learning what they mean:
+
+| member | contract |
+| --- | --- |
+| `registerMethods({capability?, methods})` | adds a table of client-callable methods and returns the disposer that withdraws them; a name inside `KNOWN_METHODS`, an empty name or a name another table already owns is refused, and the whole table is refused with it |
+| `broadcast(topic, payload, capability?)` | pushes one event to the connections that are paired — and, when a capability is named, declared it — and returns how many took the frame |
+
+A registered method is dispatched after both protocol gates: a name no plugin registered answers `unknown-method` before anything else runs, a client without a live device token answers `unpaired` exactly as it does for a protocol method, and a client that never declared the table's capability is told `unknown-method` — the method is absent from its protocol rather than forbidden to it. The handler receives the request payload and the calling connection's id, and answers `{ok:true, r}` or `{ok:false, code, msg}`; the bridge forwards either verbatim, because refusal codes belong to the registering plugin. A handler that throws, or answers neither shape, crosses as the bridge's own `internal`.
+
+`hello` answers `minor:1` since this seam shipped. Major 1 and every frozen field, method name and topic name are unchanged by it, so a client that never declares an extension capability sees protocol v1 exactly as before.
 
 ## Error codes
 
