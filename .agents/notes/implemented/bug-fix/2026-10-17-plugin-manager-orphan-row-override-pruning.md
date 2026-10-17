@@ -51,3 +51,13 @@ Ownership is a shape, not a hunch. `overrideRowId` claims a top-level item only 
 
 - `packages/dsh-plugin-manager/tests/rows.spec.ts` pins the pure edit: the retired override is dropped while the comment block, a live override and a config row stay byte-identical; an already-pruned layer returns the input text with nothing pruned; a config row, an insert wrapper and a row with an extra key are never classified as overrides.
 - `packages/dsh-plugin-manager/tests/gateway-jobs.spec.ts` pins the transaction: an update over a layer carrying a retired id ends pruned with `cordis.patch.yml.bak-plugin-manager` holding the pre-prune text; the same update run again writes nothing (the backup still holds the pre-prune text); a layer whose overrides are all live is byte-identical and leaves no backup; a write failure settles the job as `error` with the backup in place; a desktop-owned update prunes through the read-only probe, and leaves the layer untouched when no composition can be read.
+
+## Known limitation: the transition that creates the orphan cannot run the prune
+
+Post-publish verification against the real registry (isolated home, pinned `0.2.1-rc.2` CLI) showed that a `0.4.6` to `0.4.7` upgrade does not prune: the override survives, no `.bak-plugin-manager` backup is written, and `dsh --dump-config` keeps printing `patch: entry "web-ui-model-capabilities" not found`.
+
+The cause is structural rather than a wiring bug. An update runs the plugin-manager code the running host already loaded, so the update that installs `0.4.7` is executed by `0.4.6` handlers (an npm pack of `@linxin666/dsh-client-ui-plugin-manager@0.4.6` contains zero references to `pruneOrphanRowOverrides`). Nothing repairs it afterwards: boot composes without touching the patch, and a second update short-circuits with `409 already at 0.4.7`. The entry is cleared by the next update that runs under `0.4.7` or later, so the residue is one update behind rather than permanent.
+
+The `0.4.7` upgrade matrix passed this scenario because it imported `makeGatewayRoutes` from repository source, exercising `0.4.7` handlers over a `0.4.6` profile. Substituting a local registry for the unpublished `0.4.7` tarball also substituted the handler code under test, which is the part that mattered.
+
+Decision for `0.4.7`: disclose the limitation in the release notes and the release body with a manual fix, and move the prune to a path that runs for an already-upgraded host (after boot or on first gateway touch, plus the install and remove jobs) in the next release. Any future row retirement must prune before the retiring version performs the transition, or accept the same one-update lag.
