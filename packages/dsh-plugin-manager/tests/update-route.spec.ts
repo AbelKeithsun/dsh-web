@@ -274,15 +274,42 @@ describe('gateway update route', () => {
     expect(unknownResponse.body()).toMatchObject({ error: expect.stringContaining('cannot verify the running DSH version') })
     expect(unknownHost.update).not.toHaveBeenCalled()
 
-    const unsupported = updateHandler(
+    const unparsable = updateHandler(
       facts,
-      async () => manifest('1.1.0', { dsh: { engines: { dsh: '^0.1.0-rc.8' } } }),
+      async () => manifest('1.1.0', { dsh: { engines: { dsh: 'not-a-range' } } }),
       async () => '0.1.0-rc.7',
     )
-    const unsupportedResponse = response()
-    await unsupported.handler(request({ id: 'dsh-memoir' }), unsupportedResponse.res)
-    expect(unsupportedResponse.status()).toBe(412)
-    expect(unsupported.update).not.toHaveBeenCalled()
+    const unparsableResponse = response()
+    await unparsable.handler(request({ id: 'dsh-memoir' }), unparsableResponse.res)
+    expect(unparsableResponse.status()).toBe(412)
+    expect(unparsable.update).not.toHaveBeenCalled()
+  })
+
+  it('operator gets an update gated by a multi-form range the way the official boot gate decides it', async () => {
+    // Given a release declaring dsh-context's two-alternative engines range
+    const { facts, dir } = profile('^1.0.0')
+    tempDirs.push(dir)
+    const declared = '>=0.1.7-rc.2 || >=0.2.0-rc.2'
+
+    // When the host sits on the newer rc line
+    const allowed = updateHandler(facts, async () => manifest('1.1.0', { dsh: { engines: { dsh: declared } } }), async () => '0.2.1-rc.2')
+    const allowedResponse = response()
+    await allowed.handler(request({ id: 'dsh-memoir' }), allowedResponse.res)
+
+    // Then the update runs instead of being rejected as unverifiable
+    expect(allowedResponse.status()).toBe(200)
+    expect(allowed.update).toHaveBeenCalledWith('dsh-memoir', '1.1.0')
+
+    // When the host predates every alternative that range offers
+    const blocked = updateHandler(facts, async () => manifest('1.1.0', { dsh: { engines: { dsh: declared } } }), async () => '0.1.0-rc.8')
+    const blockedResponse = response()
+    await blocked.handler(request({ id: 'dsh-memoir' }), blockedResponse.res)
+
+    // Then the gate blocks it and names the declaration and the running version
+    expect(blockedResponse.status()).toBe(412)
+    expect(blockedResponse.body()).toMatchObject({ error: expect.stringContaining('requires DSH ' + declared) })
+    expect(blockedResponse.body()).toMatchObject({ error: expect.stringContaining('current DSH 0.1.0-rc.8') })
+    expect(blocked.update).not.toHaveBeenCalled()
   })
 
   it('operator gets an update allowed from the running installation manifest with no CLI at all (issue #1819)', async () => {

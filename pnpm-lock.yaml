@@ -374,6 +374,9 @@ importers:
 
   packages/dsh-plugin-manager:
     dependencies:
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
       yaml:
         specifier: ^2.8.2
         version: 2.9.1
@@ -423,6 +426,9 @@ importers:
       '@types/react-dom':
         specifier: ^18.3.5
         version: 18.3.7(@types/react@18.3.31)
+      '@types/semver':
+        specifier: ^7.8.0
+        version: 7.8.0
       jsdom:
         specifier: ^26.0.0
         version: 26.1.0(supports-color@7.2.0)
@@ -2576,6 +2582,9 @@ packages:
 
   '@types/react@18.3.31':
     resolution: {integrity: sha512-vfEqpXTvwT91yhmwdfouStN2hSKwTvyRs8qpLfADyrq/kxDw0hZM7Wk9Ug1FELj8hIby+S/+kQCSRFF32nv2Qw==}
+
+  '@types/semver@7.8.0':
+    resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
 
   '@types/ssh2@1.15.6':
     resolution: {integrity: sha512-oGdxhBqcRTwSTKFm+9EiKzkNVYRLEFkcW44lhguvBalGJbWfGnDt/ezwSUZc+SF9m9bMc3VyklNAtp7zICjS5w==}
@@ -4888,6 +4897,8 @@ snapshots:
     dependencies:
       '@types/prop-types': 15.7.15
       csstype: 3.2.3
+
+  '@types/semver@7.8.0': {}
 
   '@types/ssh2@1.15.6':
     dependencies:

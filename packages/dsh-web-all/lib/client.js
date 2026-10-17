@@ -782,7 +782,9 @@ window.__ModuleLoader__.load({
 		* The bare minimum version for display: strips the `>=` operator (and an
 		* optional leading `v`) from a declared requirement so UI copy that already
 		* contains the comparison operator renders `0.1.1-rc.1` instead of
-		* `>= >=0.1.1-rc.1`. Unsupported range forms render unchanged.
+		* `>= >=0.1.1-rc.1`. Every other range form renders unchanged — the browser
+		* half does not evaluate a range (the host does, in `../host/dsh-compat.ts`),
+		* so it must not pull a range parser into the client bundle to shorten copy.
 		* @param minimum - the declared minimum range.
 		* @returns the version portion for display.
 		*/
