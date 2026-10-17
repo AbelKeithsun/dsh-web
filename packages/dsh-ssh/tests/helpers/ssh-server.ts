@@ -1,8 +1,9 @@
 /**
  * Embedded ssh2 test server: password + publickey auth, a command shim
  * (echo / exit codes / hang), a shell that echoes input, TCP forwarding for
- * tunnel tests, and a real file-backed SFTP server (ssh2-sftp-server) rooted
- * at the process cwd. No external sshd required.
+ * tunnel tests, a real file-backed SFTP server (ssh2-sftp-server) rooted at the
+ * process cwd, and the ssh-agent forwarding request counter. No external sshd
+ * required.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -79,12 +80,30 @@ export class TestSshServer {
   readonly port: number
   /** Successful connections seen. */
   connectCount = 0
+  /**
+   * `auth-agent-req@openssh.com` requests received on session channels: each
+   * forwarded session sends exactly one, so a test can tell whether the client
+   * asked for agent forwarding and how many times.
+   */
+  agentRequests = 0
+  /**
+   * Whether the server answers the forwarding request. A false value models a
+   * server with `AllowAgentForwarding no`, which rejects the request; the
+   * client must then report the failure instead of silently continuing.
+   */
+  acceptAgentForwarding = true
   /** Client keypair for key-auth tests. */
   readonly keyPair: KeyPairPaths
   private readonly server: Server
   private readonly clients: ServerConnection[]
   private readonly echoServer: NetServer
   private readonly dir: string
+  /**
+   * The instance being constructed, so the connection listener above can count
+   * requests on it. The harness outlives every connection, so the holder is
+   * always populated by the time a client connects.
+   */
+  private readonly harnessState: { current: TestSshServer | undefined }
 
   private constructor(
     port: number,
@@ -93,6 +112,7 @@ export class TestSshServer {
     dir: string,
     keyPair: KeyPairPaths,
     clients: ServerConnection[],
+    harnessState: { current: TestSshServer | undefined },
   ) {
     this.port = port
     this.server = server
@@ -100,6 +120,8 @@ export class TestSshServer {
     this.dir = dir
     this.keyPair = keyPair
     this.clients = clients
+    this.harnessState = harnessState
+    harnessState.current = this
   }
 
   /** Port of the TCP echo server (tunnel target). */
@@ -125,6 +147,7 @@ export class TestSshServer {
     await new Promise<void>((resolve) => { echoServer.listen(0, '127.0.0.1', resolve) })
 
     const clients: ServerConnection[] = []
+    const harnessState: { current: TestSshServer | undefined } = { current: undefined }
     let connectCount = 0
     const server = new Server({ hostKeys: [readFileSync(hostKey)] }, (client) => {
       clients.push(client)
@@ -149,6 +172,19 @@ export class TestSshServer {
       }).on('ready', () => {
         client.on('session', (accept) => {
           const session = accept()
+          // ssh-agent forwarding: the client asks once per session channel
+          // (before exec/shell); accepting is what makes the remote able to
+          // open an `auth-agent@openssh.com` channel back through this link.
+          session.on('auth-agent', (acceptAgent, rejectAgent) => {
+            const harness = harnessState.current
+            if (harness === undefined) {
+              rejectAgent()
+              return
+            }
+            harness.agentRequests += 1
+            if (harness.acceptAgentForwarding) acceptAgent()
+            else rejectAgent()
+          })
           session.on('exec', (acceptExec, _rejectExec, info) => {
             const stream = acceptExec() as unknown as ClientChannel
             handleCommand(info.command, stream)
@@ -188,7 +224,7 @@ export class TestSshServer {
     })
     const address = server.address()
     const port = typeof address === 'object' && address !== null ? address.port : 0
-    const harness = new TestSshServer(port, server, echoServer, dir, keyPair, clients)
+    const harness = new TestSshServer(port, server, echoServer, dir, keyPair, clients, harnessState)
     harness.connectCount = connectCount
     // The static this-binding above is awkward; keep the counter fresh via getter.
     server.on('connection', () => { harness.connectCount += 1 })

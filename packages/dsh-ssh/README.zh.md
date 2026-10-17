@@ -22,8 +22,9 @@
 | 能力 | 说明 |
 | --- | --- |
 | 主机管理 | 增删改查、搜索、连接测试；支持按环境 / 标签分组折叠与组内批量测试；配置存 `~/.dsh/dsh-ssh.json`；支持密钥 / 密码 / ssh-agent 认证（OpenSSH agent / Pageant）、passphrase 密钥、ProxyJump 跳板机（多级）与 OpenSSH `ProxyCommand` 传输层（堡垒机客户端场景） |
-| 配置导入 | 一键解析标准 `~/.ssh/config`（Host/HostName/User/Port/IdentityFile/IdentityAgent/ProxyJump/ProxyCommand、`Include` 文件、无 HostName 的块）；被跳过的块逐条列出原因（通配符 pattern、别名已存在、Match 条件块、字段不合法） |
+| 配置导入 | 一键解析标准 `~/.ssh/config`（Host/HostName/User/Port/IdentityFile/IdentityAgent/ForwardAgent/ProxyJump/ProxyCommand、`Include` 文件、无 HostName 的块）；`ForwardAgent yes|true|on` 导入为启用，`no|false|off` 或没有该指令导入为关闭；被跳过的块逐条列出原因（通配符 pattern、别名已存在、Match 条件块、字段不合法） |
 | 持久连接池 | 每台主机复用长连接（对应 ssh-skill 的守护进程），空闲 30 分钟自动断开，断线自动重连（最多 3 次） |
+| Agent 转发 | 按主机选择性启用（`ssh -A`）：主机表单提供「启用 Agent 转发」勾选框，主机列表为已启用的主机显示「Agent 转发」标记；`ssh_list` 输出带 `forwardAgent`，渲染表格中对应一列。转发的本地端点依次取主机配置的 agent 路径、`SSH_AUTH_SOCK`、Windows 上的 Pageant；三者都拿不到时连接直接报错，不会静默地不转发。服务端拒绝该请求（`AllowAgentForwarding no`）时原样呈现服务端错误，绝不静默降级为未转发的会话。关闭时不写入配置文件 |
 | 命令执行 | exec 带超时（默认 60s），stdout/stderr 分离，输出截断保护（2MB） |
 | Web 终端 | xterm.js + WebSocket PTY 终端，自适应尺寸，实时输出 |
 | 文件传输 | SFTP 上传（浏览器选文件，NDJSON 进度流）、下载（进度条 + 浏览器保存）；远程目录浏览 |
@@ -38,8 +39,9 @@
 - 所有 `/api/dsh-ssh/*` 路由仅限 loopback 访问（含同源校验）——对远程服务器执行命令的接口不会暴露给局域网。
 - 密码 / 密钥口令以明文保存在 `~/.dsh/dsh-ssh.json`，文件权限 0600、目录 0700（与 ssh-skill 把密码写进 ssh-config 注释同一信任模型）。
 - ssh-agent 认证仅保存 agent socket 路径（或 `pageant` 特殊值），不读取也不保存任何私钥材料。
+- Agent 转发是按主机选择性启用的能力，默认关闭。启用 `forwardAgent` 后，该主机上的每个 exec 与 PTY 会话都会向服务端请求 `auth-agent-req@openssh.com`，这意味着远端主机可以用你本机的密钥以这台机器的身份完成认证。只为你信任的主机启用，并记住这类主机上的每个会话都能使用被转发的 agent。本地端点（主机配置的 agent 路径、`SSH_AUTH_SOCK`、Windows 上的 Pageant）解析不出来时连接直接失败，而不是什么都不转发；服务端拒绝该请求时，其错误原样呈现。
 - 隧道只监听 `127.0.0.1`。
-- 删除主机或修改其连接字段（host / port / user / auth / proxyJump / proxyCommand）会立即断开该别名的池化连接与隧道，后续操作按新配置重新建连，不会复用旧凭据的已认证连接。
+- 删除主机或修改其连接字段（host / port / user / auth / proxyJump / proxyCommand / forwardAgent）会立即断开该别名的池化连接与隧道，后续操作按新配置重新建连，不会复用旧凭据的已认证连接。
 - 隧道背后的 SSH 连接一旦断开，隧道会自行退役：本地端口不再接受连接，隧道从列表中消失；断开期间到达的连接被直接关闭且没有流量，不会打断宿主进程。
 - `proxyCommand` 是一条由 DSH 宿主进程以其自身权限执行的 shell 命令——与 `ssh(1)` 执行 `~/.ssh/config` 里同一行的信任模型一致。它只能来自用户自己的 0600 配置文件：Agent 无法创建或修改主机，`ssh_list` 只报告该主机是否配置了 ProxyCommand，不返回命令原文。
 - Agent 使用工具前，主机需先在 GUI 中配置（或从 ~/.ssh/config 导入）。

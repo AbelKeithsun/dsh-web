@@ -32,6 +32,7 @@ interface FormState {
   agentPath: string
   proxyJump: string
   proxyCommand: string
+  forwardAgent: boolean
   description: string
   environment: string
   tags: string
@@ -57,6 +58,7 @@ function blankOf(editing: SshHostSummary | null | undefined): FormState {
     agentPath: '',
     proxyJump: (editing?.proxyJump ?? []).join(', '),
     proxyCommand: editing?.proxyCommand ?? '',
+    forwardAgent: editing?.forwardAgent === true,
     description: editing?.description ?? '',
     environment: editing?.environment ?? '',
     tags: (editing?.tags ?? []).join(', '),
@@ -126,6 +128,10 @@ export function HostFormDialog({ api, editing, onClose, onSaved }: HostFormDialo
       // Always sent (never omitted): an empty value is the explicit clear,
       // because the API cannot express "remove this field" any other way.
       proxyCommand: form.proxyCommand.trim(),
+      // Always sent (never omitted): the flag is a plain boolean, so saving the
+      // form can both enable and clear forwarding (omitting it would keep the
+      // stored value under PATCH semantics).
+      forwardAgent: form.forwardAgent,
       description: form.description.trim() === '' ? undefined : form.description.trim(),
       environment: form.environment.trim() === '' ? undefined : form.environment.trim(),
       tags: splitList(form.tags),
@@ -226,6 +232,11 @@ export function HostFormDialog({ api, editing, onClose, onSaved }: HostFormDialo
             onChange={event => { set('proxyCommand', event.target.value) }}
           />
           <span className={css.hint}>{tt('form.proxyCommandHint')}</span>
+        </label>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>{tt('form.forwardAgent')}</span>
+          <input type="checkbox" checked={form.forwardAgent} onChange={event => { set('forwardAgent', event.target.checked) }} />
+          <span className={css.hint}>{tt('form.forwardAgentHint')}</span>
         </label>
         <div className={css.formRow}>
           <label className={css.field}>

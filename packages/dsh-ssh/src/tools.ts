@@ -28,6 +28,7 @@ export interface AgentHostRow {
   keyReady: boolean
   proxyJump: string[]
   proxyCommandConfigured: boolean
+  forwardAgent: boolean
   description?: string
   environment?: string
   tags: string[]
@@ -52,11 +53,14 @@ function renderHosts(hosts: AgentHostRow[]): string {
     host.user,
     host.auth,
     host.proxyJump.length > 0 ? 'jump:' + host.proxyJump.join(',') : host.proxyCommandConfigured ? 'proxy-command' : '-',
+    // Forwarding is a security-relevant opt-in (the remote can sign with this
+    // machine's agent), so the model must see it in the table, not only in JSON.
+    host.forwardAgent ? 'yes' : '-',
     host.environment ?? '-',
     (host.tags.length > 0 ? host.tags.join(',') : '-'),
     host.description ?? '',
   ].join(' | '))
-  return ['alias | host | port | user | auth | proxy | environment | tags | description', '--- | --- | --- | --- | --- | --- | --- | --- | ---', ...rows].join('\n')
+  return ['alias | host | port | user | auth | proxy | forward | environment | tags | description', '--- | --- | --- | --- | --- | --- | --- | --- | --- | ---', ...rows].join('\n')
 }
 
 /** Render one exec result (mirrors the bash-tool exit-code convention). */
@@ -91,7 +95,7 @@ function renderTunnel(tunnel: TunnelInfo): string {
 export function sshListTool(engine: SshEngine) {
   return defineTool({
     name: 'ssh_list',
-    description: 'List configured SSH hosts (alias, host, user, auth, environment, tags, description). Use ssh_exec etc. with the alias.',
+    description: 'List configured SSH hosts (alias, host, user, auth, agent forwarding, environment, tags, description). Use ssh_exec etc. with the alias.',
     parameters: {
       query: { type: 'string', description: 'Optional fuzzy match against alias, description, host, and tags.' },
     },
@@ -115,6 +119,7 @@ export function sshListTool(engine: SshEngine) {
                 keyReady: { type: 'boolean', required: true },
                 proxyJump: { type: 'array', items: { type: 'string' }, required: true },
                 proxyCommandConfigured: { type: 'boolean', required: true },
+                forwardAgent: { type: 'boolean', required: true },
                 description: { type: 'string' },
                 environment: { type: 'string' },
                 tags: { type: 'array', items: { type: 'string' }, required: true },

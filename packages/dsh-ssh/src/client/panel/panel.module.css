@@ -338,6 +338,12 @@
   border-color: var(--dsw-alias-state-business-primary);
 }
 
+.badge[data-kind='forward-agent'] {
+  margin-left: 6px;
+  color: var(--dsw-alias-state-warn-primary);
+  border-color: var(--dsw-alias-state-warn-primary);
+}
+
 .badge[data-status='ok'] {
   color: var(--dsw-alias-state-success-primary);
   border-color: var(--dsw-alias-state-success-primary);

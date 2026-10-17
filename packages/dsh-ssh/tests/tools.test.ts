@@ -86,6 +86,7 @@ const host: SshHostSummary = {
   environment: 'production',
   tags: ['web'],
   location: 'dc-a',
+  forwardAgent: false,
   createdAt: 1,
   updatedAt: 1,
 }
@@ -131,6 +132,48 @@ describe('ssh_list', () => {
     const text = render(tool, result)
     expect(text).toContain('proxy-command')
     expect(text).toContain('jump:bastion')
+  })
+})
+
+describe('ssh_list agent forwarding', () => {
+  it('member listing hosts gets forwardAgent as a required boolean field in the schema', () => {
+    // Given the ssh_list tool and its declared output schema
+    const tool = sshListTool(engine(new StubEngine()))
+    const schema = tool.output.schema as unknown as {
+      properties: { hosts: { items: { properties: Record<string, { type?: string }>; required: string[] } } }
+    }
+
+    // When the per-host row schema is inspected
+    const items = schema.properties.hosts.items
+    const field = items.properties['forwardAgent']
+
+    // Then the field is declared, typed as a boolean and required, so an
+    // undefined value can never reach the tool bridge
+    expect(field).toEqual({ type: 'boolean' })
+    expect(items.required).toContain('forwardAgent')
+  })
+
+  it('member listing a forwarding host sees the flag on the row and a yes cell in the table', async () => {
+    // Given one forwarding host and one host without the opt-in
+    const stub = new StubEngine()
+    stub.hosts = [{ ...host, forwardAgent: true }, { ...host, alias: 'plain-host' }]
+    const tool = sshListTool(engine(stub))
+
+    // When the host list is produced and rendered
+    const result = await run(tool, {})
+    const rows = result.hosts as Array<Record<string, unknown>>
+    const text = render(tool, result)
+
+    // Then the row carries a definite boolean and the table shows a forward
+    // column with the enabled host marked, and the tool advertises the column
+    expect(tool.description).toContain('agent forwarding')
+    expect(rows[0]?.['forwardAgent']).toBe(true)
+    expect(rows[1]?.['forwardAgent']).toBe(false)
+    expect(text).toContain('forward')
+    const plainRow = text.split('\n').find(line => line.startsWith('plain-host '))
+    expect(plainRow?.split(' | ')[6]).toBe('-')
+    const forwardingRow = text.split('\n').find(line => line.startsWith('web-01 '))
+    expect(forwardingRow?.split(' | ')[6]).toBe('yes')
   })
 })
 

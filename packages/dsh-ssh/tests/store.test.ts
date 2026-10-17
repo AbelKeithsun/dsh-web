@@ -339,6 +339,111 @@ describe('import from ssh config', () => {
   })
 })
 
+describe('agent forwarding', () => {
+  it('member enabling forwarding on a host round-trips it through find and summarize', () => {
+    // Given a store with a password host that opts into agent forwarding
+    const store = makeStore()
+    store.create({ ...basePayload, alias: 'forwarded', forwardAgent: true })
+
+    // When the entry is read back and projected for the browser and the agent
+    const stored = store.find('forwarded')
+    const summary = store.summarize(stored!)
+
+    // Then the flag survives storage and is projected as a definite boolean
+    expect(stored?.forwardAgent).toBe(true)
+    expect(summary.forwardAgent).toBe(true)
+  })
+
+  it('member leaving forwarding off sees the flag absent on disk yet projected as false', () => {
+    // Given a host created without the forwarding opt-in
+    const store = makeStore()
+    store.create(basePayload)
+    store.create({ ...basePayload, alias: 'explicit-off', forwardAgent: false })
+
+    // When the persisted file and the summary are inspected
+    const persisted = JSON.parse(readFileSync(store.path, 'utf8')) as { hosts: Array<Record<string, unknown>> }
+    const summary = store.summarize(store.find('web-01')!)
+
+    // Then the key is omitted on disk (the pre-feature format stays identical)
+    // and only expressed as false in the projection
+    expect('forwardAgent' in (persisted.hosts[0] ?? {})).toBe(false)
+    expect('forwardAgent' in (persisted.hosts[1] ?? {})).toBe(false)
+    expect(summary.forwardAgent).toBe(false)
+  })
+
+  it('member sending a non-boolean forwarding value is rejected by create and update', () => {
+    // Given a store holding one host
+    const store = makeStore()
+    store.create(basePayload)
+
+    // When a payload carries a non-boolean forwardAgent
+    const created = store.create.bind(store, { ...basePayload, alias: 'wrong-type', forwardAgent: 'yes' as unknown as boolean })
+    const updated = store.update.bind(store, 'web-01', { forwardAgent: 1 as unknown as boolean })
+
+    // Then both write paths refuse it with the documented message
+    expect(created).toThrow('forwardAgent must be a boolean')
+    expect(updated).toThrow('forwardAgent must be a boolean')
+    expect(validateHostPayload({ host: 'h', user: 'u', forwardAgent: 'no' })).toBe('forwardAgent must be a boolean')
+  })
+
+  it('admin toggling forwarding off clears it while an omitted key keeps the stored value', () => {
+    // Given a host with forwarding enabled
+    const store = makeStore()
+    store.create({ ...basePayload, forwardAgent: true })
+
+    // When a patch leaves the key out, then a later patch sets it to false
+    const kept = store.update('web-01', { description: 'touched' })
+    const cleared = store.update('web-01', { forwardAgent: false })
+
+    // Then the omission preserves the opt-in and the explicit false removes it
+    expect(kept.forwardAgent).toBe(true)
+    expect(cleared.forwardAgent).toBeUndefined()
+    expect(store.summarize(store.find('web-01')!).forwardAgent).toBe(false)
+  })
+
+  it('operator importing ssh_config maps yes, true and on to on and everything else to off', () => {
+    // Given an ssh_config mixing recognized and unrecognized ForwardAgent values
+    const store = makeStore([
+      'Host fa-yes',
+      '    HostName 10.8.0.1',
+      '    ForwardAgent yes',
+      '',
+      'Host fa-true',
+      '    HostName 10.8.0.2',
+      '    ForwardAgent TRUE',
+      '',
+      'Host fa-on',
+      '    HostName 10.8.0.3',
+      '    ForwardAgent  on ',
+      '',
+      'Host fa-no',
+      '    HostName 10.8.0.4',
+      '    ForwardAgent no',
+      '',
+      'Host fa-absent',
+      '    HostName 10.8.0.5',
+      '',
+      'Host fa-garbage',
+      '    HostName 10.8.0.6',
+      '    ForwardAgent sometimes',
+    ].join('\n'))
+
+    // When the import runs
+    const result = store.importFromSshConfig()
+
+    // Then only the affirmative spellings enable forwarding, and the
+    // unrecognized value costs nothing: the block is still imported
+    expect(result.added).toBe(6)
+    expect(store.find('fa-yes')?.forwardAgent).toBe(true)
+    expect(store.find('fa-true')?.forwardAgent).toBe(true)
+    expect(store.find('fa-on')?.forwardAgent).toBe(true)
+    expect(store.find('fa-no')?.forwardAgent).toBeUndefined()
+    expect(store.find('fa-absent')?.forwardAgent).toBeUndefined()
+    expect(store.find('fa-garbage')?.forwardAgent).toBeUndefined()
+    expect(store.find('fa-garbage')?.host).toBe('10.8.0.6')
+  })
+})
+
 describe('file safety', () => {
   it('writes the store with owner-only permissions', () => {
     const store = makeStore()

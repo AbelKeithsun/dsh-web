@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { makeRoutes } from '../src/routes.ts'
 import { HostStore } from '../src/store.ts'
 import { SSH_API, type SshHostSummary } from '../src/protocol.ts'
-import type { SshEngine, ShellSession } from '../src/engine.ts'
+import { SshEngine, type PoolRecord, type ShellSession } from '../src/engine.ts'
 
 /** In-memory engine stub for route-level tests. */
 class StubEngine {
@@ -457,10 +457,10 @@ function fakeJsonResponse(): { res: ServerResponse; state: { status: number; hea
 }
 
 /** One fake IncomingMessage: loopback socket + Host, optional raw body, destroy spy. */
-function fakeJsonRequest(url: string, rawBody?: string): { req: IncomingMessage; destroy: ReturnType<typeof vi.fn> } {
+function fakeJsonRequest(url: string, rawBody?: string, method = 'POST'): { req: IncomingMessage; destroy: ReturnType<typeof vi.fn> } {
   const destroy = vi.fn()
   const req = {
-    method: 'POST',
+    method,
     url,
     socket: { remoteAddress: '127.0.0.1' },
     headers: {
@@ -539,5 +539,48 @@ describe('json body failure contract', () => {
     expect(state.headers['content-type']).toBe('application/json; charset=utf-8')
     expect(state.headers['referrer-policy']).toBe('no-referrer')
     expect(destroy).not.toHaveBeenCalled()
+  })
+})
+
+describe('hosts PATCH connection invalidation', () => {
+  it('operator patching agent forwarding drops the pooled connection for that alias', async () => {
+    // Given a host with forwarding off and a live pooled connection for it
+    const realStore = new HostStore(join(dir, 'forward-patch-hosts.json'))
+    realStore.create({
+      alias: 'forward-patch',
+      host: '10.0.0.9',
+      user: 'root',
+      auth: { kind: 'password', password: 'pw' },
+    })
+    const realEngine = new SshEngine(realStore, { idleTimeoutMs: 60_000, connectTimeoutMs: 5_000 })
+    const closed: string[] = []
+    realEngine.pool.set('forward-patch', {
+      client: { end: () => { closed.push('target') } },
+      hops: [],
+      idleAt: Date.now(),
+      pinned: false,
+      broken: false,
+      inFlight: 0,
+    } as unknown as PoolRecord)
+    const routes = makeRoutes({
+      store: realStore,
+      engine: realEngine,
+      stagingDir: join(dir, 'forward-patch-staging'),
+    }).routes
+    try {
+      // When the forwarding flag is toggled through the PATCH route
+      const { req } = fakeJsonRequest(SSH_API.hosts + '?alias=forward-patch', JSON.stringify({ forwardAgent: true }), 'PATCH')
+      const { res, state } = fakeJsonResponse()
+      await handlerFor(SSH_API.hosts, routes).handler(req, res)
+
+      // Then the setting is stored and the pooled connection is gone, so the
+      // next operation reconnects with forwarding negotiated
+      expect(state.status).toBe(200)
+      expect(realStore.find('forward-patch')?.forwardAgent).toBe(true)
+      expect(realEngine.pool.has('forward-patch')).toBe(false)
+      expect(closed).toEqual(['target'])
+    } finally {
+      realEngine.dispose()
+    }
   })
 })
