@@ -8,7 +8,7 @@
  * host answer hides the card; other failures keep the last snapshot).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { FOOT_CARD_COLLAPSED_KEY, UsageFootCard, type UsageFootCardProps } from '../src/client/UsageFootCard.tsx'
@@ -423,5 +423,84 @@ describe('UsageFootCard collapse state', () => {
 
     // Then the strip renders a neutral placeholder instead of the loading prose
     expect(container.querySelector('[data-dsh-part="foot-card-strip"]')?.textContent).toContain('—')
+  })
+})
+
+/**
+ * The DeepSeek pricing clock on the card: red inside a published peak window,
+ * green off-peak (weekends and public holidays are off-peak in full), and
+ * nothing at all for a route outside the DeepSeek family. Instants are fixed
+ * so the assertions never depend on when the suite runs.
+ */
+describe('UsageFootCard DeepSeek pricing clock', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('user sees a peak marker while the DeepSeek peak window runs', () => {
+    // Given the clock stands at Friday 10:00 Beijing time, inside a peak window
+    document.documentElement.lang = 'zh'
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-28T02:00:00Z'))
+    const over = overview([deepseekBalance], { calls: 45, cost: 12.34 })
+
+    // When the card renders on the DeepSeek route
+    const { container } = render(<UsageFootCard {...cardProps(over)} />)
+
+    // Then the marker says peak, carries the state the red tone hangs off, and
+    // keeps the priced sentence in its title
+    const badge = container.querySelector('[data-dsh-part="peak-status"]')
+    expect(badge?.getAttribute('data-peak')).toBe('on')
+    expect(badge?.textContent).toBe('高峰')
+    expect(badge?.getAttribute('title')).toContain('高峰时段')
+  })
+
+  it('user sees the off-peak marker on a weekend morning', () => {
+    // Given the clock stands at Saturday 10:00 Beijing time (off-peak in full)
+    document.documentElement.lang = 'zh'
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-29T02:00:00Z'))
+    const over = overview([deepseekBalance], { calls: 45, cost: 12.34 })
+
+    // When the card renders on the DeepSeek route
+    const { container } = render(<UsageFootCard {...cardProps(over)} />)
+
+    // Then the marker says off-peak and carries the green state
+    const badge = container.querySelector('[data-dsh-part="peak-status"]')
+    expect(badge?.getAttribute('data-peak')).toBe('off')
+    expect(badge?.textContent).toBe('空闲')
+  })
+
+  it('user sees the marker on the collapsed strip as well', () => {
+    // Given a collapsed card inside a peak window
+    document.documentElement.lang = 'zh'
+    window.localStorage.setItem(FOOT_CARD_COLLAPSED_KEY, '1')
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-28T02:00:00Z'))
+    const over = overview([deepseekBalance], { calls: 45, cost: 12.34 })
+
+    // When the card renders collapsed
+    const { container } = render(<UsageFootCard {...cardProps(over)} />)
+
+    // Then the one-line strip carries the peak marker beside the provider name
+    const strip = container.querySelector('[data-dsh-part="foot-card-strip"]')
+    const badge = strip?.querySelector('[data-dsh-part="peak-status"]')
+    expect(badge?.getAttribute('data-peak')).toBe('on')
+    expect(badge?.textContent).toBe('高峰')
+  })
+
+  it('user sees no marker on a provider outside the DeepSeek family', () => {
+    // Given the session route belongs to another provider inside the same window
+    document.documentElement.lang = 'zh'
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-28T02:00:00Z'))
+    const over = overview([], { calls: 3, cost: 1.5 })
+    over.current = { provider: 'openrouter', model: '', source: 'live' }
+
+    // When the card renders
+    const { container } = render(<UsageFootCard {...cardProps(over)} />)
+
+    // Then the DeepSeek pricing clock stays off this card
+    expect(container.querySelector('[data-dsh-part="peak-status"]')).toBeNull()
   })
 })

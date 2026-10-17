@@ -430,3 +430,45 @@ describe('UsageSectionCard settings writes', () => {
     expect(live.writes).toEqual([['pollIntervalSec', 120]])
   })
 })
+
+/**
+ * The peak line the usage tab shows for the official DeepSeek family: the same
+ * red/green marker the sidebar foot card carries, with the priced sentence in
+ * the line itself. Instants are fixed so the assertions never depend on when
+ * the suite runs.
+ */
+describe('peak marker', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('user reads the peak window sentence in the red state while it runs', () => {
+    // Given the clock stands at Friday 10:00 Beijing time, inside a peak window
+    document.documentElement.lang = 'zh'
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-28T02:00:00Z'))
+
+    // When the usage tab renders for a session on the DeepSeek route
+    render(<UsageSectionCard {...cardProps(overview([provider({ provider: 'deepseek', displayName: 'DeepSeek', credential: 'env' })]))} />)
+
+    // Then the line states the peak pricing and carries the red state
+    const line = document.querySelector('[data-dsh-part="peak-status"]')
+    expect(line?.getAttribute('data-peak')).toBe('on')
+    expect(line?.textContent).toContain('高峰时段：计价 ×2')
+  })
+
+  it('user reads the off-peak sentence in the green state on a weekend', () => {
+    // Given the clock stands at Saturday 10:00 Beijing time
+    document.documentElement.lang = 'zh'
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-29T02:00:00Z'))
+
+    // When the usage tab renders for a session on the DeepSeek route
+    render(<UsageSectionCard {...cardProps(overview([provider({ provider: 'deepseek', displayName: 'DeepSeek', credential: 'env' })]))} />)
+
+    // Then the line states the off-peak pricing and carries the green state
+    const line = document.querySelector('[data-dsh-part="peak-status"]')
+    expect(line?.getAttribute('data-peak')).toBe('off')
+    expect(line?.textContent).toContain('空闲时段')
+  })
+})
