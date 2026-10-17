@@ -398,30 +398,32 @@ describe('user question bridge', () => {
     expect(harness.transport.ofType('ev')).toEqual([])
   })
 
-  it('operator the desktop answers first and the phone is left with a refused tap', async () => {
-    // Given a paired phone and a desktop panel, both looking at the same question
+  it('operator a paired phone takes the question and the desktop is never consulted', async () => {
+    // Given a paired phone that announced the channel
     const harness = makeHub()
     await declareQuestions(harness.connection)
-    // When the desktop answers it first
-    const outcome = await harness.hub.question(hostRequest(), async () => ANSWER)
-    // Then the host took the desktop's answer, and the phone's claim is gone
-    expect(outcome).toEqual(ANSWER)
-    expect(harness.questions.size).toBe(0)
-    // And the phone's late tap is refused rather than silently swallowed
+    let desktopConsulted = 0
+    const desktop = async (): Promise<QuestionAnswer> => {
+      desktopConsulted += 1
+      return { answers: [] }
+    }
+    // When the host asks, and the phone answers it
+    const pending = harness.hub.question(hostRequest(), desktop)
     await harness.connection.handleText(requestFrame(2, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
-    expect(JSON.stringify(answerOf(harness, 2))).toContain('question-unknown')
+    expect(await pending).toEqual(ANSWER)
+    // Then the host's own panel was never started: it could not be closed again
+    expect(desktopConsulted).toBe(0)
+    expect(harness.questions.size).toBe(0)
   })
 
-  it('operator the desktop gives up and the phone still answers', async () => {
-    // Given a phone and a desktop answerer that fails immediately
+  it('operator the phone goes away and the claim is handed back with a settled notice', async () => {
+    // Given a claimed question on a hub whose only phone is about to leave
     const harness = makeHub()
     await declareQuestions(harness.connection)
-    const desktopFails = async (): Promise<QuestionAnswer> => {
-      throw Object.assign(new Error('no answerer'), { code: 'NO_PROVIDER' })
-    }
-    const pending = harness.hub.question(hostRequest(), desktopFails)
-    // When the phone answers, its answer is the one the host gets
-    await harness.connection.handleText(requestFrame(2, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    const pending = harness.hub.question(hostRequest(), async () => ANSWER)
+    // When the last phone goes away
+    harness.hub.detach(harness.connection)
+    // Then the host's own answerer takes over
     expect(await pending).toEqual(ANSWER)
     expect(harness.questions.size).toBe(0)
   })

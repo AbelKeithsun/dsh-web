@@ -304,18 +304,10 @@ export class QuestionClaims {
       onContinued: input.onContinued,
     }
     this.#claims.set(input.callId, record)
-    // Settle on whichever surface answers first, and drop the loser so a later
-    // tap on the phone is refused instead of silently ignored.
-    void startNext().then(
-      (answered) => {
-        if (this.#claims.get(input.callId) !== record) return
-        this.#claims.delete(input.callId)
-        record.detach()
-        record.notifySettled()
-        settle(answered)
-      },
-      () => undefined,
-    )
+    // The rest of the chain is NOT started here. A connected phone takes the
+    // question on its own, and the host's own panel would otherwise stay open
+    // after the phone answered it — the bridge has no way to close that panel.
+    // A phone that is absent, or a claim that is withdrawn, still delegates.
     if (signal?.aborted === true) onAbort()
     else signal?.addEventListener('abort', onAbort, { once: true })
     return { sessionId: record.sessionId, callId: record.callId, questions: record.questions, answer }
