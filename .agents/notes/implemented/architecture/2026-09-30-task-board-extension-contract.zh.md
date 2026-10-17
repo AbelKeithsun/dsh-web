@@ -17,7 +17,7 @@ Status: implemented
 
 一份外部提供方契约是唯一事实源。提供方包按契约实现，绝不 import 看板内部；GitHub 是它的第一个实现，落在 `packages/dsh-task-board-github`，看板自身不出现任何提供方名字。
 
-1. **服务**：host 与浏览器半区各发布一份 cordis 服务，名 `taskBoard`；API 版本常量为 `TASK_BOARD_API_VERSION = 1`。提供方声明自己编译所依据的版本；任何其他版本都被可见地拒绝（记录并抛出），且不打扰看板。
+1. **服务**：host 与浏览器半区各发布一份 cordis 服务，名 `taskBoard`；API 版本常量为 `TASK_BOARD_API_VERSION = 1`。提供方声明自己编译所依据的版本；任何其他版本都被可见地拒绝（记录并抛出），且不打扰看板。宿主服务另外承载一个给**宿主进程内消费者**用的窄读写面——`snapshot()`、`apply(requestId, action, initiator?)`、`subscribe(listener)`、`verificationOptions()`，每一个都是宿主同名方法的转发——远端面正是经它驱动看板，而不走 HTTP 跳转；见[经两道增量扩展缝把看板搬到远端面](2026-10-17-task-board-on-the-remote-surface.zh.md)。它不属于提供方契约：提供方仍只通过本记录定义的能力面到达看板。
 2. **子席位**（看板声明、提供方注册）：`task-board.detail.section`，props `{ task, dispatch }`；`task-board.settings.section`，props `{ dispatch }`；`task-board.card.decoration`，props `{ task }`。看板注册组件在 `register` 的 `children` 选项声明这三个键，并用 `renderSlot` 消费；renderSlot 经内部 React context 穿透到 `TaskDetail`、卡片与设置卡。跨包提供方不得 value import 看板；各自在自己包内用同形 `declare module` 重新声明这三个键。
 3. **宿主能力面**（交给提供方的 `TaskBoardExtension`）：`tasks.{ list, get, create(draft, { payload, hidden }), patchContent(taskId, { title, description, prompt }), setStatus(taskId, status, initiator), linked() }`；`integration.{ read(taskId), write(taskId, payload) }`；`events.{ onStatusChanged, onExecutionSettled, onTaskDeleted }`（各返回取消订阅函数）；`publish(summary)`（只读摘要，经 `snapshot.extensions[id]` 回传给该提供方的 client 半区）；以及 `registerTool(definition)`（模型可见工具，随「看板 enabled x 扩展 enabled」收放）。
 4. **客户端能力面**（看板浏览器半区提供）：`dispatch({ extensionId, action, taskId?, payload? })` 经看板同源 action 通道投递（提供方不新增 HTTP 面）；`registerVisibility(predicate)` 卡片可见性谓词（取代看板硬编码的 deactivated 判断）；以及 `subscribe(cb)` / `snapshot()` 订阅看板任务镜像与已发布摘要。

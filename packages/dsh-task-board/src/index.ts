@@ -40,6 +40,7 @@ import { buildTaskBoardTools, TASK_BOARD_TOOL_NAMES } from './host/agent-tools.t
 import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
 import { makeTaskBoardRoutes } from './host-routes.ts'
 import { TASK_BOARD_SERVICE_NAME, type TaskBoardExtension } from './core/extension.ts'
+import type { TaskBoardAction } from './protocol.ts'
 import { mountOnce } from './mount-once.ts'
 import { createGoalVerificationGate, type GoalFace } from './host/verification-gate.ts'
 import { normalizeCatalog, type ModelCatalogView, type VerificationSettings } from './core/verification.ts'
@@ -703,10 +704,22 @@ function applyImpl(ctx: Context, config?: Config): void {
   // provider package can resolve it and admit itself; the board itself knows
   // no provider vocabulary. A capture-only test context implements no service
   // registry and the board still serves its own surfaces.
+  //
+  // The same service carries the read/write face an in-process consumer drives
+  // the board through — the remote bridge's board plugin reads and applies over
+  // it instead of opening an HTTP surface of its own, which the board's routes
+  // would refuse anyway (their guard admits a browser-shaped request, not a
+  // process). Every member is a forward of the Host service method of the same
+  // name: no gate, no normalization and no state lives here, so a consumer
+  // reaching the board this way is refused by exactly what refuses a browser.
   if (typeof (ctx as { provide?: unknown }).provide === 'function') {
     ctx.provide(TASK_BOARD_SERVICE_NAME, {
       registerExtension: (extension: TaskBoardExtension) => host.registerExtension(extension),
       isExtensionEnabled: (extensionId: string) => host.extensions.isActive(extensionId),
+      snapshot: () => host.snapshot(),
+      apply: (requestId: string, action: TaskBoardAction, initiator?: string) => host.apply(requestId, action, initiator),
+      subscribe: (listener: () => void) => host.subscribe(listener),
+      verificationOptions: () => host.verificationOptions(),
     })
   }
 
