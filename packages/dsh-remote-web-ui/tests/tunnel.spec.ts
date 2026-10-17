@@ -3,10 +3,26 @@
  * crash-restart backoff, and stop semantics — all against injected fakes
  * (no real cloudflared binary or network).
  */
+import { mkdtempSync, rmSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { createServer } from 'node:http'
-import { describe, expect, it, vi } from 'vitest'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { MAX_BINARY_INSTALL_ATTEMPTS, quickTunnelFlags, namedTunnelArgs, withTunnelTokenEnv, TunnelManager, namedTunnelHandle, binaryRuns, createBinaryReadiness, probeTunnelUrl, type TunnelHandle, type TunnelPhase, type TunnelTarget } from '../src/tunnel.ts'
+
+// The manager's crash-recovery guard resolves `$DSH_HOME` on every call; point
+// it at a throwaway home so this suite never reads (or reaps) a record left in
+// the developer's real one, and so every spawn here is unrecorded.
+let testHome = ''
+beforeAll(() => {
+  testHome = mkdtempSync(join(tmpdir(), 'dsh-tunnel-spec-'))
+  process.env.DSH_HOME = testHome
+})
+afterAll(() => {
+  delete process.env.DSH_HOME
+  rmSync(testHome, { recursive: true, force: true })
+})
 
 /** A fake tunnel process: an EventEmitter the test drives by hand. */
 class FakeTunnel extends EventEmitter implements TunnelHandle {
@@ -91,9 +107,14 @@ function makeHarness(overrides: HarnessOverrides = {}): Harness {
   return { manager, tunnels, targets, phases, urls, ensure, fireOne }
 }
 
-/** Wait until the manager spawned its next tunnel process. */
+/**
+ * Wait until the manager spawned a tunnel process newer than the ones already
+ * spawned: a restart, a replaced target, or the first spawn all mean "the next
+ * process appears", and crash recovery settles one await before that spawn.
+ */
 async function nextTunnel(h: Harness): Promise<FakeTunnel> {
-  await vi.waitFor(() => { expect(h.tunnels.length).toBeGreaterThan(0) })
+  const before = h.tunnels.length
+  await vi.waitFor(() => { expect(h.tunnels.length).toBeGreaterThan(before) })
   return h.tunnels[h.tunnels.length - 1]
 }
 

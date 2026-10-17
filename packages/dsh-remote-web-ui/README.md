@@ -85,7 +85,7 @@ A tunnel process restart — most often a mobile network dropping and reconnecti
 
 ### One-click public tunnel (recommended)
 
-Set **自动公网隧道** (autoTunnel) in the settings card. The plugin runs its own Cloudflare quick tunnel (`cloudflared` ships with the package), feeds the minted public URL into the QR base and the pairing fence dynamically, and keeps the posture probe informed — a phone anywhere can pair at any time. The manual public address and the named-tunnel token below are ignored while this is on. The minted hostname is ephemeral and changes on every `dsh web` restart — the stable-hostname relay below keeps the phone's origin fixed across those restarts.
+Set **自动公网隧道** (autoTunnel) in the settings card. The plugin runs its own Cloudflare quick tunnel (`cloudflared` ships with the package), feeds the minted public URL into the QR base and the pairing fence dynamically, and keeps the posture probe informed — a phone anywhere can pair at any time. The manual public address and the named-tunnel token below are ignored while this is on. The minted hostname is ephemeral and changes on every `dsh web` restart — the stable-hostname relay below keeps the phone's origin fixed across those restarts. A host that dies without tearing its tunnel down leaves the `cloudflared` child running, so each start reaps the child it recorded (pid plus an exactly matching command line) and never a process it did not start itself.
 
 ### Stable-hostname relay (default on; pair once across restarts)
 

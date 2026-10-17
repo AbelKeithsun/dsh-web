@@ -22,12 +22,20 @@
  * tunnel and reuses the crash-restart path when it stops answering, so the
  * relay is re-registered against a freshly minted URL instead of proxying a
  * dead one (issue #1723).
+ *
+ * A host crash is the one exit the manager cannot cover in-process: the child
+ * is reparented and keeps running, holding a hostname nobody serves. Every
+ * spawn is therefore recorded under the DSH home (pid plus its exact command
+ * line) and the record is dropped when that child is stopped, so the next
+ * start reaps exactly the child a dead host left behind — see
+ * ./tunnel-orphan.ts.
  */
 
 import { existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { bin, install, Tunnel } from 'cloudflared'
+import { createTunnelChildGuard, type TunnelChildGuard, type TunnelChildProcess } from './tunnel-orphan.ts'
 
 /** The observable tunnel lifecycle the settings/panel surfaces render. */
 export type TunnelPhase = 'stopped' | 'starting' | 'running' | 'failed'
@@ -56,6 +64,8 @@ interface NamedTunnelProcess {
   on(event: 'error', listener: (value: Error) => void): unknown
   off(event: string, listener: (...args: any[]) => void): unknown
   stop(): boolean
+  /** The spawned OS process, when the wrapper exposes it. */
+  readonly process?: TunnelChildProcess
 }
 
 /**
@@ -90,6 +100,9 @@ export function namedTunnelHandle(inner: NamedTunnelProcess, publicUrl: string):
   inner.on('connected', onConnected)
   inner.on('exit', onExit)
   inner.on('error', onError)
+  // The named process is a spawn wrapper too: pass its OS process through so
+  // crash recovery records this child exactly like a quick one.
+  if (inner.process !== undefined) handle.process = inner.process
   handle.stop = (): boolean => {
     inner.off('connected', onConnected)
     inner.off('exit', onExit)
@@ -113,6 +126,12 @@ export interface TunnelHandle {
   on(event: string, listener: (...args: any[]) => void): unknown
   off(event: string, listener: (...args: any[]) => void): unknown
   stop(): boolean
+  /**
+   * The spawned OS process. Crash recovery records its pid and exact command
+   * line, so a host that dies without stopping it can be reaped by the next
+   * start; a handle that does not expose one is simply never recorded.
+   */
+  process?: TunnelChildProcess
 }
 
 /**
@@ -176,6 +195,12 @@ export interface TunnelManagerOptions {
   healthCheckFailures?: number
   /** How long one probe may take. */
   probeTimeoutMs?: number
+  /**
+   * Crash recovery for the spawned child: reap the leftover a crashed host
+   * recorded, and record this one. Defaults to the file-backed guard under the
+   * DSH home (see ./tunnel-orphan.ts).
+   */
+  orphan?: TunnelChildGuard
 }
 
 /** Time box for the `--version` probe that validates a staged binary. */
@@ -354,6 +379,7 @@ export class TunnelManager {
   private readonly healthCheckIntervalMs: number
   private readonly healthCheckFailures: number
   private readonly probeTimeoutMs: number
+  private readonly orphan: TunnelChildGuard
 
   private phase: TunnelPhase = 'stopped'
   private url: string | undefined
@@ -365,6 +391,9 @@ export class TunnelManager {
   private healthTimer: unknown | undefined
   private healthFailures = 0
   private attempts = 0
+  // Whether the current handler owns the crash-recovery record: only a record
+  // this manager wrote is ever cleared.
+  private recordedChild = false
   // Generation counter: a stale ensureBinary resolution from an earlier
   // start() must not spawn a second handle after a stop/start cycle.
   private generation = 0
@@ -386,6 +415,7 @@ export class TunnelManager {
     this.healthCheckIntervalMs = options.healthCheckIntervalMs ?? DEFAULT_HEALTH_CHECK_INTERVAL_MS
     this.healthCheckFailures = options.healthCheckFailures ?? DEFAULT_HEALTH_CHECK_FAILURES
     this.probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS
+    this.orphan = options.orphan ?? createTunnelChildGuard()
   }
 
   /** The current status frame. */
@@ -450,10 +480,17 @@ export class TunnelManager {
     this.handle = undefined
     this.url = undefined
     this.error = undefined
-    void this.ensureBinary().then(() => {
+    void this.ensureBinary().then(async () => {
+      // A host that died without tearing its tunnel down left its child
+      // recorded; reap exactly that process before a second connector is
+      // spawned beside it. The reap settles before the spawn by design.
+      await this.reapLeftoverChild()
       if (this.stopping || this.target === undefined || gen !== this.generation) return
       const handle = this.factory(this.target)
       this.handle = handle
+      // Recorded as the first thing after the spawn: a crash from here on
+      // leaves a child the next start can identify and reap.
+      this.recordedChild = this.orphan.record(handle.process)
       this.urlTimer = this.timer.setTimeout(() => {
         // The tunnel never reported a URL: kill it and retry with backoff.
         this.fail('timed out waiting for the tunnel URL')
@@ -575,10 +612,7 @@ export class TunnelManager {
     if (this.stopping) return
     this.url = undefined
     this.error = message
-    if (this.handle !== undefined) {
-      this.handle.stop()
-      this.handle = undefined
-    }
+    this.stopHandle()
     if (this.urlTimer !== undefined) {
       this.timer.clearTimeout(this.urlTimer)
       this.urlTimer = undefined
@@ -593,6 +627,39 @@ export class TunnelManager {
     }, delay)
   }
 
+  /**
+   * Reap the child a crashed host recorded (see ./tunnel-orphan.ts). A failed
+   * recovery only loses the cleanup, so it must never fail the attempt.
+   */
+  private async reapLeftoverChild(): Promise<void> {
+    try {
+      await this.orphan.reap()
+    } catch (error) {
+      console.warn(`remote-web-ui: could not clear a leftover tunnel child (${error instanceof Error ? error.message : String(error)})`)
+    }
+  }
+
+  /**
+   * Stop the current child and drop its crash-recovery record: the process the
+   * record describes is gone, so a later start must not reap it again (and a
+   * healthy host never reaps its own live child).
+   */
+  private stopHandle(): void {
+    if (this.handle === undefined) return
+    const handle = this.handle
+    this.handle = undefined
+    try {
+      handle.stop()
+    } finally {
+      // Only a record this manager wrote is ours to drop: a record a sibling
+      // host still owns (another profile under one DSH home) is left alone.
+      if (this.recordedChild) {
+        this.recordedChild = false
+        this.orphan.clear()
+      }
+    }
+  }
+
   /** Stop the current process and cancel every pending timer (no phase change). */
   private teardown(): void {
     this.stopping = true
@@ -605,10 +672,7 @@ export class TunnelManager {
       this.timer.clearTimeout(this.restartTimer)
       this.restartTimer = undefined
     }
-    if (this.handle !== undefined) {
-      this.handle.stop()
-      this.handle = undefined
-    }
+    this.stopHandle()
   }
 
   private setPhase(phase: TunnelPhase): void {
