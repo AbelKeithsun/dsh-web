@@ -1,5 +1,6 @@
 {
   "meta": {
-    "title": "web-all/doctor"
+    "title": "web-all/doctor",
+    "description": "Removed environment health check."
   }
 }

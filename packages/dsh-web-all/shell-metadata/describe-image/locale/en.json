@@ -1,5 +1,6 @@
 {
   "meta": {
-    "title": "web-all/describe-image"
+    "title": "web-all/describe-image",
+    "description": "Removed image description tool."
   }
 }

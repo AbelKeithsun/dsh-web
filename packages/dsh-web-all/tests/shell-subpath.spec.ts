@@ -19,7 +19,8 @@
  *    re-export as CJS (format detection also stops at the nearest manifest).
  * 3. DSH 0.2.1 reads display metadata from exported resources instead of a
  *    subpath package.json: each family subpath therefore also exports its icon
- *    and locale metadata files.
+ *    and locale metadata files, whose meta.description is the one-line purpose
+ *    text the inventory renders under the row title.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -105,15 +106,24 @@ describe('family subpath display names', () => {
       .filter(([key, target]) => target === './lib/shells/shell.js' && key.slice(2).split('/').length === 1)
       .map(([key]) => key.slice(2))
     expect(shellSubs.length).toBeGreaterThan(0)
-    // Then each subpath exports its icon and en/zh locale metadata files
+    // Then each subpath exports its icon and locale metadata, and every locale
+    // carries the row title plus the one-line purpose text under it
     for (const sub of shellSubs) {
       expect(manifest.exports[`./${sub}/icon`]).toBe('./icon.svg')
-      for (const locale of ['en', 'zh']) {
+      const descriptions: Record<string, string> = {}
+      for (const locale of ['en', 'ru', 'zh']) {
         const target = `./shell-metadata/${sub}/locale/${locale}.json`
         expect(manifest.exports[`./${sub}/locale/${locale}.json`]).toBe(target)
-        const metadata = JSON.parse(readFileSync(join(PACKAGE_DIR, 'shell-metadata', sub, 'locale', `${locale}.json`), 'utf8')) as { meta?: { title?: string } }
+        const metadata = JSON.parse(readFileSync(join(PACKAGE_DIR, 'shell-metadata', sub, 'locale', `${locale}.json`), 'utf8')) as { meta?: { title?: string; description?: string } }
         expect(metadata.meta?.title).toBe(`web-all/${sub}`)
+        expect(metadata.meta?.description?.trim()).toBeTruthy()
+        descriptions[locale] = metadata.meta?.description ?? ''
       }
+      // The Chinese note must stay on one line under the title
+      const han = [...descriptions.zh].filter(char => /\p{Script=Han}/u.test(char)).length
+      expect(han).toBeGreaterThan(0)
+      expect(han).toBeLessThanOrEqual(20)
+      expect(descriptions.zh).not.toBe(descriptions.en)
     }
   })
 

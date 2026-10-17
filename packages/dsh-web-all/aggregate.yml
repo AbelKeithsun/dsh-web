@@ -81,6 +81,41 @@ deps:
 familyIds:
   dsh-win-bash: web-ui-win-bash
   ui-plugin-manager-update-check: web-ui-plugin-manager
+
+# 家族行备注（shellNotes）：官方插件页里每个 web-all/<sub> 成员行标题下方的灰色说明行。
+# 单行 JSON flow mapping：id 是家族子路径（web-all/<sub> 的 <sub>），zh/en/ru 是各语言备注。
+# 生成器把它写成 shell-metadata/<sub>/locale/<lang>.json 的 meta.description——与行标题同
+# 一条官方通道（宿主 readPluginMeta 读 <specifier>/locale/<lang>.json）；patch 行不承载任何
+# 展示文本，所以不要往 cordis.patch.yml 手写说明。ru 随本聚合挂载的 dsh-i18n 语言包生效：
+# 宿主枚举整个 locale 目录，语言文件存在即被读取，无需固定语言集。
+# zh 每条不超过 20 个汉字：说明行在标题下只占一行，超长会折行；不要复述包名。
+# 覆盖全集：本聚合导出的每个家族子路径（含 tombstones 空壳）都必须有一条，缺行、未知 id
+# 或重复 id 都会让生成器报错（fail closed）。已迁出的四个卫星家族沿用各自的产品描述，老
+# profile 仍会挂载这些空壳行。
+shellNotes:
+  - {"id":"git-graph","zh":"查看提交图谱与分支历史","en":"Browse the Git commit graph and branch history.","ru":"Просмотр графа коммитов и истории веток."}
+  - {"id":"liangshen","zh":"新会话首页的梁神模式开关","en":"The Liangshen mode switch on the new-session home.","ru":"Переключатель режима «Ляншэнь» на главной новой сессии."}
+  - {"id":"market","zh":"按需安装皮肤宠物与预设的商店","en":"Install skins, pets, and presets on demand from one store.","ru":"Установка скинов, питомцев и пресетов из одного магазина."}
+  - {"id":"plugin-manager","zh":"逐行开关已装插件的管理页","en":"One page listing installed plugins with per-row switches.","ru":"Страница установленных плагинов с переключателем для каждой строки."}
+  - {"id":"remote-web-ui","zh":"用配对码从手机或远程浏览器访问","en":"Reach this GUI from a phone or browser with a pairing code.","ru":"Доступ к интерфейсу с телефона или браузера по коду сопряжения."}
+  - {"id":"session-archive","zh":"归档并批量清理旧会话","en":"Archive old sessions and clean them up in bulk.","ru":"Архивирование и массовая очистка старых сессий."}
+  - {"id":"settings","zh":"家族统一的设置页与分组","en":"The family's shared settings pages and groups.","ru":"Общие страницы настроек семейства и их группы."}
+  - {"id":"skill-explorer","zh":"检索并浏览已安装的技能","en":"Search and browse the skills installed here.","ru":"Поиск и просмотр установленных навыков."}
+  - {"id":"ssh","zh":"在远程主机上执行命令与传文件","en":"Run commands and copy files on remote hosts.","ru":"Выполнение команд и передача файлов на удалённых хостах."}
+  - {"id":"task-board","zh":"看板里拖拽管理任务与子任务","en":"Manage tasks and subtasks by dragging them across columns.","ru":"Задачи и подзадачи, перетаскиваемые между колонками."}
+  - {"id":"task-board-github","zh":"把 GitHub 议题同步进看板","en":"Sync GitHub issues into the board.","ru":"Синхронизация задач GitHub с доской."}
+  - {"id":"update","zh":"检查并升级已装扩展的新版本","en":"Check for and install newer releases of the bundle.","ru":"Проверка и установка новых версий сборки."}
+  - {"id":"usage","zh":"查看令牌与会话用量统计","en":"Token and session usage statistics.","ru":"Статистика использования токенов и сессий."}
+  - {"id":"win-bash","zh":"Windows 上为梁神预设启用 bash","en":"Bash tool support for the Liangshen preset on Windows.","ru":"Поддержка bash для пресета «Ляншэнь» в Windows."}
+  - {"id":"community-plugins","zh":"浏览社区插件与一键安装","en":"Browse community plugins and install them in one click.","ru":"Просмотр плагинов сообщества и установка в один клик."}
+  - {"id":"pet","zh":"桌面上的互动宠物","en":"An interactive pet on the desktop.","ru":"Интерактивный питомец на рабочем столе."}
+  - {"id":"preset-center","zh":"浏览并启用社区预设","en":"Browse and enable community presets.","ru":"Просмотр и включение пресетов сообщества."}
+  - {"id":"skin-center","zh":"切换皮肤与壁纸的皮肤中心","en":"Switch skins and wallpapers from one center.","ru":"Смена скинов и обоев в одном центре."}
+  - {"id":"desktop-launcher","zh":"已移除的桌面启动入口","en":"Removed desktop launcher entry.","ru":"Удалённый запуск с рабочего стола."}
+  - {"id":"dsh-perf","zh":"已移除的性能监控面板","en":"Removed performance panel.","ru":"Удалённая панель производительности."}
+  - {"id":"describe-image","zh":"已移除的图片描述工具","en":"Removed image description tool.","ru":"Удалённый инструмент описания изображений."}
+  - {"id":"doctor","zh":"已移除的环境体检工具","en":"Removed environment health check.","ru":"Удалённая проверка окружения."}
+  - {"id":"model-capabilities","zh":"已移除的模型能力配置","en":"Removed model capability settings.","ru":"Удалённые настройки возможностей моделей."}
 rows:
   - {"id": "community-plugins", "name": "@linxin666/dsh-client-ui-community-plugins"}
   - {"id": "pet", "name": "@linxin666/dsh-pet"}

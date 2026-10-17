@@ -18,14 +18,21 @@
   与 compat 行构成同包多来源，扫描器 reconcile 直接抛错）。子路径 exports 键由
   生成器维护，勿手改。DSH 0.2.1 起插件展示元数据不再读取子路径旁最近
   `package.json`：生成器同时维护 `./<family>/icon` 与
-  `./<family>/locale/{en,zh}.json`，内容在 `shell-metadata/` 下，官方
-  插件列表因此每行显示独立的 `web-all/<family>` 标题与家族图标。
+  `./<family>/locale/{en,ru,zh}.json`，内容在 `shell-metadata/` 下，官方
+  插件列表因此每行显示独立的 `web-all/<family>` 标题、家族图标，以及标题下方那条
+  灰色用途说明（`meta.description`）。
+- 家族行的用途说明只有一个事实源：`aggregate.yml` 的 `shellNotes` 段（每个家族
+  子路径一条 zh/en/ru）。生成器把它写进 `shell-metadata` 的 `meta.description`；
+  缺行、未知或重复 id、zh 超过 20 汉字、zh 与 en 同串一律让生成器报错。ru 随包附上
+  是因为官方 `readPluginMeta` 枚举整个 `<specifier>/locale` 目录、按文件名取语言，
+  而子路径的文件无法由 dsh-i18n 代为导出。
 - 包根 `icon.svg` + `package.json` 顶层 `icon` 是官方插件列表的卡片图标（官方
   展示元信息字段，见 [Agent Note](../../.agents/notes/implemented/feature/2026-09-23-family-plugin-icons.md)）；
   家族每个包都带同名素材（独立安装时各自生效），聚合子路径行经各自的
   `<specifier>/icon` export 复用包根图标。该资源必须留在 npm `files` 白名单内。
 - `aggregate.yml` 是唯一手写清单：`patchFrom` 贡献 insert 行（嵌套聚合递归展开、
-  按顺序、带源注释），`deps` 解析各子包 name 写入 dependencies（`workspace:*`）。
+  按顺序、带源注释），`deps` 解析各子包 name 写入 dependencies（`workspace:*`），
+  `shellNotes` 提供家族行的用途说明（机制见上文家族行条目）。
 - `rows:` 段是仓库外的 npm 外部行（单行 JSON flow mapping，`{"id","name"}`）：解析
   从本包 node_modules 出发（`require.resolve('<name>/package.json')`，因此外部包必须
   导出 `./package.json`），渲染在全部 `patchFrom` 行之后。行 id 仍走 `web-ui-*` 命名

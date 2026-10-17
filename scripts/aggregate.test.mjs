@@ -128,27 +128,80 @@ test('web-ui-all keeps the removed doctor/describe-image plugins out but their t
   assert.equal(pkg.exports['./describe-image'], './lib/shells/shell.js', 'describe-image tombstone export must survive')
 })
 
-test('web-ui-all shell metadata covers exactly the exported family subpaths', () => {
+const SHELL_METADATA_LOCALES = ['en', 'ru', 'zh']
+
+/** Family subpaths the aggregate exports (single-segment keys resolving to the shell). */
+function familySubpaths() {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'packages/dsh-web-all/package.json'), 'utf8'))
-  const shellSubs = Object.entries(pkg.exports)
+  return Object.entries(pkg.exports)
     .filter(([key, target]) => target === './lib/shells/shell.js' && key.startsWith('./') && !key.slice(2).includes('/'))
     .map(([key]) => key.slice(2))
     .sort()
+}
+
+/** One locale metadata file of one family subpath, parsed. */
+function shellMetadataOf(sub, locale) {
+  return JSON.parse(readFileSync(join(ROOT, 'packages/dsh-web-all/shell-metadata', sub, 'locale', locale + '.json'), 'utf8'))
+}
+
+/** shellNotes entries of an aggregate manifest, keyed by family subpath. */
+function shellNotesOf(relPath) {
+  const notes = new Map()
+  let section = null
+  for (const raw of readFileSync(join(ROOT, relPath), 'utf8').split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    const sectionMatch = line.match(/^[A-Za-z0-9_-]+:\s*$/)
+    if (sectionMatch) {
+      section = line.slice(0, -1)
+      continue
+    }
+    if (section !== 'shellNotes' || !line.startsWith('- ')) continue
+    const entry = JSON.parse(line.slice(2).trim().replace(/\s+#.*$/, ''))
+    notes.set(entry.id, entry)
+  }
+  return notes
+}
+
+test('web-ui-all shell metadata covers exactly the exported family subpaths', () => {
+  const shellSubs = familySubpaths()
   const metadataRoot = join(ROOT, 'packages/dsh-web-all/shell-metadata')
   const dirs = readdirSync(metadataRoot, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name)
     .sort()
   assert.deepEqual(dirs, shellSubs, 'stale or missing shell metadata directories')
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'packages/dsh-web-all/package.json'), 'utf8'))
   for (const sub of shellSubs) {
-    assert.equal(pkg.exports[`./${sub}/icon`], './icon.svg', `${sub} must export the family icon`)
-    for (const locale of ['en', 'zh']) {
-      const exportKey = `./${sub}/locale/${locale}.json`
-      const target = `./shell-metadata/${sub}/locale/${locale}.json`
-      assert.equal(pkg.exports[exportKey], target, `${sub} must export its ${locale} metadata`)
-      const metadata = JSON.parse(readFileSync(join(metadataRoot, sub, 'locale', `${locale}.json`), 'utf8'))
-      assert.equal(metadata.meta?.title, `web-all/${sub}`)
+    assert.equal(pkg.exports['./' + sub + '/icon'], './icon.svg', sub + ' must export the family icon')
+    for (const locale of SHELL_METADATA_LOCALES) {
+      const exportKey = './' + sub + '/locale/' + locale + '.json'
+      const target = './shell-metadata/' + sub + '/locale/' + locale + '.json'
+      assert.equal(pkg.exports[exportKey], target, sub + ' must export its ' + locale + ' metadata')
+      assert.equal(shellMetadataOf(sub, locale).meta?.title, 'web-all/' + sub)
     }
+  }
+})
+
+test('web-ui-all family rows carry a one-line purpose description from aggregate.yml', () => {
+  // The official plugin inventory renders meta.description as the gray line
+  // under a row title. aggregate.yml's shellNotes section is its only source,
+  // and a family subpath without a note fails "node scripts/aggregate.mjs".
+  const shellSubs = familySubpaths()
+  const notes = shellNotesOf('packages/dsh-web-all/aggregate.yml')
+  assert.deepEqual([...notes.keys()].sort(), shellSubs, 'shellNotes must cover exactly the exported family subpaths')
+  for (const sub of shellSubs) {
+    const note = notes.get(sub)
+    for (const locale of SHELL_METADATA_LOCALES) {
+      const description = shellMetadataOf(sub, locale).meta?.description
+      assert.equal(typeof description, 'string', sub + ' ' + locale + ' metadata must carry a description')
+      assert.ok(description.trim() !== '', sub + ' ' + locale + ' description must not be blank')
+      assert.equal(description, note[locale], sub + ' ' + locale + ' description must come from shellNotes')
+    }
+    // The Chinese line is capped so it stays on one line under the title.
+    const han = [...note.zh].filter(char => /\p{Script=Han}/u.test(char)).length
+    assert.ok(han > 0 && han <= 20, sub + ' zh note must be 1-20 Han characters, got ' + han)
+    assert.notEqual(note.zh, note.en, sub + ' zh and en notes must be different text')
   }
 })
 

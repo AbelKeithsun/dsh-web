@@ -1,5 +1,6 @@
 {
   "meta": {
-    "title": "web-all/pet"
+    "title": "web-all/pet",
+    "description": "An interactive pet on the desktop."
   }
 }

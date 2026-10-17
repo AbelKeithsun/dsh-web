@@ -66,6 +66,15 @@
  *     near-identical first-level entries. A row listed here must NOT be one of
  *     this aggregate's own rows (that is what inactive is for); a user-layer
  *     "disabled: false" override still wins.
+ *   - shellNotes entries (single-line JSON flow mappings) carry each family
+ *     row's one-line purpose text, the gray line the official plugin inventory
+ *     renders under the row title: {"id": "<family subpath>", "zh", "en", "ru"}.
+ *     They are written into shell-metadata/<sub>/locale/<lang>.json as
+ *     meta.description, the same channel that carries the row title. The
+ *     section is the only source for that text: every family subpath the
+ *     aggregate exports (tombstones included) needs an entry, and a missing,
+ *     unknown, or duplicate id fails the run instead of shipping a row with no
+ *     visible purpose.
  *
  * Idempotent: safe to rerun at any time. Writes only inside the aggregate
  * packages it owns; never touches other packages or git state.
@@ -150,20 +159,37 @@ const AGGREGATE_SHELL_PACKAGE = '@linxin666/dsh-web-all'
 const SHELL_EXPORT_TARGET = './lib/shells/shell.js'
 const SHELL_ICON_TARGET = './icon.svg'
 const SHELL_METADATA_DIR = 'shell-metadata'
-const SHELL_METADATA_LOCALES = ['en', 'zh']
+/**
+ * Languages every family subpath ships display metadata in. The host reader
+ * (@deepseek-ai/dsh-app-boot readPluginMeta -> dictionariesOf) enumerates the
+ * whole <specifier>/locale directory and keys every "*.json" by its filename,
+ * so a language is supported as soon as its file exists: en and zh are the
+ * host's own languages, and ru rides the dsh-i18n language pack this aggregate
+ * mounts (id "ru", fallback en).
+ */
+const SHELL_METADATA_LOCALES = ['en', 'ru', 'zh']
+
+/** Longest Chinese note the inventory can render on one line under a row title. */
+const SHELL_NOTE_MAX_HAN = 20
 
 /**
  * Files the official plugin metadata reader resolves for one family subpath.
  * DSH 0.2.1 no longer reads a subpath's nearest package.json: display text
  * comes from `<specifier>/locale/<lang>.json`, and the icon from
  * `<specifier>/icon`. The generator owns this tree so removed families do not
- * leave stale display resources behind.
+ * leave stale display resources behind. The title is the row label; the
+ * description is the gray purpose line rendered right under it.
  */
-function shellMetadataFiles(pkgDir, shellSubpaths) {
-  return shellSubpaths.flatMap((sub) => SHELL_METADATA_LOCALES.map((locale) => ({
-    path: join(pkgDir, SHELL_METADATA_DIR, sub, 'locale', `${locale}.json`),
-    content: JSON.stringify({ meta: { title: `web-all/${sub}` } }, null, 2) + '\n',
-  })))
+function shellMetadataFiles(pkgDir, shellSubpaths, notes) {
+  return shellSubpaths.flatMap((sub) => SHELL_METADATA_LOCALES.map((locale) => {
+    const meta = { title: `web-all/${sub}` }
+    const description = notes.get(sub)?.[locale]
+    if (description !== undefined) meta.description = description
+    return {
+      path: join(pkgDir, SHELL_METADATA_DIR, sub, 'locale', `${locale}.json`),
+      content: JSON.stringify({ meta }, null, 2) + '\n',
+    }
+  }))
 }
 
 /** Remove generated metadata for subpaths/locales the current manifest no longer owns. */
@@ -182,6 +208,63 @@ function pruneShellMetadata(pkgDir, shellSubpaths) {
       if (!entry.isFile() || !expectedLocales.has(entry.name)) rmSync(join(localeDir, entry.name), { force: true })
     }
   }
+}
+
+/**
+ * Resolve the manifest's shellNotes section into one description per family
+ * subpath, failing closed on anything that would ship a row without its
+ * purpose line. The official reader renders whatever the locale JSON carries,
+ * so an unknown id (a note for a family no row mounts) is as wrong as a missing
+ * one; the Chinese note is capped because the inventory renders it on a single
+ * line under the title.
+ * @returns id -> { en, ru, zh } description map.
+ */
+function resolveShellNotes(entries, shellSubpaths, rel, errors) {
+  const notes = new Map()
+  const known = new Set(shellSubpaths)
+  const declared = new Set()
+  for (const entry of entries) {
+    const id = entry.id
+    if (typeof id !== 'string' || id === '') {
+      errors.push(`${rel}: shellNotes entry needs a string "id" (the family subpath): ${JSON.stringify(entry)}`)
+      continue
+    }
+    if (!known.has(id)) {
+      errors.push(`${rel}: shellNotes "${id}" names no family subpath of this aggregate`)
+      continue
+    }
+    if (declared.has(id)) {
+      errors.push(`${rel}: duplicate shellNotes entry for "${id}"`)
+      continue
+    }
+    declared.add(id)
+    const note = {}
+    let complete = true
+    for (const locale of SHELL_METADATA_LOCALES) {
+      const value = typeof entry[locale] === 'string' ? entry[locale].trim() : ''
+      if (value === '') {
+        errors.push(`${rel}: shellNotes "${id}" needs a non-empty "${locale}" note`)
+        complete = false
+        continue
+      }
+      note[locale] = value
+    }
+    if (!complete) continue
+    const han = [...note.zh].filter((char) => /\p{Script=Han}/u.test(char)).length
+    if (han > SHELL_NOTE_MAX_HAN) {
+      errors.push(`${rel}: shellNotes "${id}" zh note has ${han} Han characters (max ${SHELL_NOTE_MAX_HAN}: the inventory renders it on one line)`)
+      continue
+    }
+    if (note.zh === note.en) {
+      errors.push(`${rel}: shellNotes "${id}" zh and en notes are the same text`)
+      continue
+    }
+    notes.set(id, note)
+  }
+  for (const sub of shellSubpaths) {
+    if (!declared.has(sub)) errors.push(`${rel}: shellNotes has no entry for family subpath "${sub}"`)
+  }
+  return notes
 }
 
 /**
@@ -248,7 +331,7 @@ function findAggregates() {
  * while the generator can JSON.parse each entry).
  */
 function parseManifest(ymlPath, errors) {
-  const manifest = { patchFrom: [], deps: [], self: null, rows: [], patches: [], inactive: [], retire: [], tombstones: [], familyIds: {} }
+  const manifest = { patchFrom: [], deps: [], self: null, rows: [], patches: [], inactive: [], retire: [], tombstones: [], familyIds: {}, shellNotes: [] }
   let section = null
   for (const raw of readFileSync(ymlPath, 'utf8').split(/\r?\n/)) {
     const line = raw.trim()
@@ -313,6 +396,19 @@ function parseManifest(ymlPath, errors) {
         continue
       }
       manifest.patches.push(parsed)
+    } else if (section === 'shellNotes') {
+      let parsed
+      try {
+        parsed = JSON.parse(entry)
+      } catch {
+        errors.push(`${ymlPath}: shellNotes entry must be a JSON flow mapping: ${entry}`)
+        continue
+      }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        errors.push(`${ymlPath}: shellNotes entry must be an object: ${entry}`)
+        continue
+      }
+      manifest.shellNotes.push(parsed)
     } else if (section === 'self') {
       if (manifest.self !== null && manifest.self !== entry) {
         console.warn(`aggregate.yml defines several self entries (${manifest.self}, ${entry}); keeping the last one`)
@@ -1065,6 +1161,7 @@ for (const { pkgDir, ymlPath } of aggregates) {
   }
   const shellSubpaths = collectShellSubpaths(blocks, manifest.tombstones, manifest.familyIds)
   if (shellSubpaths.length > 0) validateShellFiles(pkgDir, rel, errors)
+  const shellNotes = resolveShellNotes(manifest.shellNotes, shellSubpaths, rel, errors)
   const patch = renderPatch(blocks, manifest.rows, manifest.patches ?? [], manifest.inactive ?? [], manifest.retire ?? [], manifest.familyIds, errors, rel, pkgDir)
   const resolvedDeps = resolveEntries(pkgDir, manifest.deps, 'deps', errors)
   const pkgJson = renderPackageJson(join(pkgDir, 'package.json'), resolvedDeps, shellSubpaths)
@@ -1093,7 +1190,7 @@ for (const { pkgDir, ymlPath } of aggregates) {
     resolvedDeps,
     pkgJson,
     clientChildren,
-    shellMetadata: shellMetadataFiles(pkgDir, shellSubpaths),
+    shellMetadata: shellMetadataFiles(pkgDir, shellSubpaths, shellNotes),
     shellSubpaths,
   })
 }
