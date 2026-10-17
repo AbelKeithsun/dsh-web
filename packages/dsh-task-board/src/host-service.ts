@@ -197,6 +197,38 @@ function cardDefaultsOf(defaults: CardDefaults): TaskBoardSnapshot['cardDefaults
   return Object.keys(published).length === 0 ? undefined : published
 }
 
+/**
+ * Every action kind this board accepts, keyed by the kind itself.
+ *
+ * Written as a total record of `TaskBoardAction['kind']` on purpose: a new member
+ * of that union does not compile until it is listed here, so the table cannot
+ * drift behind the protocol. `apply()` validates against it because a caller
+ * reaching the board through the in-process capability face forwards its action
+ * object verbatim, with no envelope parser in front of it — the HTTP route was the
+ * only entrance before that face existed, and its parser is what used to turn an
+ * unknown kind into a refusal.
+ */
+const ACTION_KINDS: Readonly<Record<TaskBoardAction['kind'], true>> = {
+  import: true,
+  create: true,
+  update: true,
+  delete: true,
+  move: true,
+  archive: true,
+  restore: true,
+  settle: true,
+  'reset-verification': true,
+  'record-external-outcome': true,
+  'set-schedule': true,
+  run: true,
+  rerun: true,
+  'confirm-permission': true,
+  'set-parent': true,
+  'rename-tag': true,
+  'delete-tag': true,
+  'extension-action': true,
+}
+
 export class TaskBoardHostService {
   readonly ledger: HostTaskLedger
   readonly runner: HostExecutionRunner
@@ -509,6 +541,15 @@ export class TaskBoardHostService {
   apply(requestId: string, action: TaskBoardAction, initiator?: string): TaskBoardSnapshot | Promise<TaskBoardSnapshot>
   apply(requestId: string, action: TaskBoardAction, initiator?: string): TaskBoardSnapshot | Promise<TaskBoardSnapshot> {
     if (!this.active) throw new Error('task board is disabled')
+    // A caller that never met the HTTP envelope parser can name a kind this build
+    // does not implement. It is refused here, in the board's own vocabulary: the
+    // ledger has no case for it, and letting it through committed an unchanged
+    // document under a fresh revision — which every connected client then reloads
+    // a whole snapshot for.
+    const kind = (action as { kind?: unknown } | null | undefined)?.kind
+    if (typeof kind !== 'string' || !Object.hasOwn(ACTION_KINDS, kind)) {
+      throw new Error(`unknown task board action kind: ${String(kind)}`)
+    }
     // Provider actions never touch the ledger directly: the registry routes the
     // action to the owning extension, whose own capability calls come back
     // through applyBoardAction and every board gate below.

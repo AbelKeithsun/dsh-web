@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TypertGateway } from '@deepseek-ai/dsh-api-gateway'
 import { Config, apply } from '../src/index.ts'
+import { HostTaskLedger } from '../src/host-ledger.ts'
 import type { TaskBoardSnapshot, TaskBoardAction, TaskBoardVerificationOptions } from '../src/protocol.ts'
 import { TASK_BOARD_SERVICE_NAME, type TaskBoardExtension } from '../src/core/extension.ts'
 
@@ -184,5 +185,91 @@ describe('the published taskBoard service', () => {
     expect(options.settings).toEqual({ enabled: true, model: '', reasoningEffort: '' })
     expect(options.contract).toMatchObject({ enabled: true, preset: 'coding' })
     expect(options.catalog.groups).toEqual([])
+  })
+
+  it('admin applying an action kind this build does not implement is refused and changes nothing', () => {
+    // Given a mounted board with one card and a listener subscribed afterwards
+    const board = mount(Config({ enabled: true }))
+    board.face.apply('req-create', { kind: 'create', id: 'card', input: { title: 'Ship it', description: '', prompt: 'work' } })
+    let heard = 0
+    board.face.subscribe(() => { heard += 1 })
+    const before = board.face.snapshot()
+    // When the consumer forwards an action whose kind is not part of the protocol
+    const apply = (): unknown => board.face.apply('req-unknown', { kind: 'no-such-action-kind', taskId: 'card' } as unknown as TaskBoardAction)
+    // Then the board refuses it by name instead of committing an unchanged document
+    expect(apply).toThrow(/unknown task board action kind: no-such-action-kind/)
+    const after = board.face.snapshot()
+    expect(after.revision).toBe(before.revision)
+    expect(after.tasks).toEqual(before.tasks)
+    // And no client is told to reload a snapshot that did not change
+    expect(heard).toBe(0)
+  })
+
+  it('admin reaching the ledger without the service guard is refused instead of committing', () => {
+    // Given a ledger held directly, the way a future call path would hold it
+    const ledger = new HostTaskLedger(join(scratchHome as string, 'ledger-direct'), () => Date.now())
+    ledger.applyRequest('req-create', { kind: 'create', id: 'card', input: { title: 'Ship it', description: '', prompt: 'work' } })
+    const before = ledger.state()
+    // When an unknown kind reaches that ledger directly
+    const apply = (): unknown => ledger.applyRequest('req-unknown', { kind: 'no-such-action-kind', taskId: 'card' } as unknown as TaskBoardAction)
+    // Then the ledger's own default refuses it and the revision does not move
+    expect(apply).toThrow(/unknown task board action kind: no-such-action-kind/)
+    expect(ledger.state().revision).toBe(before.revision)
+    ledger.dispose()
+  })
+
+  it('admin applies the action kinds the board defines exactly as before', async () => {
+    // Given a mounted board
+    const board = mount(Config({ enabled: true }))
+    // When the consumer walks several kinds the protocol defines, in order
+    const revisions = [(await board.face.apply('req-create', { kind: 'create', id: 'card', input: { title: 'Ship it', description: '', prompt: 'work' } })).revision]
+    revisions.push((await board.face.apply('req-update', { kind: 'update', taskId: 'card', patch: { title: 'Renamed' } })).revision)
+    revisions.push((await board.face.apply('req-move', { kind: 'move', taskId: 'card', status: 'done' })).revision)
+    revisions.push((await board.face.apply('req-archive', { kind: 'archive', taskId: 'card' })).revision)
+    revisions.push((await board.face.apply('req-restore', { kind: 'restore', taskId: 'card' })).revision)
+    // Then every one still lands, each moving the revision forward
+    for (let index = 1; index < revisions.length; index += 1) expect(revisions[index] ?? 0).toBeGreaterThan(revisions[index - 1] ?? 0)
+    const snapshot = board.face.snapshot()
+    expect(snapshot.tasks[0]).toMatchObject({ id: 'card', title: 'Renamed', status: 'done' })
+    expect(snapshot.tasks[0]?.archivedAt).toBeUndefined()
+  })
+
+  it('admin finds every kind of the action union either accepted or refused on its own merits', async () => {
+    // Given one minimal action per member of the TaskBoardAction union
+    const board = mount(Config({ enabled: true }))
+    const actions: Record<string, Record<string, unknown>> = {
+      import: { kind: 'import', sourceId: 'src', tasks: [] },
+      create: { kind: 'create', id: 'walked', input: { title: 'Walked', description: '', prompt: 'work' } },
+      update: { kind: 'update', taskId: 'missing', patch: { title: 'Renamed' } },
+      delete: { kind: 'delete', taskId: 'missing' },
+      move: { kind: 'move', taskId: 'missing', status: 'done' },
+      archive: { kind: 'archive', taskId: 'missing' },
+      restore: { kind: 'restore', taskId: 'missing' },
+      settle: { kind: 'settle', taskId: 'missing' },
+      'reset-verification': { kind: 'reset-verification', taskId: 'missing' },
+      'record-external-outcome': { kind: 'record-external-outcome', taskId: 'missing', result: 'succeeded', initiatedBy: 'walk' },
+      'set-schedule': { kind: 'set-schedule', taskId: 'missing', patch: {} },
+      run: { kind: 'run', taskId: 'missing' },
+      rerun: { kind: 'rerun', taskId: 'missing' },
+      'confirm-permission': { kind: 'confirm-permission', taskId: 'missing' },
+      'set-parent': { kind: 'set-parent', taskId: 'missing', parentId: null },
+      'rename-tag': { kind: 'rename-tag', from: 'old', to: 'new' },
+      'delete-tag': { kind: 'delete-tag', name: 'old' },
+      'extension-action': { kind: 'extension-action', extensionId: 'missing', action: 'noop' },
+    }
+    // When each one reaches the published face
+    const refusals: string[] = []
+    for (const [kind, action] of Object.entries(actions)) {
+      try {
+        const answer = board.face.apply(`req-${kind}`, action as unknown as TaskBoardAction)
+        if (answer instanceof Promise) await answer.catch((error: unknown) => { refusals.push(`${kind}: ${String(error)}`) })
+      } catch (error) {
+        refusals.push(`${kind}: ${String(error)}`)
+      }
+    }
+    // Then none of them is refused as an unknown kind: each is implemented, so a refusal
+    // that does happen is the action's own (a missing card, a missing extension)
+    expect(Object.keys(actions)).toHaveLength(18)
+    expect(refusals.filter(entry => entry.includes('unknown task board action kind'))).toEqual([])
   })
 })

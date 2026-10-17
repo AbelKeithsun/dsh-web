@@ -1176,6 +1176,15 @@ export class HostTaskLedger {
         runs = this.startCascade(task, now, initiator, action.kind === 'rerun')
         break
       }
+      default: {
+        // Defence in depth. Every kind above is reachable only through
+        // TaskBoardHostService.apply(), which validates the kind first; this
+        // default exists so a future call path that reaches the ledger directly
+        // fails loudly instead of falling through to the commit below — which is
+        // exactly what an unknown kind did while the switch had no default:
+        // unchanged document, new revision.
+        throw new Error(`unknown task board action kind: ${String((action as { kind?: unknown }).kind)}`)
+      }
     }
     // startCascade committed the opened participants itself; committing again
     // here would bump the revision twice for one action.

@@ -22,6 +22,17 @@ Status: implemented
 
 线路契约由 `iphone_remote_use_dsh/docs/protocol-v1.md` §12 冻结；本记录说明两道缝为何存在，不重复帧长什么样。
 
+## 拒绝本版本没有实现的动作种类
+
+能力面逐字转发调用方的 action 对象，于是开了个洞：HTTP 路由一直只是碰巧挡住了它。`parseActionEnvelope`（`packages/dsh-task-board/src/protocol.ts`）在动作到达账本之前就拒掉联合之外的 kind，所以账本自己的 `apply()` switch 从没见过未知 kind——而那个 switch 没有 `default`。一旦进程内调用方能把上游谁都没校验过的 action 交给 `TaskBoardHostService.apply()`，未知 kind 就直接落进 switch 末尾的 commit：revision 动了，文档没变，调用方收到 `ok`。代价不只是假的成功：每个在线客户端都会被 `board.changed` 叫醒并重取一次全量快照，因为线路上没有分页。
+
+拒绝写在动作自己的地盘上——不放桥，也不放绑定插件，因为第二份规则正是本仓库反复付代价的那种缺陷：
+
+1. `TaskBoardHostService.apply()` 用 `ACTION_KINDS`（`Record<TaskBoardAction['kind'], true>` 全量记录）校验 kind。联合新增成员而这里没登记就编译不过，因此这张表不会落后于协议。未知 kind 抛 `unknown task board action kind: <kind>`，它带着原文以 `board-refused` 穿过远端面（§12.3），且什么都不改。
+2. `HostTaskLedger.apply()` 的 switch 补上了它一直缺的 `default`，作为纵深防御，防止将来出现一条绕过服务层直接到达账本的调用路径。
+
+`tests/host-face.spec.ts` 固定三件事：经发布面的拒绝不动 revision、不动任务表、不触发任何订阅；直接持有的账本同样拒绝该 kind；遍历联合全部十八种 kind 证明没有一种被当成未知——每一种要么被处理，要么按它自己的理由被拒。
+
 ## Context & Efficiency Impact
 
 桥多了一张按方法名的注册表和一个每条连接的可选字段；没挂任何扩展时，`KNOWN_METHODS` 之外的名字只多一次 `Set.has`。看板在自己已经创建的服务对象上多四个转发，插件多一张按连接有界（128 键）的重放表和一个微任务合并器。账本 schema、看板自己的 HTTP 面与浏览器 bundle 都没有增加（插件是纯宿主半区）。为 `board.changed` 读一次 revision 要付一次完整 `snapshot()`，因为看板不提供只读 revision 的入口；合并器因此把它压成每波一次深拷贝，而不是每次变更一次。

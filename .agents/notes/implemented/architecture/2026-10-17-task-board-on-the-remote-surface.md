@@ -22,6 +22,17 @@ The board reaches the remote surface through two additive seams and one new pack
 
 The wire contract is frozen by `iphone_remote_use_dsh/docs/protocol-v1.md` §12; this note records why the two seams exist, not what the frames look like.
 
+## Refusing an action kind this build does not implement
+
+The capability face forwards a caller's action object verbatim, and that made one hole reachable that the HTTP route had been covering by accident. `parseActionEnvelope` (`packages/dsh-task-board/src/protocol.ts`) rejects a kind outside the action union before an action reaches the ledger, so the ledger's own `apply()` switch never saw one — and that switch has no `default`. Once an in-process caller could hand `TaskBoardHostService.apply()` an action nothing upstream had validated, an unknown kind fell through the switch to the commit at its end: the revision moved, the document did not change, and the caller was told `ok`. The cost is not only a wrong success: every connected client is woken by `board.changed` and reloads a full snapshot, because the wire has no paging.
+
+The refusal lives where the actions live — not in the bridge, and not in the binding plugin, because a second copy of the rule is the defect this repository keeps paying for:
+
+1. `TaskBoardHostService.apply()` validates the kind against `ACTION_KINDS`, a total `Record<TaskBoardAction['kind'], true>`. A new union member does not compile until it is listed, so the table cannot fall behind the protocol. An unknown kind throws `unknown task board action kind: <kind>`, which crosses the remote surface as `board-refused` with that text (§12.3) and changes nothing.
+2. `HostTaskLedger.apply()`'s switch gained the `default` it never had, as defence in depth for a future call path that reaches the ledger with no service in front of it.
+
+`tests/host-face.spec.ts` fixes the three facts: the refusal through the published face leaves the revision and the task list untouched and fires no subscription; a ledger held directly refuses the same kind; and a walk over all eighteen kinds of the union proves none is refused as unknown — each is handled, or refused on its own merits.
+
 ## Context & Efficiency Impact
 
 The bridge gains one registry keyed by method name and one optional field per connection; a connection with no extension mounted costs one `Set.has` on names outside `KNOWN_METHODS`. The board gains four forwards on a service object it already created, and the plugin gains a per-connection replay table bounded at 128 keys plus a microtask coalescer. Nothing is added to the ledger schema, the board's own HTTP surface or the browser bundle (the plugin is host-only). Reading a revision for `board.changed` costs one full `snapshot()`, because the board publishes no revision-only read; the coalescer therefore makes it one clone per wave, not one per change.
