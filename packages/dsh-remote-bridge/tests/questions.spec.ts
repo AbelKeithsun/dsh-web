@@ -29,6 +29,13 @@ function hostRequest(overrides: Partial<UserQuestionRequestLike> = {}): UserQues
 /** The answer a phone sends for {@link hostRequest}'s single question. */
 const ANSWER: QuestionAnswer = { answers: [{ id: 'q-1', selected: ['Alpha'] }] }
 
+/**
+ * The host's own answerer with its panel open and nobody having touched it: in the
+ * desktop client this settles when a human clicks. Pending is the honest model,
+ * and it is what lets the phone and the desktop race each other.
+ */
+const desktopWaiting = (): Promise<QuestionAnswer> => new Promise<QuestionAnswer>(() => {})
+
 /** Declare the question capability on one connection. */
 async function declareQuestions(connection: { handleText(text: string): Promise<void> }, id = 1): Promise<void> {
   await connection.handleText(requestFrame(id, 'hello', { proto: 1, cap: ['questions.v1'] }))
@@ -64,7 +71,7 @@ describe('user question bridge', () => {
     const harness = makeHub()
     await declareQuestions(harness.connection)
     // When the host asks
-    const pending = harness.hub.question(hostRequest(), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
     // Then the event carries the frozen payload, and the host's ask is still open
     expect(questionPayloads(harness.transport)).toEqual([
       {
@@ -100,7 +107,7 @@ describe('user question bridge', () => {
     await declareQuestions(harness.connection)
     const controller = new AbortController()
     const timeout = hostTimeout()
-    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
     // When the host's deadline elapses
     controller.abort(timeout)
     // Then the host's own reason crosses back into its ask unchanged
@@ -126,7 +133,7 @@ describe('user question bridge', () => {
     const harness = makeHub()
     await declareQuestions(harness.connection)
     const controller = new AbortController()
-    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
     controller.abort(hostTimeout())
     await expect(pending).rejects.toBeDefined()
     // When the host refuses the reply it already queued
@@ -142,7 +149,7 @@ describe('user question bridge', () => {
     const harness = makeHub()
     await declareQuestions(harness.connection)
     const controller = new AbortController()
-    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
     controller.abort(hostTimeout())
     await expect(pending).rejects.toBeDefined()
     // When the host answers that it no longer holds the question
@@ -186,7 +193,7 @@ describe('user question bridge', () => {
     // Given one claimed question on session s-1
     const harness = makeHub()
     await declareQuestions(harness.connection)
-    const pending = harness.hub.question(hostRequest(), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
     // When the phone names a different session for that call id
     await harness.connection.handleText(requestFrame(6, 'question.answer', { sessionId: 's-2', callId: 'c-1', answers: ANSWER.answers }))
     // Then the claim is not handed to whoever names it
@@ -201,7 +208,7 @@ describe('user question bridge', () => {
     // Given a question already answered
     const harness = makeHub()
     await declareQuestions(harness.connection)
-    const pending = harness.hub.question(hostRequest(), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
     await harness.connection.handleText(requestFrame(8, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
     // When the same call is answered again
     await harness.connection.handleText(requestFrame(9, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
@@ -254,7 +261,7 @@ describe('user question bridge', () => {
     await declareQuestions(declaring)
     await legacyConnection.handleText(requestFrame(1, 'hello', { proto: 1 }))
     // When the host asks
-    const pending = bare.hub.question(hostRequest(), async () => ({ answers: [] }))
+    const pending = bare.hub.question(hostRequest(), desktopWaiting)
     // Then exactly the declaring phone was shown the question
     expect(questionPayloads(declared)).toHaveLength(1)
     expect(legacy.ofType('ev')).toEqual([])
@@ -269,7 +276,7 @@ describe('user question bridge', () => {
     await declareQuestions(harness.connection)
     const controller = new AbortController()
     const timeout = hostTimeout()
-    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
     // When the host's own deadline elapses without any client timer of ours involved
     controller.abort(timeout)
     // Then the ask was released by the host's reason alone and the claim is still answerable
@@ -283,7 +290,7 @@ describe('user question bridge', () => {
     await declareQuestions(harness.connection)
     const controller = new AbortController()
     const cancelled = Object.assign(new Error('the turn was cancelled'), { code: 'ASK_ABORTED' })
-    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
     // When the turn's own lifetime ends
     controller.abort(cancelled)
     // Then the ask crosses back verbatim and nothing stays answerable
@@ -296,6 +303,8 @@ describe('user question bridge', () => {
     // Given a claimed question on a hub whose only phone is about to go away
     const harness = makeHub()
     await declareQuestions(harness.connection)
+    // Here the desktop panel is what answers once the phone is gone, so it settles
+    // rather than hanging: this case is about the hand-back, not about a race.
     const pending = harness.hub.question(hostRequest(), async () => ({ answers: [] }))
     // When the connection closes
     harness.hub.detach(harness.connection)
@@ -311,7 +320,7 @@ describe('user question bridge', () => {
     const harness = makeHub({ questionIds: () => 'minted-1' })
     await declareQuestions(harness.connection)
     // When the host asks
-    const pending = harness.hub.question(hostRequest({ wait: undefined }), async () => ({ answers: [] }))
+    const pending = harness.hub.question(hostRequest({ wait: undefined }), desktopWaiting)
     // Then the phone is still shown the question, named by an id in the bridge's own namespace
     const payload = questionPayloads(harness.transport)[0]
     expect(payload).toMatchObject({ sessionId: 's-1', callId: 'bridge:minted-1', state: 'open' })
@@ -358,8 +367,8 @@ describe('user question bridge', () => {
     // Given one blocking ask and one timed ask held at the same time
     const harness = makeHub({ questionIds: () => 'minted-4' })
     await declareQuestions(harness.connection)
-    const blocking = harness.hub.question(hostRequest({ wait: undefined }), async () => ({ answers: [] }))
-    const timed = harness.hub.question(hostRequest(), async () => ({ answers: [] }))
+    const blocking = harness.hub.question(hostRequest({ wait: undefined }), desktopWaiting)
+    const timed = harness.hub.question(hostRequest(), desktopWaiting)
     // When the minted handle is answered
     await harness.connection.handleText(requestFrame(22, 'question.answer', { sessionId: 's-1', callId: 'bridge:minted-4', answers: ANSWER.answers }))
     // Then only the blocking ask settled, and the timed one is still open on its own id
@@ -387,5 +396,33 @@ describe('user question bridge', () => {
     expect(outcome).toEqual({ answers: [] })
     expect(harness.questions.size).toBe(0)
     expect(harness.transport.ofType('ev')).toEqual([])
+  })
+
+  it('operator the desktop answers first and the phone is left with a refused tap', async () => {
+    // Given a paired phone and a desktop panel, both looking at the same question
+    const harness = makeHub()
+    await declareQuestions(harness.connection)
+    // When the desktop answers it first
+    const outcome = await harness.hub.question(hostRequest(), async () => ANSWER)
+    // Then the host took the desktop's answer, and the phone's claim is gone
+    expect(outcome).toEqual(ANSWER)
+    expect(harness.questions.size).toBe(0)
+    // And the phone's late tap is refused rather than silently swallowed
+    await harness.connection.handleText(requestFrame(2, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(JSON.stringify(answerOf(harness, 2))).toContain('question-unknown')
+  })
+
+  it('operator the desktop gives up and the phone still answers', async () => {
+    // Given a phone and a desktop answerer that fails immediately
+    const harness = makeHub()
+    await declareQuestions(harness.connection)
+    const desktopFails = async (): Promise<QuestionAnswer> => {
+      throw Object.assign(new Error('no answerer'), { code: 'NO_PROVIDER' })
+    }
+    const pending = harness.hub.question(hostRequest(), desktopFails)
+    // When the phone answers, its answer is the one the host gets
+    await harness.connection.handleText(requestFrame(2, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+    expect(harness.questions.size).toBe(0)
   })
 })

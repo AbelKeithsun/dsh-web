@@ -255,6 +255,22 @@ export class QuestionClaims {
     })
     const signal = input.signal
     const onAbort = (): void => { this.#expire(input.callId, signal?.reason) }
+    // The rest of the answerer chain is the host's own UI, and it must keep
+    // showing the question: claiming here used to swallow it. Started once, at
+    // claim time, so both surfaces display it and the first answer settles it.
+    // A rejection is not a verdict — the phone may still answer — so it is
+    // remembered for a later withdraw instead of failing the claim now.
+    let nextStarted: Promise<QuestionAnswer> | undefined
+    const startNext = (): Promise<QuestionAnswer> => {
+      if (nextStarted === undefined) {
+        try {
+          nextStarted = input.next()
+        } catch (error) {
+          nextStarted = Promise.reject(error)
+        }
+      }
+      return nextStarted
+    }
     const record: Claim = {
       sessionId: input.sessionId,
       callId: input.callId,
@@ -264,19 +280,23 @@ export class QuestionClaims {
       settle,
       fail,
       delegate: (): void => {
-        let pending: Promise<QuestionAnswer>
-        try {
-          pending = input.next()
-        } catch (error) {
-          fail(error)
-          return
-        }
-        void pending.then(settle, fail)
+        void startNext().then(settle, fail)
       },
       detach: (): void => { signal?.removeEventListener('abort', onAbort) },
       onContinued: input.onContinued,
     }
     this.#claims.set(input.callId, record)
+    // Settle on whichever surface answers first, and drop the loser so a later
+    // tap on the phone is refused instead of silently ignored.
+    void startNext().then(
+      (answered) => {
+        if (this.#claims.get(input.callId) !== record) return
+        this.#claims.delete(input.callId)
+        record.detach()
+        settle(answered)
+      },
+      () => undefined,
+    )
     if (signal?.aborted === true) onAbort()
     else signal?.addEventListener('abort', onAbort, { once: true })
     return { sessionId: record.sessionId, callId: record.callId, questions: record.questions, answer }

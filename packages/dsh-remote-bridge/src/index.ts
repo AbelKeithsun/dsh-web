@@ -196,5 +196,10 @@ export function apply(ctx: Context): void {
   }, 'remote-bridge: protocol v1 routes')
 
   ctx.on('approval/request', (request, next) => hub.approve(request, next))
-  ctx.on('user-questions/request', (request, next) => hub.question(request, next))
+  // Prepended: the host's waterfall is first-come, and the desktop client's own
+  // answerer would otherwise claim every question before this listener is
+  // consulted. The claim starts the rest of the chain itself, so prepending does
+  // not take the desktop panel away — both surfaces show the question and the
+  // first answer settles it.
+  ctx.on('user-questions/request', (request, next) => hub.question(request, next), { prepend: true })
 }
