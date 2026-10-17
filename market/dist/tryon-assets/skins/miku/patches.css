@@ -180,12 +180,18 @@ html[data-dsh-skin="miku"] [data-conversation-scroll] {
 }
 
 /* 会话标题栏：一条半透明横带 + 下缘发丝线（半透明，让插画仍在里面）。
+   横带不是画在插画上的第一层：皮肤中心还铺了一层 contributes.backgroundMedia.scrim
+   （浅色 0.50 / 深色 0.12），横带是**第二层**，合成不透明度 = 1 - (1-scrim)(1-横带)。
+   旧值浅色 #fbfdffe0 / #fbfdffb8（0.878 / 0.722）合成 0.94 -> 0.86，等于一块近白板把
+   插画顶部切断：空会话首屏只有这条 header 渲染，横带下缘就成了一道硬边（issue #71）。
+   现值浅色 0.239 -> 0.078，合成 0.62 -> 0.54，与横带下方 0.50 连续；深色 0.302 -> 0.122，
+   合成 0.39 -> 0.23（下方 0.12）。tests/miku-patches.spec.ts 锁住这条合成关系。
    宿主 0.1.7：surface 戳在 0x0 的插槽出口上，出口里装的是 titleRow / tabs 两个
    div，真 <header> 改挂 [data-slot='conversation.header']；旧宿主的两条一并保留。 */
 html[data-dsh-skin="miku"] [data-slot='conversation.header'] > header,
 html[data-dsh-skin="miku"] [data-dsh-surface="session-header"] > header,
 html[data-dsh-skin="miku"] [data-dsh-responsive-part="conversation-header"] {
-  background: linear-gradient(180deg, #fbfdffe0 0%, #fbfdffb8 100%) !important;
+  background: linear-gradient(180deg, #fbfdff3d 0%, #fbfdff14 100%) !important;
   border-bottom: 1px solid var(--miku-hairline) !important;
   box-shadow: none !important;
   text-shadow: none;
@@ -195,7 +201,7 @@ html[data-dsh-skin="miku"] [data-dsh-responsive-part="conversation-header"] {
 html[data-dsh-skin="miku"] body[data-ds-dark-theme] [data-slot='conversation.header'] > header,
 html[data-dsh-skin="miku"] body[data-ds-dark-theme] [data-dsh-surface="session-header"] > header,
 html[data-dsh-skin="miku"] body[data-ds-dark-theme] [data-dsh-responsive-part="conversation-header"] {
-  background: linear-gradient(180deg, #0e1a2bd9 0%, #0e1a2ba8 100%) !important;
+  background: linear-gradient(180deg, #0e1a2b4d 0%, #0e1a2b1f 100%) !important;
   border-bottom: 1px solid var(--miku-hairline) !important;
 }
 

@@ -56,9 +56,62 @@
       ]
     },
     {
+      "id": "deep-chan",
+      "displayName": "deep酱",
+      "rank": 2,
+      "renderer": "sprite2d",
+      "spritesheet": "assets/pets/deep-chan/spritesheet.webp",
+      "previews": [
+        "assets/pets/deep-chan/previews/idle.gif",
+        "assets/pets/deep-chan/previews/running-right.gif",
+        "assets/pets/deep-chan/previews/running-left.gif",
+        "assets/pets/deep-chan/previews/waving.gif",
+        "assets/pets/deep-chan/previews/jumping.gif",
+        "assets/pets/deep-chan/previews/failed.gif",
+        "assets/pets/deep-chan/previews/waiting.gif",
+        "assets/pets/deep-chan/previews/running.gif",
+        "assets/pets/deep-chan/previews/review.gif"
+      ],
+      "frames": [
+        6,
+        8,
+        8,
+        4,
+        5,
+        8,
+        6,
+        6,
+        6
+      ],
+      "tracks": [
+        "idle",
+        "running-right",
+        "running-left",
+        "waving",
+        "jumping",
+        "failed",
+        "waiting",
+        "running",
+        "review"
+      ],
+      "files": [
+        "pet.json",
+        "previews/failed.gif",
+        "previews/idle.gif",
+        "previews/jumping.gif",
+        "previews/review.gif",
+        "previews/running-left.gif",
+        "previews/running-right.gif",
+        "previews/running.gif",
+        "previews/waiting.gif",
+        "previews/waving.gif",
+        "spritesheet.webp"
+      ]
+    },
+    {
       "id": "doro",
       "displayName": "doro",
-      "rank": 2,
+      "rank": 3,
       "renderer": "frames2d",
       "previews": [
         "assets/pets/doro/previews/idle.gif",
@@ -950,7 +1003,7 @@
     {
       "id": "jyn",
       "displayName": "女仆鲸鱼娘",
-      "rank": 3,
+      "rank": 4,
       "renderer": "frames2d",
       "previews": [
         "assets/pets/jyn/previews/idle.webp",
@@ -2571,7 +2624,7 @@
     {
       "id": "jyn-foxtail",
       "displayName": "鲸鱼娘·狗尾巴草",
-      "rank": 4,
+      "rank": 5,
       "renderer": "frames2d",
       "previews": [
         "assets/pets/jyn-foxtail/previews/idle.webp",
@@ -2948,7 +3001,7 @@
     {
       "id": "jyn-loli",
       "displayName": "鲸鱼娘·萝莉",
-      "rank": 5,
+      "rank": 6,
       "renderer": "frames2d",
       "previews": [
         "assets/pets/jyn-loli/previews/idle.gif",
@@ -3712,7 +3765,7 @@
     {
       "id": "long-niang",
       "displayName": "龙娘",
-      "rank": 6,
+      "rank": 7,
       "renderer": "sprite2d",
       "spritesheet": "assets/pets/long-niang/spritesheet.webp",
       "previews": [
@@ -3756,7 +3809,7 @@
     {
       "id": "miku",
       "displayName": "Miku",
-      "rank": 7,
+      "rank": 8,
       "renderer": "frames2d",
       "previews": [
         "assets/pets/miku/previews/idle.webp"
@@ -3870,7 +3923,7 @@
     {
       "id": "ouo-neko",
       "displayName": "OUO Neko",
-      "rank": 8,
+      "rank": 9,
       "renderer": "sprite2d",
       "spritesheet": "assets/pets/ouo-neko/spritesheet.webp",
       "previews": [
@@ -3912,7 +3965,7 @@
     {
       "id": "starry-doll",
       "displayName": "星夜人偶",
-      "rank": 9,
+      "rank": 10,
       "renderer": "sprite2d",
       "spritesheet": "assets/pets/starry-doll/spritesheet.webp",
       "previews": [
@@ -3965,7 +4018,7 @@
     {
       "id": "whale-girl",
       "displayName": "鲸鱼娘（原版）",
-      "rank": 10,
+      "rank": 11,
       "renderer": "sprite2d",
       "spritesheet": "assets/pets/whale-girl/spritesheet.webp",
       "previews": [
@@ -4018,7 +4071,7 @@
     {
       "id": "whale-girl-refined",
       "displayName": "鲸鱼娘（精致版）",
-      "rank": 11,
+      "rank": 12,
       "renderer": "sprite2d",
       "spritesheet": "assets/pets/whale-girl-refined/spritesheet.webp",
       "previews": [
