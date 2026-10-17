@@ -45,9 +45,18 @@ describe('DSH Remote wire argument layout', () => {
     const zeroArgument = WIRE_TABLE.filter(row => row.wire === 'none').map(row => `${row.namespace}/${row.method}`)
     // When the zero-argument rows are collected
     const inventory = WIRE_TABLE.filter(row => row.wire === 'none').length
-    // Then exactly the three zero-parameter endpoints are marked, and the rest carry one named request
+    // Then exactly the three zero-parameter endpoints are marked, and the rest carry named arguments
     expect(zeroArgument).toEqual(['session/modelCatalog', 'pluginInventory/list', 'pluginManager/listPlugins'])
-    expect(WIRE_TABLE.length - inventory).toBe(8)
+    expect(WIRE_TABLE.length - inventory).toBe(9)
+  })
+
+  it('user answers a continued question and every declared parameter travels as its own key', () => {
+    // Given the user-questions answer endpoint, whose descriptor declares agentId, callId and answer
+    // When the bridge builds its named arguments
+    const args = wireArgs('userQuestions', 'answer', { agentId: 's-1', callId: 'c-1', answer: { answers: [] } })
+    // Then each wire name is one key of its own, not one request object
+    expect(args).toEqual({ agentId: 's-1', callId: 'c-1', answer: { answers: [] } })
+    expect(wireRowFor('userQuestions', 'answer')?.wire).toEqual({ names: ['agentId', 'callId', 'answer'] })
   })
 
   it('operator adds an endpoint the table does not know and it defaults to the majority layout', () => {

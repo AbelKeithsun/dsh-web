@@ -13,6 +13,11 @@
  * - `approval/request` is claimed in-process while a paired device is connected,
  *   and delegated (`next()`) in every other case, which the Host normalizes to
  *   the fail-closed `'unavailable'`.
+ * - `user-questions/request` is claimed the same way and published as
+ *   `question.request` to the devices that declared `questions.v1`; their
+ *   `question.answer` settles the host's own ask while it is open, or reaches a
+ *   continued question through the host's Remote `answer`. Every other case
+ *   delegates, and the question keeps the Host's own deadline.
  *
  * The browser half lives in `src/client/` and is declared by `dsh.client`: one
  * sidebar-foot panel that reads the same loopback-gated token route over a
@@ -36,6 +41,7 @@ import { DeviceRoster } from './core/devices.ts'
 import { BridgeHub } from './core/hub.ts'
 import { createOwnerPeer } from './core/owner-peer.ts'
 import { PairingService } from './core/pairing.ts'
+import { QuestionClaims } from './core/questions.ts'
 import { WS_PATH } from './core/protocol.ts'
 import { SessionMeta, type ArchiveSetFace, type SessionStoreFace, type SessionTitleFace } from './core/session-meta.ts'
 import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
@@ -153,6 +159,7 @@ export function apply(ctx: Context): void {
   const roster = new DeviceRoster({ file: join(dshHome(), ROSTER_PATH), log })
   const pairing = new PairingService()
   const approvals = new ApprovalRegistry()
+  const questions = new QuestionClaims({ gateway: ctx.typertGateway, log })
   const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
   const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
   // The owner peer is the full-control credential the gateway demands since
@@ -164,6 +171,7 @@ export function apply(ctx: Context): void {
     pairing,
     roster,
     approvals,
+    questions,
     sessionMeta,
     permissions,
     ownerPeer,
@@ -188,4 +196,5 @@ export function apply(ctx: Context): void {
   }, 'remote-bridge: protocol v1 routes')
 
   ctx.on('approval/request', (request, next) => hub.approve(request, next))
+  ctx.on('user-questions/request', (request, next) => hub.question(request, next))
 }

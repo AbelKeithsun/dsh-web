@@ -589,6 +589,7 @@ describe('protocol v1 composer parity: method set', () => {
       'session.setModel',
     ])
     expect(KNOWN_METHODS.has(METHOD_APPROVAL_RESOLVE)).toBe(true)
-    expect(KNOWN_METHODS.size).toBe(15)
+    // The question channel added exactly one more method to the frozen set.
+    expect(KNOWN_METHODS.size).toBe(16)
   })
 })

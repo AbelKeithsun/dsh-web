@@ -149,6 +149,7 @@ describe('the mounted plugin', () => {
     expect(paths).toEqual([PAIR_TOKEN_PATH, WS_PATH].sort())
     expect(host.routes[0]?.kind).toBe('exact')
     expect(host.listeners.has('approval/request')).toBe(true)
+    expect(host.listeners.has('user-questions/request')).toBe(true)
   })
 
   it('user upgrading on the mounted route has the greeting answered over the socket', async () => {

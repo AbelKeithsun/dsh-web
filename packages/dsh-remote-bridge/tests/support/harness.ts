@@ -14,6 +14,7 @@ import { DeviceRoster } from '../../src/core/devices.ts'
 import { BridgeHub } from '../../src/core/hub.ts'
 import { createOwnerPeer } from '../../src/core/owner-peer.ts'
 import { PairingService } from '../../src/core/pairing.ts'
+import { QuestionClaims } from '../../src/core/questions.ts'
 import { SessionMeta, type SessionMetaFaces } from '../../src/core/session-meta.ts'
 import { SessionPermissions } from '../../src/core/session-permissions.ts'
 import type { BridgeGateway, GatewayInvokeRequest, GatewayPeer } from '../../src/core/wire.ts'
@@ -175,6 +176,7 @@ export interface ConnectionHarness {
   readonly roster: DeviceRoster
   readonly approvals: ApprovalRegistry
   readonly ownerPeer: GatewayPeer
+  readonly questions: QuestionClaims
   readonly logs: string[]
 }
 
@@ -190,6 +192,8 @@ export interface HarnessOptions {
   /** Permission presets source; the default models a host with no such service mounted. */
   readonly permissions?: SessionPermissions
   readonly heartbeatMs?: number
+  /** Id source for the call ids the question channel mints; the default is random. */
+  readonly questionIds?: (byteLength: number) => string
 }
 
 /** Session metadata for a host whose session services are all present. */
@@ -240,11 +244,17 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
   const approvals = new ApprovalRegistry()
   const logs: string[] = []
   const ownerPeer = createOwnerPeer(new Context())
+  const questions = new QuestionClaims({
+    gateway,
+    log: message => { logs.push(message) },
+    ...(options.questionIds === undefined ? {} : { random: options.questionIds }),
+  })
   const settings: BridgeConnectionOptions = {
     gateway,
     pairing,
     roster,
     approvals,
+    questions,
     sessionMeta: metaOf(options, message => { logs.push(message) }),
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
     ownerPeer,
@@ -255,7 +265,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
   }
   const auth: ConnectionAuth | undefined = options.paired === true ? { deviceId: 'dev_harness' } : undefined
   const connection = new BridgeConnection(settings, transport, auth)
-  return { connection, transport, gateway, pairing, roster, approvals, ownerPeer, logs }
+  return { connection, transport, gateway, pairing, roster, approvals, ownerPeer, questions, logs }
 }
 
 /** One request frame, serialized the way a client sends it. */
@@ -288,6 +298,7 @@ export interface HubHarness {
   readonly gateway: FakeGateway
   readonly approvals: ApprovalRegistry
   readonly ownerPeer: GatewayPeer
+  readonly questions: QuestionClaims
   readonly logs: string[]
 }
 
@@ -305,6 +316,7 @@ export interface BareHubHarness {
   readonly gateway: FakeGateway
   readonly approvals: ApprovalRegistry
   readonly ownerPeer: GatewayPeer
+  readonly questions: QuestionClaims
   readonly logs: string[]
 }
 
@@ -314,11 +326,17 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
   const approvals = new ApprovalRegistry()
   const logs: string[] = []
   const ownerPeer = createOwnerPeer(new Context())
+  const questions = new QuestionClaims({
+    gateway,
+    log: message => { logs.push(message) },
+    ...(options.questionIds === undefined ? {} : { random: options.questionIds }),
+  })
   const hub = new BridgeHub({
     gateway,
     pairing: new PairingService(),
     roster: options.roster ?? new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' }),
     approvals,
+    questions,
     sessionMeta: metaOf(options, message => { logs.push(message) }),
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
     ownerPeer,
@@ -326,7 +344,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },
   })
-  return { hub, gateway, approvals, ownerPeer, logs }
+  return { hub, gateway, approvals, ownerPeer, questions, logs }
 }
 
 /** One response frame's `ok`, `r` and `e`, exactly as the client reads them. */

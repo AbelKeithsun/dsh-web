@@ -22,7 +22,9 @@ import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, ToolCa
 import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import type { PairingService } from './pairing.ts'
+import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
 import {
+  CAP_QUESTIONS,
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_SESSION_SNAPSHOT_TRIM,
   CODE_APPROVAL_UNKNOWN,
@@ -40,6 +42,7 @@ import {
   METHOD_HELLO,
   METHOD_PAIR_BEGIN,
   METHOD_PAIR_FINISH,
+  METHOD_QUESTION_ANSWER,
   METHOD_SESSION_ATTACHMENT,
   METHOD_SESSION_HISTORY,
   METHOD_SESSION_INTERRUPT,
@@ -87,6 +90,8 @@ export interface BridgeConnectionOptions {
   readonly pairing: PairingService
   readonly roster: DeviceRoster
   readonly approvals: ApprovalRegistry
+  /** Pending user questions: the claims this bridge holds and the answer path back to the host. */
+  readonly questions: QuestionClaims
   /** Process-local session metadata: live titles and the host's archive set. */
   readonly sessionMeta: SessionMeta
   /** Host-process permission presets, read and switched through their real service objects. */
@@ -208,6 +213,32 @@ function pageBudgetOf(value: unknown, method: string): { readonly ok: true; read
 function capabilitiesOf(value: unknown): ReadonlySet<string> {
   if (!Array.isArray(value)) return new Set()
   return new Set(value.filter((name): name is string => typeof name === 'string' && name !== ''))
+}
+
+/**
+ * Validate `question.answer`'s answer batch.
+ *
+ * The host validates the batch against the questions it actually asked (missing,
+ * duplicated or invented ids are the host's own `BAD_ANSWER`), so this only
+ * refuses what is not an answer at all: a non-array, an entry that is not an
+ * object, an entry without a non-empty id, or `selected` that is not a list of
+ * non-empty labels.
+ * @param value - the request's `answers` member, or undefined.
+ * @returns the batch in protocol vocabulary, or undefined when it is not one.
+ */
+function answersOf(value: unknown): readonly QuestionAnswerItem[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const answers: QuestionAnswerItem[] = []
+  for (const entry of value) {
+    if (!isRecord(entry)) return undefined
+    const id = optionalText(entry.id)
+    const selected = entry.selected
+    if (id === undefined || !Array.isArray(selected)) return undefined
+    if (!selected.every(label => typeof label === 'string' && label !== '')) return undefined
+    const custom = optionalText(entry.custom)
+    answers.push({ id, selected: selected as string[], ...(custom === undefined ? {} : { custom }) })
+  }
+  return answers
 }
 
 /** One model selection, in the field names the protocol publishes. */
@@ -334,6 +365,14 @@ export class BridgeConnection {
     return this.#disposed
   }
 
+  /**
+   * @param capability - one capability name this protocol defines.
+   * @returns whether this connection announced it in `hello`.
+   */
+  declares(capability: string): boolean {
+    return this.#capabilities.has(capability)
+  }
+
   /** Start the idle heartbeat that keeps a quiet phone's socket alive. */
   startHeartbeat(): void {
     if (this.#heartbeat !== undefined) return
@@ -404,6 +443,12 @@ export class BridgeConnection {
 
   async #dispatch(frame: ReqFrame): Promise<DispatchOutcome> {
     if (!KNOWN_METHODS.has(frame.m)) return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    // `question.answer` exists only for a client that asked for the question
+    // channel: without the capability it is an unknown method, which is exactly
+    // what this frame was before the channel existed.
+    if (frame.m === METHOD_QUESTION_ANSWER && !this.declares(CAP_QUESTIONS)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // Unconditional: a loopback Host buys nothing here. Without a device token
     // only the handshake and the two pairing steps run.
     if (!this.paired && !UNPAIRED_METHODS.has(frame.m)) return refusal(CODE_UNPAIRED, 'this connection is not paired')
@@ -423,6 +468,7 @@ export class BridgeConnection {
       case METHOD_SESSION_MODELS: return await this.#sessionModels(frame.p)
       case METHOD_SESSION_SET_MODEL: return await this.#sessionSetModel(frame.p)
       case METHOD_APPROVAL_RESOLVE: return this.#approvalResolve(frame.p)
+      case METHOD_QUESTION_ANSWER: return await this.#questionAnswer(frame.p)
       default: return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
   }
@@ -779,6 +825,26 @@ export class BridgeConnection {
       return refusal(CODE_APPROVAL_UNKNOWN, 'the question is unknown, already answered or expired')
     }
     return { ok: true, r: { ok: true } }
+  }
+
+  /**
+   * Answer one pending user question.
+   *
+   * The claim decides how the answer travels: an open question settles the
+   * host's own ask, a continued one is steered into the agent through the
+   * host's Remote `answer`. A call id this bridge does not hold is refused
+   * rather than forwarded, and a host failure crosses with its own code.
+   * @param payload - `{sessionId, callId, answers}`.
+   */
+  async #questionAnswer(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    const callId = stringArg(payload, 'callId')
+    const answers = answersOf(payload.answers)
+    if (sessionId === undefined || callId === undefined || answers === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'question.answer requires sessionId, callId and answers of {id, selected, custom?}')
+    }
+    const reply = await this.#options.questions.answer(sessionId, callId, { answers })
+    return reply.ok ? { ok: true, r: { ok: true } } : refusal(reply.code, reply.msg)
   }
 
   /**

@@ -20,10 +20,12 @@ export const METHOD_SESSION_SET_MODEL = 'session.setModel'
 export const METHOD_PAIR_BEGIN = 'pair.begin'
 export const METHOD_PAIR_FINISH = 'pair.finish'
 export const METHOD_APPROVAL_RESOLVE = 'approval.resolve'
+export const METHOD_QUESTION_ANSWER = 'question.answer'
 
 /** Server-pushed topics of protocol v1. */
 export const TOPIC_SESSION_DELTA = 'session.delta'
 export const TOPIC_APPROVAL_REQUEST = 'approval.request'
+export const TOPIC_QUESTION_REQUEST = 'question.request'
 
 /**
  * Capability a client declares in `hello`'s `cap` array to ask for a trimmed
@@ -42,6 +44,18 @@ export const CAP_SESSION_SNAPSHOT_TRIM = 'session.snapshot.trim.v1'
  * snapshot protocol v1 always served.
  */
 export const CAP_SESSION_SNAPSHOT_PAGE = 'session.snapshot.page.v1'
+
+/**
+ * Capability a client declares in `hello`'s `cap` array to be shown the
+ * host's pending user questions and to answer them with `question.answer`.
+ *
+ * Declaring it is what makes `question.request` reachable and what makes the
+ * method part of that client's protocol at all: a client that does not declare
+ * it — including every client written before this channel existed — receives no
+ * such event, and its `question.answer` is refused as an unknown method,
+ * exactly as that frame was refused before.
+ */
+export const CAP_QUESTIONS = 'questions.v1'
 
 /**
  * Methods an unpaired connection may still call: the handshake itself and the
@@ -71,6 +85,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_PAIR_BEGIN,
   METHOD_PAIR_FINISH,
   METHOD_APPROVAL_RESOLVE,
+  METHOD_QUESTION_ANSWER,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
@@ -82,6 +97,12 @@ export const CODE_TOKEN_INVALID = 'token-invalid'
 export const CODE_NONCE_INVALID = 'nonce-invalid'
 export const CODE_SIGNATURE_INVALID = 'signature-invalid'
 export const CODE_APPROVAL_UNKNOWN = 'approval-unknown'
+/**
+ * The bridge does not hold the named question: it never claimed that call id, it
+ * already answered it, or the host no longer holds it as answerable. Host
+ * failures crossing this method keep their own codes instead.
+ */
+export const CODE_QUESTION_UNKNOWN = 'question-unknown'
 export const CODE_SNAPSHOT_UNAVAILABLE = 'snapshot-unavailable'
 export const CODE_SNAPSHOT_TOO_LARGE = 'snapshot-too-large'
 export const CODE_INTERNAL = 'internal'

@@ -1,19 +1,27 @@
 /**
- * The bridge's process-wide connection registry and its claim on
- * `approval/request`.
+ * The bridge's process-wide connection registry and its claims on
+ * `approval/request` and `user-questions/request`.
  *
  * The hub is what makes "phone not answering equals refusal" true: a question
  * is claimed only while at least one paired device is connected, the publish
  * has to actually reach someone, and every other path (timeout, agent
  * cancellation, the last phone leaving) delegates to the next answerer, which
  * the Host normalizes to `'unavailable'`.
+ *
+ * The claim on `user-questions/request` follows the same two rules, with two
+ * differences that belong to the host's own semantics: delegating is not a
+ * refusal, because only a phone that declares `questions.v1` is ever shown the
+ * question; and a question is named on the wire even when the host named none,
+ * because a blocking ask carries no call id and the phone still needs a handle
+ * to answer with.
  * @module dsh-remote-bridge/core/hub
  */
 
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { BridgeConnectionOptions, BridgeTransport, ConnectionAuth } from './connection.ts'
 import { BridgeConnection } from './connection.ts'
-import { TOPIC_APPROVAL_REQUEST } from './protocol.ts'
+import { CAP_QUESTIONS, TOPIC_APPROVAL_REQUEST, TOPIC_QUESTION_REQUEST } from './protocol.ts'
+import type { ClaimedQuestionView, QuestionAnswer, QuestionRequestPayload, QuestionState, UserQuestionRequestLike } from './questions.ts'
 
 /**
  * The fields of an approval question this bridge reads. Structural on purpose:
@@ -31,6 +39,19 @@ export interface ApprovalRequestLike {
 /** The summary line a phone shows for one question. */
 export function approvalSummary(request: ApprovalRequestLike): string {
   return request.displayReason?.zh ?? request.displayReason?.en ?? request.toolName
+}
+
+/**
+ * The `question.request` payload for one claim.
+ *
+ * No `expiresAt`: the host's foreground deadline is not part of the request the
+ * waterfall carries, and a bridge-invented deadline would be a timeout of the
+ * bridge's own — the exact thing this channel must not have.
+ * @param state - whether the foreground ask still holds the question.
+ * @param question - the claim being published.
+ */
+function questionPayload(state: QuestionState, question: ClaimedQuestionView): QuestionRequestPayload {
+  return { sessionId: question.sessionId, callId: question.callId, state, questions: question.questions }
 }
 
 /** The bridge's live connections plus the answerer it composes onto the approval chain. */
@@ -73,6 +94,10 @@ export class BridgeHub {
     if (this.pairedClients > 0) return
     const withdrawn = this.#options.approvals.abandonAll()
     if (withdrawn > 0) this.#options.log(`${withdrawn} approval question(s) withdrew: no paired device is connected`)
+    // A user question is delegated rather than refused: the next answerer in the
+    // host's chain decides, and the question's own deadline still holds.
+    const released = this.#options.questions.withdrawAll()
+    if (released > 0) this.#options.log(`${released} user question(s) released: no paired device is connected`)
   }
 
   /**
@@ -83,6 +108,19 @@ export class BridgeHub {
     let delivered = 0
     for (const connection of this.#connections) {
       if (!connection.paired) continue
+      if (connection.emit(topic, payload)) delivered += 1
+    }
+    return delivered
+  }
+
+  /**
+   * Publish one event to every paired device that announced a capability.
+   * @returns how many connections actually took the frame.
+   */
+  broadcastTo(capability: string, topic: string, payload: unknown): number {
+    let delivered = 0
+    for (const connection of this.#connections) {
+      if (!connection.paired || !connection.declares(capability)) continue
       if (connection.emit(topic, payload)) delivered += 1
     }
     return delivered
@@ -116,6 +154,48 @@ export class BridgeHub {
     return answer === undefined ? await next() : answer
   }
 
+  /**
+   * The body of this plugin's `user-questions/request` listener.
+   *
+   * Claimed only while a paired device is connected and the ask names an agent:
+   * the payload has no session field of its own, and a question nobody can be
+   * told about is not one this bridge may hold. The wire id is the host's own
+   * when the ask is timed, and minted here when it is blocking and the host
+   * assigned none — either way the phone answers the id it was shown. A claim
+   * nobody received is withdrawn at once instead of holding the agent until the
+   * host's deadline.
+   * @param request - the pending question batch.
+   * @param next - the rest of the answerer chain.
+   * @returns the phone's answer, the host's own deadline outcome, or whatever the next answerer says.
+   */
+  async question(request: UserQuestionRequestLike, next: () => Promise<QuestionAnswer>): Promise<QuestionAnswer> {
+    const sessionId = request.agent?.id
+    if (sessionId === undefined) return await next()
+    if (this.pairedClients === 0) return await next()
+    // A blocking ask carries no `wait`: the host has no call id for it, but the
+    // phone needs a handle to answer with, so one is minted in this bridge's own
+    // namespace. Resolving the promise held here needs no host identity.
+    const hosted = request.wait?.callId
+    const callId = hosted ?? this.#options.questions.mintCallId()
+    const claim = this.#options.questions.open({
+      sessionId,
+      callId,
+      hosted: hosted !== undefined,
+      questions: request.questions,
+      next,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+      onContinued: (question): void => {
+        // The foreground wait ended, but the question is still answerable: the
+        // phone is told which state it is in instead of losing the question.
+        this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('continued', question))
+      },
+    })
+    if (claim === undefined) return await next()
+    const delivered = this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('open', claim))
+    if (delivered === 0) this.#options.questions.withdraw([callId])
+    return await claim.answer
+  }
+
   /** Close every connection and withdraw every question. Idempotent. */
   dispose(): void {
     for (const connection of [...this.#connections]) {
@@ -123,5 +203,6 @@ export class BridgeHub {
       connection.dispose()
     }
     this.#options.approvals.abandonAll()
+    this.#options.questions.withdrawAll()
   }
 }

@@ -88,8 +88,12 @@ export function subagentAddress(parentSessionId: string, childSessionId: string)
 /** The failure code the harness raises for a child addressed as an ordinary session. */
 export const CODE_SUBAGENT_ADDRESS_REQUIRED = 'session/agent-busy'
 
-/** Wire name one endpoint declares for its single parameter. */
-export type WireName = 'request' | '_request' | 'none'
+/**
+ * One endpoint's declared argument names: the name of its single parameter, the
+ * empty declaration of a parameterless endpoint, or the exact names of an
+ * endpoint that takes several.
+ */
+export type WireName = 'request' | '_request' | 'none' | { readonly names: readonly string[] }
 
 /** One endpoint's declared wire layout. */
 export interface WireRow {
@@ -115,6 +119,7 @@ export const WIRE_TABLE: readonly WireRow[] = [
   { namespace: 'session', method: 'projections', wire: 'request' },
   { namespace: 'session', method: 'modelCatalog', wire: 'none' },
   { namespace: 'session', method: 'selectModel', wire: 'request' },
+  { namespace: 'userQuestions', method: 'answer', wire: { names: ['agentId', 'callId', 'answer'] } },
   { namespace: 'pluginInventory', method: 'list', wire: 'none' },
   { namespace: 'pluginManager', method: 'listPlugins', wire: 'none' },
 ]
@@ -128,9 +133,11 @@ export function wireRowFor(namespace: string, method: string): WireRow | undefin
  * Build the `args` object for one endpoint.
  *
  * An untabulated endpoint falls back to `{ request }`: that is the layout of
- * every tabulated endpoint but two, and a wrong guess fails loudly at the
+ * every tabulated endpoint but a few, and a wrong guess fails loudly at the
  * gateway with `arguments-invalid` rather than silently invoking the wrong
- * shape.
+ * shape. A multi-parameter endpoint carries one key per declared name, and a
+ * name the caller left out stays out — the gateway refuses it by name, which is
+ * the failure a caller should see.
  * @param namespace - Remote namespace.
  * @param method - Service method name.
  * @param request - the endpoint's request payload.
@@ -139,5 +146,10 @@ export function wireRowFor(namespace: string, method: string): WireRow | undefin
 export function wireArgs(namespace: string, method: string, request: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
   const wire = wireRowFor(namespace, method)?.wire ?? 'request'
   if (wire === 'none') return {}
+  if (typeof wire === 'object') {
+    const named: Record<string, unknown> = {}
+    for (const name of wire.names) if (Object.hasOwn(request, name)) named[name] = request[name]
+    return named
+  }
   return { [wire]: request }
 }
