@@ -133,9 +133,10 @@ describe('user question bridge', () => {
     const harness = makeHub()
     await declareQuestions(harness.connection)
     const controller = new AbortController()
+    const timeout = hostTimeout()
     const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
-    controller.abort(hostTimeout())
-    await expect(pending).rejects.toBeDefined()
+    controller.abort(timeout)
+    await expect(pending).rejects.toBe(timeout)
     // When the host refuses the reply it already queued
     harness.gateway.handler = async () => { throw Object.assign(new Error('a reply is already queued for this question'), { code: 'REPLY_QUEUED' }) }
     await harness.connection.handleText(requestFrame(4, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
@@ -149,9 +150,10 @@ describe('user question bridge', () => {
     const harness = makeHub()
     await declareQuestions(harness.connection)
     const controller = new AbortController()
+    const timeout = hostTimeout()
     const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
-    controller.abort(hostTimeout())
-    await expect(pending).rejects.toBeDefined()
+    controller.abort(timeout)
+    await expect(pending).rejects.toBe(timeout)
     // When the host answers that it no longer holds the question
     harness.gateway.handler = async () => false
     await harness.connection.handleText(requestFrame(13, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
