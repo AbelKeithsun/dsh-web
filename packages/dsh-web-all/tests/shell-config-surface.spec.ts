@@ -141,6 +141,7 @@ describe('shell config sync', () => {
 
     // When the shell applies
     await apply(ctx as never, { plugin: '@linxin666/dsh-perf' })
+    await apply(ctx as never, { plugin: '@linxin666/dsh-client-ui-model-capabilities' })
 
     // Then nothing mounts and the boot stays healthy
     expect(mounts).toHaveLength(0)

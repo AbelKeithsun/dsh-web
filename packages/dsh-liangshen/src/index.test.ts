@@ -175,6 +175,11 @@ describe('resolveConfig', () => {
         expect(resolveConfig({ presentation, dispatcher })).toMatchObject({ presentation, dispatcher })
       }
     }
+    // Pre-0.2.1 profiles persisted `presentation: 'both'` (the former default);
+    // both the schema and the reader normalize it to `'ptc'` so upgrading never
+    // degrades the row at startup.
+    expect(resolveConfig(Config({ presentation: 'both' })).presentation).toBe('ptc')
+    expect(resolveConfig({ presentation: 'both' }).presentation).toBe('ptc')
   })
 })
 

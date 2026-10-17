@@ -96,9 +96,10 @@ export interface Config {
    * Wire presentation written into the declared preset's tool-catalog row.
    * `ptc` (default) collapses the wire to the single `run_code` transport and
    * reaches every other tool through the generated SDK; `native` keeps the
-   * assembled roster alone.
+   * assembled roster alone. Legacy `'both'` (the pre-0.2.1 shipped default) is
+   * accepted from older saved profiles and normalized to `'ptc'`.
    */
-  presentation?: ConfigField<Presentation>
+  presentation?: ConfigField<Presentation | 'both'>
   /**
    * When true, the preset appends the dispatcher rule block to its persona:
    * the session becomes a dispatch agent whose deliverable is the plan, the
@@ -136,7 +137,10 @@ export interface Config {
 export const Config = z.object({
   enabled: z.boolean().default(true).volatile(),
   announceToAgent: z.boolean().default(false).volatile(),
-  presentation: z.union([...PRESENTATION_OPTIONS]).default('ptc').volatile(),
+  presentation: z.union([
+    ...PRESENTATION_OPTIONS,
+    z.transform('both', (): Presentation => 'ptc').deprecated().hidden(),
+  ]).default('ptc').volatile(),
   dispatcher: z.boolean().default(true).volatile(),
   guardEnabled: z.boolean().default(true).volatile(),
   guardSensitivity: z.union([...SENSITIVITY_OPTIONS]).default('balanced').volatile(),
@@ -209,10 +213,11 @@ function readField<T>(field: ConfigField<T>, fallback: T): T {
  * @returns every field resolved against the schema defaults.
  */
 export function resolveConfig(config?: Config): ResolvedConfig {
+  const rawPresentation = readField<Presentation | 'both'>(config?.presentation, DEFAULT_CONFIG.presentation)
   return {
     enabled: readField(config?.enabled, DEFAULT_CONFIG.enabled),
     announceToAgent: readField(config?.announceToAgent, DEFAULT_CONFIG.announceToAgent),
-    presentation: readField(config?.presentation, DEFAULT_CONFIG.presentation),
+    presentation: rawPresentation === 'both' ? 'ptc' : rawPresentation,
     dispatcher: readField(config?.dispatcher, DEFAULT_CONFIG.dispatcher),
     guardEnabled: readField(config?.guardEnabled, DEFAULT_CONFIG.guardEnabled),
     guardSensitivity: readField(config?.guardSensitivity, DEFAULT_CONFIG.guardSensitivity),

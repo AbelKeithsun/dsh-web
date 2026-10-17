@@ -321,6 +321,7 @@ function isOverrideShape(config: unknown): boolean {
 const RETIRED_PLUGINS = new Set([
   '@linxin666/dsh-perf',
   '@linxin666/dsh-desktop-launcher',
+  '@linxin666/dsh-client-ui-model-capabilities',
 ])
 
 /**

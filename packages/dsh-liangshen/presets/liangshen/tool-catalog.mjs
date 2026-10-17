@@ -182,13 +182,23 @@ function optionalBoolean(value, field, fallback) {
 }
 
 /**
- * Resolve the presentation config: the explicit `presentation` enum wins; the
- * legacy boolean `ptcPresentation` maps onto it (true -> 'ptc', false ->
- * 'native') with a one-time deprecation warning; neither means the default.
+ * Resolve the presentation config: the explicit `presentation` enum wins (with
+ * the pre-0.2.1 `'both'` default mapped to `'ptc'` with a one-time deprecation
+ * warning so older profiles keep booting); the legacy boolean `ptcPresentation`
+ * maps onto it (true -> 'ptc', false -> 'native') with a one-time deprecation
+ * warning; neither means the default.
  */
 function resolvePresentation(config, warn) {
   const explicit = config?.presentation
   if (explicit !== undefined) {
+    if (explicit === 'both') {
+      if (config?.ptcPresentation !== undefined) {
+        optionalBoolean(config.ptcPresentation, 'ptcPresentation', true)
+        warn('the ptcPresentation key is deprecated — presentation takes precedence over it')
+      }
+      warn("the 'both' presentation was removed in 0.2.1; mapping 'both' -> 'ptc'")
+      return 'ptc'
+    }
     if (!PRESENTATION_MODES.includes(explicit)) {
       throw new TypeError(`${name}: presentation must be one of ${JSON.stringify(PRESENTATION_MODES)}`)
     }
@@ -645,7 +655,7 @@ export function apply(ctx, config) {
   if (config?.anchorTools !== undefined) {
     warnOnce('anchor', 'anchor-turn staging is retired — the anchorTools key is accepted but no longer narrows the wire')
   }
-  const presentation = resolvePresentation(config, detail => warnOnce('ptcPresentation', detail))
+  const presentation = resolvePresentation(config, detail => warnOnce(`presentation:${detail}`, detail))
 
   // Per-agent fresh state evaluated on every assembly (never stale across steps/turns)
   const agentCatalogState = new WeakMap()

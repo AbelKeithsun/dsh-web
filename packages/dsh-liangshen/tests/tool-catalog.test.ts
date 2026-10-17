@@ -296,12 +296,16 @@ describe('liangshen-tool-catalog', () => {
     expect(() => register({ presentation: '' })).toThrow(/presentation must be one of/)
   })
 
-  test("rejects the removed 'both' presentation: an old profile fails closed instead of mapping", () => {
-    // The SDK dropped the 'both' ToolPresentationMode, and this preset ships no
-    // compatibility mapping: a profile that still names it is refused at
-    // registration, so the operator migrates the key to 'ptc' or 'native'
-    // instead of silently running a different wire than the one documented.
-    expect(() => register({ presentation: 'both' })).toThrow(/presentation must be one of \["native","ptc"\]/)
+  test("maps the retired 'both' presentation onto 'ptc' with one deprecation warning", async () => {
+    // Pre-0.2.1 profiles persisted `presentation: 'both'` (the former default);
+    // mapping it to `'ptc'` with a deprecation warning keeps existing profiles
+    // booting cleanly after the SDK removed `'both'` from ToolPresentationMode.
+    const harness = register({ presentation: 'both' })
+    const agent = agentOf([], undefined, harness)
+    const { assembled } = await assemble(harness, agent)
+    expect(harness.presentCalls).toEqual(['ptc'])
+    expect(assembled.tools.map((tool: any) => tool.name)).toEqual(['run_code'])
+    expect(harness.warnings.filter(w => w.includes("the 'both' presentation was removed in 0.2.1; mapping 'both' -> 'ptc'"))).toHaveLength(1)
   })
 
   test('maps the legacy ptcPresentation key onto the enum with one deprecation warning', async () => {
