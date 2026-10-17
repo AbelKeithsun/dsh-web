@@ -25,7 +25,7 @@ const PRESET_ROSTER = [
 
 function unavailableSettingsForm() {
   return {
-    getSnapshot: () => ({ status: 'unavailable', value: undefined, base: undefined, user: undefined, revision: undefined, writable: false, mode: 'host' }),
+    getSnapshot: () => ({ status: 'unavailable', value: undefined, base: undefined, user: undefined, revision: undefined, writable: false }),
     subscribe: () => () => {},
     mutate: async () => false,
     set: async () => false,

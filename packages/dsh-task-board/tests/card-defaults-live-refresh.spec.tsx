@@ -127,8 +127,7 @@ function liveSettingsForm(initial: Record<string, unknown>) {
       base: undefined,
       user: { ...user },
       revision,
-      writable: true,
-      mode: 'host' as const,
+      writable: true as const,
     }),
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
     mutate: async (ops: Array<{ op: string; path: string[]; value?: unknown }>) => {
@@ -154,7 +153,7 @@ function liveSettingsForm(initial: Record<string, unknown>) {
 function unavailableSettingsForm() {
   return {
     entryId: 'task-board',
-    getSnapshot: () => ({ status: 'unavailable' as const, value: undefined, base: undefined, user: undefined, revision: undefined, writable: false, mode: 'host' as const }),
+    getSnapshot: () => ({ status: 'unavailable' as const, value: undefined, base: undefined, user: undefined, revision: undefined, writable: false as const }),
     subscribe: () => () => {},
     mutate: async () => false,
     set: async () => false,

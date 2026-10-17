@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 <p align="center">
   <img src="https://img.shields.io/npm/v/@linxin666/dsh-git-graph?style=flat-square" alt="Version">
   &nbsp;
-  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
+  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.1--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
   &nbsp;
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
 </p>
@@ -27,7 +27,7 @@ The plugin is a self-contained cordis plugin package inside the dsh-web family m
 pnpm install
 pnpm run typecheck   # tsc -b (host + client programs)
 pnpm test            # vitest (core pure functions / real git service / jsdom components)
-pnpm run build       # tsc -b && tsdown (lib/index.js + lib/invariant.js + lib/client.js)
+pnpm run build       # tsc -b && tsdown (lib/index.js + lib/client.js)
 ```
 
 `lib/client.js` is the browser bundle (a closure-factory artifact, `window.__ModuleLoader__.load`), served by the host's client-modules at `/plugins/<id>/client.js`; both `tsdown.config.ts` and `tsdown.prepare.config.ts` import the one shared client preset at `shared/tsdown.client.ts` (with the browser platform seed table it reads), and the package keeps no copy of either.

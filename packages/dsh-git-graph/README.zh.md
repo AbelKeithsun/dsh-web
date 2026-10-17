@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/npm/v/@linxin666/dsh-git-graph?style=flat-square" alt="Version">
   &nbsp;
-  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
+  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.1--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
   &nbsp;
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
 </p>
@@ -27,7 +27,7 @@
 pnpm install
 pnpm run typecheck   # tsc -b（host + client program）
 pnpm test            # vitest（core 纯函数 / 真实 git 服务 / jsdom 组件）
-pnpm run build       # tsc -b && tsdown（lib/index.js + lib/invariant.js + lib/client.js）
+pnpm run build       # tsc -b && tsdown（lib/index.js + lib/client.js）
 ```
 
 `lib/client.js` 是浏览器 bundle（闭包工厂产物，`window.__ModuleLoader__.load`），由 host 的 client-modules 按 `/plugins/<id>/client.js` 伺服；`tsdown.config.ts` 与 `tsdown.prepare.config.ts` 都 import 唯一的共享客户端预设 `shared/tsdown.client.ts`（及其读取的浏览器平台种子表），包内不保留副本。

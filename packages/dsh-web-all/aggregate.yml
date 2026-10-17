@@ -31,7 +31,6 @@ patchFrom:
   - ../dsh-skill-explorer
   - ../dsh-usage
   - ../dsh-session-archive
-  - ../dsh-model-capabilities
   # dsh-win-bash 是 host-only 包（无 src/client/），排在 dsh-liangshen 之后：
   # 它的 win_bash 可用性跟随梁神预设的声明状态，门控在挂载后异步求值。
   - ../dsh-win-bash
@@ -55,7 +54,6 @@ deps:
   - ../dsh-skill-explorer
   - ../dsh-usage
   - ../dsh-session-archive
-  - ../dsh-model-capabilities
   - ../dsh-win-bash
   - ../dsh-web-settings
   - ../dsh-i18n
@@ -91,7 +89,7 @@ rows:
 
 # 外部 npm 插件段：alpha 分支（2026-09-17 决策）不内置 dsh-better-sidebar。
 # 该插件 0.19.1 的全部 @deepseek-ai/dsh-* peer 声明为 ^0.1.5-rc.1，按 semver
-# 不覆盖本分支的 0.2.0-rc.2 cohort（预发布版本只匹配同 [major,minor,patch]
+# 不覆盖本分支的 0.2.1-rc.2 cohort（预发布版本只匹配同 [major,minor,patch]
 # 元的区间），因此 alpha 实验环境不再挂载这个右侧面板插件：聚合包不依赖它、
 # profile 里也不出现它的行。需要右侧面板时按需安装
 # （dsh plugin --profile <name> add dsh-better-sidebar@latest）。
@@ -115,7 +113,7 @@ inactive:
   - web-ui-skill-explorer
 # 归档设置入口（2026-09-15 原生优先决策）：dsh-session-archive 注册官方 section id
 # archived-sessions 与 order 25 接管该入口，把「原生恢复列表 + 家族批量归档/删除/
-# 自动策略」放在同一页。>=0.2.0-rc.2 的官方 dsh-web-app 不再挂载
+# 自动策略」放在同一页。>=0.2.1-rc.2 的官方 dsh-web-app 不再挂载
 # ui-settings-unarchive-sessions 行，所以这里没有 retire 目标：对不存在的行写
 # disabled 覆盖只会让 loader 每次启动都报 "patch: entry ... not found"。加回 retire
 # 目标前必须先在当前 cohort 上用 dsh --profile <name> --dump-config 确认该外部行存在。
@@ -126,6 +124,7 @@ tombstones:
   - dsh-perf
   - describe-image
   - doctor
+  - model-capabilities
   # 迁出为独立仓库的家族子路径：行已改为 npm 外部行（直挂真实包名），但旧 profile
   # 里记录的行名仍是 @linxin666/dsh-web-all/<family>。保留这些 shell 子路径导出
   # 让那些 profile 仍可 import，不抛 ERR_PACKAGE_PATH_NOT_EXPORTED。

@@ -177,7 +177,6 @@ function pendingSnapshot<T>(status: 'loading' | 'unavailable'): ConfigFormSnapsh
     user: undefined,
     revision: undefined,
     writable: false,
-    mode: 'host',
   }
   PENDING_SNAPSHOTS.set(status, snapshot)
   return snapshot as unknown as ConfigFormSnapshot<T>

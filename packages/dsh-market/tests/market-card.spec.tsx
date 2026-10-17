@@ -113,7 +113,6 @@ export class FakeScope implements ConfigForm<MarketSettings> {
       base: this.base,
       user: this.user,
       revision: 1,
-      mode: 'host',
     }
   }
   private reflect(): void {

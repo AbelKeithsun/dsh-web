@@ -51,7 +51,6 @@ function pendingSnapshot<T>(): ConfigFormSnapshot<T> {
     user: undefined,
     revision: undefined,
     writable: false,
-    mode: 'host',
   }
 }
 

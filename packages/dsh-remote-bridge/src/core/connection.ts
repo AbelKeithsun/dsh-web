@@ -60,7 +60,7 @@ import {
 import { base64UrlDecode, verifyEs256 } from './crypto.ts'
 import { TITLES_MAX_IDS, type SessionMeta } from './session-meta.ts'
 import type { SessionPermissions } from './session-permissions.ts'
-import type { BridgeGateway } from './wire.ts'
+import type { BridgeGateway, GatewayPeer } from './wire.ts'
 import { CODE_SUBAGENT_ADDRESS_REQUIRED, sessionAddress, subagentAddress, wireArgs, type SessionAddress } from './wire.ts'
 
 /** Protocol-level heartbeat period: a frame is sent after this long without one. */
@@ -91,6 +91,14 @@ export interface BridgeConnectionOptions {
   readonly sessionMeta: SessionMeta
   /** Host-process permission presets, read and switched through their real service objects. */
   readonly permissions: SessionPermissions
+  /**
+   * The in-process owner peer every gateway call speaks for, minted by the
+   * bridge itself (`core/owner-peer.ts`). Dispatch refuses unpaired
+   * connections before any gateway call exists, so this peer — a
+   * full-control credential — is exercised only behind the bridge's own
+   * pairing gate, and no client frame field is ever read into it.
+   */
+  readonly ownerPeer: GatewayPeer
   readonly now: () => number
   /** This machine's IANA time zone, sent with every prompt. */
   readonly clientTimeZone: () => string | undefined
@@ -783,6 +791,7 @@ export class BridgeConnection {
         namespace,
         method,
         args: wireArgs(namespace, method, request),
+        peer: this.#options.ownerPeer,
       }))
       return { ok: true, value }
     } catch (error) {
@@ -880,6 +889,7 @@ export class BridgeConnection {
           assistantStream: true,
           maxMessages: SNAPSHOT_MAX_MESSAGES,
         }),
+        peer: this.#options.ownerPeer,
         signal: subscription.controller.signal,
       }))
       iterator = stream[Symbol.asyncIterator]()

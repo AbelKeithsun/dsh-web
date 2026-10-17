@@ -19,7 +19,7 @@ interface Registration {
 function mountClient(): Registration[] {
   const registrations: Registration[] = []
   const configForm = {
-    getSnapshot: () => ({ status: 'ready', value: {}, base: {}, user: {}, revision: 1, writable: true, mode: 'host' }),
+    getSnapshot: () => ({ status: 'ready', value: {}, base: {}, user: {}, revision: 1, writable: true }),
     subscribe: () => () => {},
     set: async () => true,
     unset: async () => true,

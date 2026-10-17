@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 <p align="center">
   <img src="https://img.shields.io/npm/v/@linxin666/dsh-remote-bridge?style=flat-square" alt="Version">
   &nbsp;
-  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
+  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.1--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
   &nbsp;
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
 </p>
@@ -216,6 +216,7 @@ The bridge is mounted like any other host plugin row. It carries no user-facing 
 ## Security model
 
 - **Pairing is a full-control credential.** A paired device reaches the harness in-process: sessions, prompts, approvals. Only pair devices you control, and revoke by removing the roster row and restarting the host.
+- **In-process calls speak for the owner, only behind this bridge's own gate.** Since DSH 0.2.1 the harness gateway requires every call to name the peer it speaks for, and the bridge answers with one in-process owner peer (`{kind:'owner'}`) that it mints itself at mount and attaches to every gateway call. That claim is safe because it is exercised only after the bridge's own pairing check — an unpaired connection is refused before any gateway call exists — and no field of a protocol frame can set a principal: a client that names one in its payload is ignored. The peer takes no forwarded-event interactions, so it never receives forwarded Host events either.
 - **The token endpoint is loopback-only, on two conditions.** The socket address must be loopback and the `Host` header must name this machine. A tunneled request is terminated by the tunnel client on this same host, so the socket address alone reads `127.0.0.1` for a request the whole internet can reach, while the relay and a plain tunnel rewrite `Host` to the public name; failing either condition is a 403. The token is memory-only, expires in 30 s, is spent by one `pair.begin`, and the same link is written to the host log — treat that log line as a live secret.
 - **The pairing panel renders a live secret and nothing more.** It reads the same loopback-gated route over a same-origin request, so it is reachable exactly where the `curl` form is, and nowhere else. It cannot mint a device token, spend one, list the roster or revoke a device: `pair.begin` stays the phone's call, and revocation stays a roster edit plus a host restart. The QR carries the bare token, so the page's own `127.0.0.1` origin is never handed to the phone.
 - **An unpaired connection has a three-method whitelist.** `hello`, `pair.begin` and `pair.finish`; every other method answers `unpaired` before dispatch, so no session, approval or roster surface is reachable without a device token.

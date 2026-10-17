@@ -27,10 +27,7 @@
   `src/client/` 是 browser 半区（Web GUI 侧），`src/core/` 是两侧共享的纯逻辑
   （两侧 program 都编译）。新增源码文件必须落在三个区之一。
 - **exports 约定**：包内 `exports` 提供 `.`（host）与 `./client`（浏览器半区）；
-  `./src/*` 用于测试引用。声明 `./invariant` 子路径的包必须同时发布
-  `@deepseek-ai/dsh-invariants` 能加载的伴生模块（`name`、`inject: ['invariants']`、
-  注册安装器的 `apply`，且 tsdown 产出 `lib/invariant.js`），否则不要声明它。
-  UI 类包按惯例 `@linxin666/dsh-client-ui-*` 命名。
+  `./src/*` 用于测试引用。UI 类包按惯例 `@linxin666/dsh-client-ui-*` 命名。
 
 ## SDK 与构建约束
 
@@ -82,6 +79,8 @@
 - 例外：dsh-desktop-launcher（桌面启动器）已彻底移除——包、聚合行、设置桥白名单、
   远程通道本地面、ru 语言包与文档引用均已清理；桌面启动场景由官方 DeepSeek
   Harness 桌面客户端承接。
+- 例外：dsh-model-capabilities（模型能力配置）已彻底移除——包、聚合行、ru 语言包
+  与文档引用均已清理；自定义模型的输入类型与推理档位由官方 Models 设置页编辑。
 
 ## 语义属性约定（L2，issue #506）
 

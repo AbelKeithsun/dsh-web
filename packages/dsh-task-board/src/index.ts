@@ -18,6 +18,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { TaskBoardHostService, type HostTimerFace, type TaskBoardTeamDispatcher } from './host-service.ts'
+import { createOwnerPeer } from './host-runner.ts'
 import { parseTaskDraft, TaskParseError } from './host-ai.ts'
 import { TASK_PERMISSIONS, isTaskPermission, type TaskPermission } from './core/tasks.ts'
 import { DEFAULT_SUBTASK_DEPTH, SUBTASK_DEPTH_MAX, SUBTASK_DEPTH_MIN } from './core/subtask.ts'
@@ -669,8 +670,13 @@ function applyImpl(ctx: Context, config?: Config): void {
       reasoningEffort: readConfigField(config?.cardDefaultReasoningEffort, '').trim() || undefined,
     }
   }
+  // The 0.2.1 gateway requires every request to name the peer it speaks for:
+  // the board calls as the host-local owner, so its peer is minted on this
+  // fiber and aborts with it (see createOwnerPeer).
+  const ownerPeer = createOwnerPeer(ctx)
   const host = new TaskBoardHostService(ctx.typertGateway, {
     workspaceRegistry: ctx.workspaceRegistry,
+    ownerPeer,
     sessionDefaultPermission,
     maxSubtaskDepth: maxSubtaskDepth(),
     goalRunEnabled,

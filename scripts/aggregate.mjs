@@ -72,8 +72,10 @@
  */
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -146,6 +148,41 @@ const AGGREGATE_SHELL_PACKAGE = '@linxin666/dsh-web-all'
  * package root, whose dsh.client face belongs to the compat row alone.
  */
 const SHELL_EXPORT_TARGET = './lib/shells/shell.js'
+const SHELL_ICON_TARGET = './icon.svg'
+const SHELL_METADATA_DIR = 'shell-metadata'
+const SHELL_METADATA_LOCALES = ['en', 'zh']
+
+/**
+ * Files the official plugin metadata reader resolves for one family subpath.
+ * DSH 0.2.1 no longer reads a subpath's nearest package.json: display text
+ * comes from `<specifier>/locale/<lang>.json`, and the icon from
+ * `<specifier>/icon`. The generator owns this tree so removed families do not
+ * leave stale display resources behind.
+ */
+function shellMetadataFiles(pkgDir, shellSubpaths) {
+  return shellSubpaths.flatMap((sub) => SHELL_METADATA_LOCALES.map((locale) => ({
+    path: join(pkgDir, SHELL_METADATA_DIR, sub, 'locale', `${locale}.json`),
+    content: JSON.stringify({ meta: { title: `web-all/${sub}` } }, null, 2) + '\n',
+  })))
+}
+
+/** Remove generated metadata for subpaths/locales the current manifest no longer owns. */
+function pruneShellMetadata(pkgDir, shellSubpaths) {
+  const root = join(pkgDir, SHELL_METADATA_DIR)
+  if (!existsSync(root)) return
+  const expected = new Set(shellSubpaths)
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !expected.has(entry.name)) rmSync(join(root, entry.name), { recursive: true, force: true })
+  }
+  for (const sub of shellSubpaths) {
+    const localeDir = join(root, sub, 'locale')
+    if (!existsSync(localeDir)) continue
+    const expectedLocales = new Set(SHELL_METADATA_LOCALES.map((locale) => `${locale}.json`))
+    for (const entry of readdirSync(localeDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !expectedLocales.has(entry.name)) rmSync(join(localeDir, entry.name), { force: true })
+    }
+  }
+}
 
 /**
  * The display subpath of one shell-wrapped family row: the namespaced row id
@@ -896,10 +933,11 @@ function resolveEntries(pkgDir, entries, section, errors) {
  * other entry is a leftover child-plugin declaration and is dropped.
  *
  * The exports map is generator-owned for the family subpath keys: every
- * shell-wrapped row's `./<sub>` key is added pointing at the shared shell
- * re-export (SHELL_EXPORT_TARGET), stale keys of removed families are pruned,
- * and a sub key already present with a different target is an error (the row
- * would silently mount something else than the shell).
+ * shell-wrapped row's `./<sub>` key points at the shared shell re-export, and
+ * its `./<sub>/icon` plus `./<sub>/locale/<lang>.json` keys expose the display
+ * metadata DSH reads without evaluating plugin code. Stale keys of removed
+ * families are pruned, and a base key already present with a different target
+ * is an error (the row would silently mount something else than the shell).
  */
 function renderPackageJson(pkgPath, resolvedDeps, shellSubpaths) {
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
@@ -915,8 +953,14 @@ function renderPackageJson(pkgPath, resolvedDeps, shellSubpaths) {
   else delete pkg.peerDependencies
   if (shellSubpaths.length > 0) {
     const exports = { ...pkg.exports }
+    const shellSubs = new Set(shellSubpaths)
     for (const key of Object.keys(exports)) {
-      if (exports[key] === SHELL_EXPORT_TARGET && !shellSubpaths.includes(key.slice('./'.length))) {
+      const sub = key.match(/^\.\/([^/]+)/)?.[1]
+      if (exports[key] === SHELL_EXPORT_TARGET && !shellSubs.has(key.slice('./'.length))) {
+        delete exports[key]
+        continue
+      }
+      if (sub !== undefined && !shellSubs.has(sub) && (exports[key] === SHELL_ICON_TARGET || exports[key].startsWith(`./${SHELL_METADATA_DIR}/`))) {
         delete exports[key]
       }
     }
@@ -926,8 +970,15 @@ function renderPackageJson(pkgPath, resolvedDeps, shellSubpaths) {
         throw new Error(`exports key "${key}" already exists with target "${exports[key]}"; the family subpath must resolve to the shell re-export ${SHELL_EXPORT_TARGET}`)
       }
       exports[key] = SHELL_EXPORT_TARGET
+      exports[`${key}/icon`] = SHELL_ICON_TARGET
+      for (const locale of SHELL_METADATA_LOCALES) {
+        exports[`${key}/locale/${locale}.json`] = `./${SHELL_METADATA_DIR}/${sub}/locale/${locale}.json`
+      }
     }
     pkg.exports = exports
+    const files = Array.isArray(pkg.files) ? [...pkg.files] : []
+    if (!files.includes(SHELL_METADATA_DIR)) files.push(SHELL_METADATA_DIR)
+    pkg.files = files
   }
   return JSON.stringify(pkg, null, 2) + '\n'
 }
@@ -964,6 +1015,9 @@ function validateShellFiles(pkgDir, rel, errors) {
   }
   if (marker.dsh !== undefined) {
     errors.push(`${rel}: src/shells/package.json must not declare a dsh field (the marker must never become a client-module source)`)
+  }
+  if (!existsSync(join(pkgDir, 'icon.svg'))) {
+    errors.push(`${rel}: missing icon.svg (family subpath \`./<family>/icon\` exports point there)`)
   }
 }
 
@@ -1032,7 +1086,16 @@ for (const { pkgDir, ymlPath } of aggregates) {
       count: children.length,
     }
   }
-  results.push({ rel, blocks, patch, resolvedDeps, pkgJson, clientChildren })
+  results.push({
+    rel,
+    blocks,
+    patch,
+    resolvedDeps,
+    pkgJson,
+    clientChildren,
+    shellMetadata: shellMetadataFiles(pkgDir, shellSubpaths),
+    shellSubpaths,
+  })
 }
 
 let failed = false
@@ -1056,11 +1119,12 @@ for (const r of results) {
         ['children.modules.d.ts', join(REPO_ROOT, r.rel, 'src', 'client', 'children.modules.d.ts'), r.clientChildren.ambient],
       ]
     : []
+  const metadataFiles = r.shellMetadata.map(({ path, content }) => [relative(REPO_ROOT, path), path, content])
   if (CHECK) {
     const diffs = []
     if (!existsSync(patchPath) || readFileSync(patchPath, 'utf8') !== r.patch) diffs.push(relative(REPO_ROOT, patchPath))
     if (!existsSync(pkgPath) || readFileSync(pkgPath, 'utf8') !== r.pkgJson) diffs.push(relative(REPO_ROOT, pkgPath))
-    for (const [, filePath, content] of childFiles) {
+    for (const [, filePath, content] of [...childFiles, ...metadataFiles]) {
       if (!existsSync(filePath) || readFileSync(filePath, 'utf8') !== content) diffs.push(relative(REPO_ROOT, filePath))
     }
     if (diffs.length) {
@@ -1077,7 +1141,9 @@ for (const r of results) {
     console.log(`[aggregate] wrote ${relative(REPO_ROOT, patchPath)} (${r.blocks.length} source block(s), ${rows} row(s))`)
     writeFileSync(pkgPath, r.pkgJson)
     console.log(`[aggregate] wrote ${relative(REPO_ROOT, pkgPath)} (${r.resolvedDeps.length} workspace dep(s))`)
-    for (const [label, filePath, content] of childFiles) {
+    pruneShellMetadata(resolvePath(REPO_ROOT, r.rel), r.shellSubpaths)
+    for (const [label, filePath, content] of [...childFiles, ...metadataFiles]) {
+      mkdirSync(dirname(filePath), { recursive: true })
       writeFileSync(filePath, content)
       console.log(`[aggregate] wrote ${relative(REPO_ROOT, filePath)} (${label})`)
     }

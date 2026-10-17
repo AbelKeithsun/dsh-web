@@ -1,4 +1,5 @@
-import type { TypertGateway } from '@deepseek-ai/dsh-api-gateway'
+import { Context } from '@deepseek-ai/cordis'
+import type { InvokeRemoteRequest, TypertGateway } from '@deepseek-ai/dsh-api-gateway'
 import type { SessionAddress, SessionHistoryRecord, SessionListValue, SessionPage, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { CommandResult } from '@deepseek-ai/dsh-commands/types'
 import type { Workspace } from '@deepseek-ai/dsh-workspace/types'
@@ -16,11 +17,67 @@ export interface TaskBoardWorkspaceRegistry {
   list(): readonly Workspace[]
 }
 
+/**
+ * The peer every gateway request names: derived from the public
+ * `InvokeRemoteRequest` type so this package needs no direct dependency on
+ * `@deepseek-ai/dsh-typert-protocol` for the shape.
+ */
+export type GatewayPeer = InvokeRemoteRequest['peer']
+
 interface GatewayRequest {
   namespace: string
   method: string
   args: Record<string, unknown>
+  peer: GatewayPeer
   signal?: AbortSignal
+}
+
+/**
+ * Mint the in-process owner peer this plugin's Host calls speak for.
+ *
+ * The 0.2.1 gateway made `peer` mandatory on every request, and the
+ * authorization layer reads only `peer.principal`: a principal of
+ * `{ kind: 'owner' }` is how host-local code states that the call IS the local
+ * user driving their own Host, so the gateway answers it directly instead of
+ * running a remote-access decision (only non-owner principals are judged).
+ * That is exactly the task board's position — it creates, renames, prompts,
+ * and reads sessions as the Host itself, which before 0.2.1 was the implicit
+ * privilege of every in-process caller. The board claims owner explicitly, and
+ * only ever inside its own Host process: no wire field can set a principal,
+ * and this plugin never forwards a browser-supplied one.
+ *
+ * `interactions` stays `'none'`: the board only invokes methods and opens the
+ * short `session/follow` stream. The gateway's interactions check gates
+ * exactly the forwarded-event endpoints (opening an event stream, answering a
+ * waterfall), which this caller never touches; an `'answer'` peer would
+ * additionally receive forwarded Host events, a capability the board neither
+ * needs nor wants.
+ *
+ * The peer's signal aborts once `ctx` disposes, so streams opened for it end
+ * with the plugin fiber, and `dispose()` is idempotent with racing calls
+ * sharing one completion. The id carries no credential — the protocol fixes
+ * `principal` as the only identity persisted in a session log — so a fresh
+ * unique id per mount is sufficient.
+ */
+export function createOwnerPeer(ctx: Context): GatewayPeer {
+  const controller = new AbortController()
+  let completion: Promise<void> | undefined
+  const peer: GatewayPeer = {
+    id: `task-board-owner:${crypto.randomUUID()}` as GatewayPeer['id'],
+    ctx,
+    principal: { kind: 'owner' },
+    signal: controller.signal,
+    interactions: 'none',
+    dispose() {
+      if (completion === undefined) {
+        controller.abort()
+        completion = Promise.resolve()
+      }
+      return completion
+    },
+  }
+  ctx.effect(() => () => { void peer.dispose() }, 'task-board owner peer')
+  return peer
 }
 
 interface SessionGateway {
@@ -323,6 +380,12 @@ export class HostExecutionRunner {
   private readonly scanMemos = new Map<string, number>()
   private readonly unavailableAttempts: number
   private readonly unavailableBackoffMs: number
+  /**
+   * The peer every request speaks for. Production passes the peer bound to the
+   * plugin fiber; a bare runner (unit tests around fake gateways) gets one
+   * bound to a fresh root context instead.
+   */
+  private readonly ownerPeer: GatewayPeer
   private unsupportedSessionListWarned = false
 
   constructor(
@@ -330,18 +393,20 @@ export class HostExecutionRunner {
     private readonly commands?: SessionCommandDispatcher,
     private readonly workspaceRegistry?: TaskBoardWorkspaceRegistry,
     unavailableRetry?: { attempts?: number; backoffMs?: number },
+    ownerPeer?: GatewayPeer,
   ) {
     this.unavailableAttempts = unavailableRetry?.attempts ?? SERVICE_UNAVAILABLE_ATTEMPTS
     this.unavailableBackoffMs = unavailableRetry?.backoffMs ?? SERVICE_UNAVAILABLE_BACKOFF_MS
+    this.ownerPeer = ownerPeer ?? createOwnerPeer(new Context())
   }
 
   private invoke(namespace: string, method: string, request: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
-    return this.gateway.invoke({ namespace, method, args: invokeWireArgs(namespace, method, request), ...(signal === undefined ? {} : { signal }) })
+    return this.gateway.invoke({ namespace, method, args: invokeWireArgs(namespace, method, request), peer: this.ownerPeer, ...(signal === undefined ? {} : { signal }) })
   }
 
   private stream(namespace: string, method: string, request: Record<string, unknown>, signal?: AbortSignal): Promise<AsyncIterable<unknown>> {
     if (!('stream' in this.gateway) || this.gateway.stream === undefined) throw new Error('gateway stream is unavailable')
-    return this.gateway.stream({ namespace, method, args: { request }, ...(signal === undefined ? {} : { signal }) })
+    return this.gateway.stream({ namespace, method, args: { request }, peer: this.ownerPeer, ...(signal === undefined ? {} : { signal }) })
   }
 
   /**

@@ -62,7 +62,6 @@ class FakeForm<T extends Record<string, unknown>> implements ConfigForm<T> {
       base: this.base,
       user: this.user,
       revision: this.revision,
-      mode: 'host',
     }
   }
   constructor(value: T) {

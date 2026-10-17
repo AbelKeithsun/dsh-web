@@ -8,7 +8,7 @@
  * itself. A failure rolls the worktree back (no half-made environment).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { apply, type GitGraphInjected } from '../src/client/index.ts'
 
 /** The worktree the stubbed /git/worktree-add route serves. */

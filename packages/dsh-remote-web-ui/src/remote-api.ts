@@ -73,8 +73,13 @@ function isSafeSegment(segment: string): boolean {
 export interface RemoteApiDeps {
   /** The pairing service (device gate + cookie name). */
   service: PairingService
-  /** Local webServer port the loopback proxy connects to. */
-  port: number
+  /**
+   * Local webServer port the loopback proxy connects to, read per request:
+   * `undefined` before the listener binds (a recompose pass can run this
+   * apply ahead of the bind), in which case the handlers refuse with 503
+   * instead of minting an `:undefined` URL.
+   */
+  port: () => number | undefined
   /**
    * The process's inner browser-auth credential attached to re-issued
    * requests (the connection plugin's /api route enforces that cookie and
@@ -140,7 +145,7 @@ export function pairedDeviceIdOf(req: IncomingMessage, service: PairingService):
  * @returns the routes to register on webServer.
  */
 export function makeRemoteApiRoutes(deps: RemoteApiDeps): WebRoute[] {
-  const { service, port } = deps
+  const { service } = deps
 
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
     // Paired credential first — before any bytes are buffered or forwarded.
@@ -175,6 +180,14 @@ export function makeRemoteApiRoutes(deps: RemoteApiDeps): WebRoute[] {
       return
     }
 
+    const port = deps.port()
+    if (port === undefined) {
+      // The listener has not bound yet (a recompose pass): refuse instead of
+      // minting an http://127.0.0.1:undefined target; the desktop retries.
+      req.resume()
+      envelopeError(res, 503, 'invalid-request', 'port-unbound', 'the local web server port is not bound yet; retry shortly')
+      return
+    }
     proxyLoopbackHttp(req, res, port, `${inner}${url.search}`, deps.auth)
   }
 
@@ -217,7 +230,7 @@ export function upgradeInnerPath(reqUrl: string | undefined, fallbackPath: strin
  * @returns the upgrade routes to register on webServer.
  */
 export function makeRemoteApiUpgradeRoutes(deps: RemoteApiDeps): WebUpgradeRoute[] {
-  const { service, port } = deps
+  const { service } = deps
 
   const handlerFor = (fallbackPath: string) => (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
     // WebSocket handshakes cannot carry headers from the Web API, so the
@@ -231,6 +244,13 @@ export function makeRemoteApiUpgradeRoutes(deps: RemoteApiDeps): WebUpgradeRoute
     const paired = deviceId ?? (queryDevice !== undefined && service.touchDevice(queryDevice) ? queryDevice : undefined)
     if (paired === undefined) {
       socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    const port = deps.port()
+    if (port === undefined) {
+      // Same unbound-port refusal as the HTTP leg: no :undefined handshake.
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
     }

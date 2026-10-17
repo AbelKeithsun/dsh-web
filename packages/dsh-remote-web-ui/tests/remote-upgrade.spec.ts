@@ -138,7 +138,7 @@ describe('remote desktop event-stream upgrades', () => {
   it('destroys the socket of an unpaired client without reaching upstream', async () => {
     const service = makeService()
     const upstream = await startUpstream()
-    const [route] = makeRemoteApiUpgradeRoutes({ service, port: upstream.port })
+    const [route] = makeRemoteApiUpgradeRoutes({ service, port: () => upstream.port })
     const headers = { cookie: undefined, 'sec-websocket-key': 'k', 'sec-websocket-version': '13' }
     const driven = await driveUpgrade(route.handler, headers)
     const received = await readAll(driven.client)
@@ -156,7 +156,7 @@ describe('remote desktop event-stream upgrades', () => {
     // process's own browser credential, so it is never authorized by policy.
     const service = makeService()
     const upstream = await startUpstream()
-    const [route] = makeRemoteApiUpgradeRoutes({ service, port: upstream.port })
+    const [route] = makeRemoteApiUpgradeRoutes({ service, port: () => upstream.port })
     const driven = await driveUpgrade(route.handler, { 'sec-websocket-key': 'k', 'sec-websocket-version': '13' })
     const received = await readAll(driven.client)
     try {
@@ -168,11 +168,40 @@ describe('remote desktop event-stream upgrades', () => {
     }
   })
 
+  it('refuses with 503 while the port is unbound and upgrades once it binds', async () => {
+    // Mirror of the HTTP leg: before the listener binds the upgrade must
+    // refuse explicitly instead of opening a handshake at an :undefined port.
+    const service = makeService()
+    const cookie = pairedCookie(service)
+    const upstream = await startUpstream()
+    let bound: number | undefined
+    const [route] = makeRemoteApiUpgradeRoutes({ service, port: () => bound })
+    const refused = await driveUpgrade(route.handler, { cookie, 'sec-websocket-key': 'k', 'sec-websocket-version': '13' })
+    const refusal = await readAll(refused.client)
+    try {
+      expect(refusal).toContain('503 Service Unavailable')
+      expect(upstream.seen.length).toBe(0)
+
+      bound = upstream.port
+      const driven = await driveUpgrade(route.handler, { cookie, 'sec-websocket-key': 'k', 'sec-websocket-version': '13' })
+      const waiter = readAll(driven.client)
+      await waitFor101(driven.client)
+      driven.client.write('hi')
+      await waiter
+      expect(upstream.seen.length).toBe(1)
+      expect(upstream.seen[0].headers.host).toBe(`127.0.0.1:${String(upstream.port)}`)
+      await driven.close()
+    } finally {
+      await refused.close()
+      await upstream.close()
+    }
+  })
+
   it('rebuilds a loopback handshake and pipes bytes both ways', async () => {
     const service = makeService()
     const cookie = pairedCookie(service)
     const upstream = await startUpstream()
-    const [route] = makeRemoteApiUpgradeRoutes({ service, port: upstream.port })
+    const [route] = makeRemoteApiUpgradeRoutes({ service, port: () => upstream.port })
     expect(route.path).toBe(REMOTE_API_PATHS.mux)
     const driven = await driveUpgrade(route.handler, {
       cookie,
@@ -212,7 +241,7 @@ describe('remote desktop event-stream upgrades', () => {
     const service = makeService()
     const cookie = pairedCookie(service)
     const upstream = await startUpstream()
-    const routes = makeRemoteApiUpgradeRoutes({ service, port: upstream.port })
+    const routes = makeRemoteApiUpgradeRoutes({ service, port: () => upstream.port })
     const muxRoute = routes.find(route => route.path === REMOTE_API_PATHS.mux)
     expect(muxRoute).toBeDefined()
     const driven = await driveUpgrade(
@@ -238,7 +267,7 @@ describe('remote desktop event-stream upgrades', () => {
     const service = makeService()
     const cookie = pairedCookie(service)
     const upstream = await startUpstream()
-    const routes = makeRemoteApiUpgradeRoutes({ service, port: upstream.port })
+    const routes = makeRemoteApiUpgradeRoutes({ service, port: () => upstream.port })
     const muxRoute = routes.find(route => route.path === REMOTE_API_PATHS.mux)
 
     // When that handshake is re-issued to the loopback upstream.

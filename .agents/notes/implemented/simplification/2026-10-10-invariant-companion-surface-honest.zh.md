@@ -2,6 +2,8 @@
 
 Status: implemented
 
+其 invariant 表面已被 [sdk-cohort-0.2.1-rc.2](../architecture/2026-10-17-sdk-cohort-0.2.1-rc.2.md) 取代：0.2.1 线在上游移除了 runtime invariants 注册表（`@deepseek-ai/dsh-invariants` 没有发布任何 0.2.1 版本），于是家族删除了最后两个伴生模块——`dsh-git-graph` 与 `dsh-remote-web-ui` 不再声明 `./invariant`、不再携带 `src/invariant.ts`、不再依赖该注册表——家族里没有任何包再声明该子路径。`scripts/family-dsh-engines.test.mjs` 现在会在任何清单回归时让构建失败。仍然成立的是：本记录的核心 rationale（声明的子路径必须解析到它所声称的东西，绝不能是静默空操作），以及下文对六个包状态的审计，作为本记录所修复状态的历史记载。
+
 ## Problem
 
 `@deepseek-ai/dsh-invariants` 是官方为"包自有运行时检查"提供的注册表：任何包都可以附带一个 `./invariant` 伴生模块，伴生模块以该包的确切 npm 名经 `ctx.invariants` 注册，而挂载了注册表的 composition 决定哪些伴生模块运行。家族里有六个包声明了这个子路径，其中四个做不到声明所承诺的事。
@@ -25,9 +27,9 @@ web profile 不组合任何 invariants 服务（git-graph 伴生模块的文件�
 
 家族里有六个包声明了 `./invariant` 子路径，其中四个无法提供它。这四处声明已删除：`dsh-i18n`（从来没有源文件）、`dsh-session-id`（从未产出该文件），以及 `dsh-ssh` 与 `dsh-task-board`（四行空壳从不注册任何东西）。它们的 `src/invariant.ts` 已删除，`dsh-ssh` 与 `dsh-task-board` 的 tsdown 入口清单也不再列它。
 
-两个可用的伴生模块保留：`dsh-git-graph` 与 `dsh-remote-web-ui` 保持 cordis 形态——`name`、`inject: ['invariants']`，以及经 `ctx.invariants` 注册安装器的 `apply`——并继续产出 `lib/invariant.js`。
+两个可用的伴生模块保留：`dsh-git-graph` 与 `dsh-remote-web-ui` 保持 cordis 形态——`name`、`inject: ['invariants']`，以及经 `ctx.invariants` 注册安装器的 `apply`——并继续产出 `lib/invariant.js`。（2026-10-17 更新：此句记录的是本记录发布时的状态；0.2.1-rc.2 cohort 适配随上游注册表一起移除了两个伴生模块——见文首的取代说明。）
 
-`scripts/plugin-template` 不再脚手架该导出块，新包因此不会再从 `dsh-i18n` 当初的状态起步；`shared/tsdown.client.ts` 也不再声称存在一道本仓没有实现的 package-invariants 门禁。`packages/AGENTS.md` 改为写下这项义务：声明 `./invariant` 的包必须发布注册表能加载的伴生模块。
+`scripts/plugin-template` 不再脚手架该导出块，新包因此不会再从 `dsh-i18n` 当初的状态起步；`shared/tsdown.client.ts` 也不再声称存在一道本仓没有实现的 package-invariants 门禁。`packages/AGENTS.md` 改为写下这项义务：声明 `./invariant` 的包必须发布注册表能加载的伴生模块。（2026-10-17 更新：`packages/AGENTS.md` 的义务段落已在 0.2.1-rc.2 适配中随约定一起移除；共享预设注释当年想象的那道门禁如今以 `scripts/family-dsh-engines.test.mjs` 的形式存在，它断言该子路径保持缺席。）
 
 ## Context & Efficiency Impact
 
@@ -47,7 +49,7 @@ web profile 不组合任何 invariants 服务（git-graph 伴生模块的文件�
 
 - **保留全部六处声明，把伴生模块当作"为将来的检查预留的接缝"。** 否决：其中两个根本无法解析，其余注册不了任何东西，于是挂载它们的 composition 得到的是模块错误或静默空操作，而不是声明所宣传的检查。
 - **把所有空壳都改造成真实的 cordis 形态。** 作为默认方案否决：那会新增一个不安装任何检查的注册——只有形态没有内容。它只适合近期确实会加检查、并希望先声明接缝的包；本提案把这一选择留给各包自己。
-- **把该约定整体从仓库移除**，包括两个可用的伴生模块、模板里的导出块与共享预设的注释。否决：`dsh-git-graph` 与 `dsh-remote-web-ui` 发布的伴生模块注册表确实能加载，且该约定是官方的；损失将是 composition 用来检查家族包的唯一接缝。
+- **把该约定整体从仓库移除**，包括两个可用的伴生模块、模板里的导出块与共享预设的注释。否决：`dsh-git-graph` 与 `dsh-remote-web-ui` 发布的伴生模块注册表确实能加载，且该约定是官方的；损失将是 composition 用来检查家族包的唯一接缝。（2026-10-17 更新：这一备选后来还是发生了，只是来自上游一侧——0.2.1 线移除了注册表，约定随之离场，而非家族自行决定删除。）
 - **只修模板。** 否决（不足以构成修复）：它阻止新包继承缺陷，却把现有四个原样留下。
 
 ## Testing

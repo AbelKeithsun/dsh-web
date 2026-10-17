@@ -48,7 +48,7 @@ function labelOf(entry: RegisteredEntry | undefined): unknown {
 
 const marketForm = {
   subscribe: () => () => {},
-  getSnapshot: () => ({ status: 'ready', writable: true, value: { enabled: true }, base: {}, user: {}, revision: 1, mode: 'host' }),
+  getSnapshot: () => ({ status: 'ready', writable: true, value: { enabled: true }, base: {}, user: {}, revision: 1 }),
   set: async () => true,
   unset: async () => true,
   mutate: async () => true,

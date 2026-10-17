@@ -34,6 +34,7 @@ import { ApprovalRegistry } from './core/approvals.ts'
 import type { ConnectionAuth } from './core/connection.ts'
 import { DeviceRoster } from './core/devices.ts'
 import { BridgeHub } from './core/hub.ts'
+import { createOwnerPeer } from './core/owner-peer.ts'
 import { PairingService } from './core/pairing.ts'
 import { WS_PATH } from './core/protocol.ts'
 import { SessionMeta, type ArchiveSetFace, type SessionStoreFace, type SessionTitleFace } from './core/session-meta.ts'
@@ -154,6 +155,10 @@ export function apply(ctx: Context): void {
   const approvals = new ApprovalRegistry()
   const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
   const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
+  // The owner peer is the full-control credential the gateway demands since
+  // 0.2.1; it is safe to hold from mount because every call that can trigger
+  // it is gated by the bridge's own pairing check (see core/owner-peer.ts).
+  const ownerPeer = createOwnerPeer(ctx)
   const hub = new BridgeHub({
     gateway: ctx.typertGateway,
     pairing,
@@ -161,6 +166,7 @@ export function apply(ctx: Context): void {
     approvals,
     sessionMeta,
     permissions,
+    ownerPeer,
     now: () => Date.now(),
     clientTimeZone: localTimeZone,
     log,

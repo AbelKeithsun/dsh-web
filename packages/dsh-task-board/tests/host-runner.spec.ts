@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import type { Workspace } from '@deepseek-ai/dsh-workspace/types'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
-import { HostExecutionRunner, SessionLaunchError } from '../src/host-runner.ts'
+import { HostExecutionRunner, SessionLaunchError, createOwnerPeer, type GatewayPeer } from '../src/host-runner.ts'
 
 type GatewayRequest = {
   namespace: string
   method: string
   args: Record<string, unknown>
+  peer: GatewayPeer
   signal?: AbortSignal
 }
 
@@ -786,5 +788,126 @@ describe('HostExecutionRunner workspace default', () => {
 
     // Then the create request carries no workspace and the Host's own default decides
     expect(created).toEqual([{}])
+  })
+})
+
+describe('HostExecutionRunner owner peer (0.2.1 gateway request shape)', () => {
+  it('operator: an invoke without a caller signal still names an owner peer and no phantom signal', async () => {
+    // Given a gateway recording its requests (the 0.2.1 gateway refuses a
+    // request without a peer, so the runner must always supply one)
+    const requests: GatewayRequest[] = []
+    const gateway = {
+      invoke: fakeInvoke(async (request: GatewayRequest) => {
+        requests.push(request)
+        return { items: [] }
+      }),
+      stream: fakeStream(async () => ({ async *[Symbol.asyncIterator]() {} })),
+    }
+
+    // When the runner reads the roster without a caller signal
+    await expect(new HostExecutionRunner(gateway).listRunning()).resolves.toEqual({ known: true, count: 0, items: [] })
+
+    // Then the request speaks for an owner peer minted for this runner
+    expect(requests).toHaveLength(1)
+    const request = requests[0]
+    expect(request.peer.principal).toEqual({ kind: 'owner' })
+    expect(request.peer.interactions).toBe('none')
+    expect(request.peer.signal).toBeInstanceOf(AbortSignal)
+    expect(request.peer.signal.aborted).toBe(false)
+    expect(typeof request.peer.id).toBe('string')
+    expect(typeof request.peer.dispose).toBe('function')
+    // And no caller signal was invented: the optional field stays absent
+    expect(request.signal).toBeUndefined()
+  })
+
+  it('operator: invoke and stream speak for the exact peer the runner was given', async () => {
+    // Given a runner constructed with the fiber-bound owner peer production
+    // uses, and a gateway recording both carriers
+    const peer = createOwnerPeer(new Context())
+    const seen: GatewayRequest[] = []
+    const gateway = {
+      invoke: fakeInvoke(async (request: GatewayRequest) => {
+        seen.push(request)
+        return { items: [{ sessionId: 'session-a', running: false }] }
+      }),
+      stream: fakeStream(async (request: GatewayRequest) => {
+        seen.push(request)
+        return { async *[Symbol.asyncIterator]() { yield snapshot([], 10, false) } }
+      }),
+    }
+    const runner = new HostExecutionRunner(gateway, undefined, undefined, undefined, peer)
+
+    // When an inspection reads the roster through invoke and then opens the
+    // follow stream
+    await expect(runner.inspect('session-a', 1_000)).resolves.toEqual({ outcome: 'pending' })
+
+    // Then both carriers name exactly that peer
+    expect(seen.map(request => request.method)).toEqual(['list', 'follow'])
+    expect(seen[0].peer).toBe(peer)
+    expect(seen[1].peer).toBe(peer)
+  })
+
+  it('operator: a caller signal still rides the request unchanged beside the peer', async () => {
+    // Given a recording gateway and a caller-owned cancellation. No public
+    // runner method cancels mid-call today; its invoke helper still accepts a
+    // caller signal, and the request must carry that exact instance so
+    // cancellation stays caller-owned.
+    const requests: GatewayRequest[] = []
+    const gateway = {
+      invoke: fakeInvoke(async (request: GatewayRequest) => {
+        requests.push(request)
+        return { items: [] }
+      }),
+      stream: fakeStream(async () => ({ async *[Symbol.asyncIterator]() {} })),
+    }
+    const runner = new HostExecutionRunner(gateway)
+    const invoke = (runner as unknown as {
+      invoke(namespace: string, method: string, request: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
+    }).invoke.bind(runner)
+    const signal = new AbortController().signal
+
+    // When an invocation carries a caller signal
+    await invoke('session', 'list', {}, signal)
+
+    // Then the request forwards that exact signal alongside the owner peer
+    expect(requests).toHaveLength(1)
+    expect(requests[0].signal).toBe(signal)
+    expect(requests[0].peer.principal).toEqual({ kind: 'owner' })
+  })
+
+  it('operator: disposing the peer aborts its signal once and racing disposes share one completion', async () => {
+    // Given an owner peer, disposed the way plugin teardown disposes it
+    const peer = createOwnerPeer(new Context())
+    expect(peer.signal.aborted).toBe(false)
+
+    // When the peer is disposed twice
+    const completion = peer.dispose()
+    const racing = peer.dispose()
+
+    // Then the signal aborts and both calls awaited the same completion
+    expect(peer.signal.aborted).toBe(true)
+    expect(racing).toBe(completion)
+    await completion
+  })
+
+  it('operator: disposing the owning fiber ends the peer with the plugin', async () => {
+    // Given an owner peer bound the way apply() binds it: minted on the plugin
+    // fiber, so the fiber's shutdown is the peer's shutdown
+    const app = new Context()
+    let peer: GatewayPeer | undefined
+    const fiber = await app.registry.plugin({
+      name: '@linxin666/dsh-client-ui-task-board-peer-probe',
+      apply: (ctx: Context) => {
+        peer = createOwnerPeer(ctx)
+      },
+    })
+    const created = peer as GatewayPeer
+    expect(created.signal.aborted).toBe(false)
+
+    // When the fiber disposes the way a Host shutdown disposes the board row
+    await fiber.dispose()
+
+    // Then the peer signal is aborted, so streams speaking for it end too
+    expect(created.signal.aborted).toBe(true)
   })
 })

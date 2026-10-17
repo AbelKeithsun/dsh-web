@@ -31,7 +31,6 @@ function fakeForm<T>(value: T) {
         user: undefined,
         revision: 1,
         writable: true,
-        mode: 'host' as const,
       }),
       subscribe: (listener: () => void) => {
         listeners.add(listener)
@@ -145,8 +144,7 @@ describe('liangshen settings binding', () => {
             user: undefined,
             revision: undefined,
             writable: false,
-            mode: 'host' as const,
-          }),
+              }),
           subscribe: () => () => {},
           set: async () => false,
           unset: async () => false,

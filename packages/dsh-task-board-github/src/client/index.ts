@@ -123,7 +123,6 @@ function unavailableForm(): ConfigForm<GitHubSettings> {
     user: undefined,
     revision: undefined,
     writable: false,
-    mode: 'host',
   }
   return {
     getSnapshot: () => snapshot,

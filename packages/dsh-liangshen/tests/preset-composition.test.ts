@@ -113,8 +113,8 @@ describe('liangshen preset composition', () => {
     expect(row('tool-catalog')).toContain('descriptionMaxLength: 200')
   })
 
-  it("declares the 'both' presentation with MCP paging on by default, and no retired keys", () => {
-    expect(row('tool-catalog')).toContain("presentation: 'both'")
+  it("declares the 'ptc' presentation with MCP paging on by default, and no retired keys", () => {
+    expect(row('tool-catalog')).toContain("presentation: 'ptc'")
     expect(row('tool-catalog')).toContain("pagedToolPatterns: ['mcp__*']")
     expect(row('tool-catalog')).not.toContain('ptcPresentation')
     expect(row('tool-catalog')).not.toContain('anchorTools')
@@ -132,8 +132,9 @@ describe('liangshen preset composition', () => {
 
   it('keeps the native and ptc presentation variants structurally valid', () => {
     for (const mode of ['native', 'ptc']) {
-      const variant = preset.replace("presentation: 'both'", `presentation: '${mode}'`)
-      expect(variant).not.toBe(preset)
+      const variant = preset.replace("presentation: 'ptc'", `presentation: '${mode}'`)
+      // 'ptc' IS the shipped line, so only the 'native' rewrite changes the text.
+      if (mode !== 'ptc') expect(variant).not.toBe(preset)
       expect(readable(variant), mode).toBe(true)
     }
   })

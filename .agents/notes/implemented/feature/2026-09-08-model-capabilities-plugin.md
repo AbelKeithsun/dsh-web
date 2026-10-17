@@ -2,6 +2,8 @@
 
 Status: implemented
 
+Fully superseded by [remove dsh-model-capabilities](../simplification/2026-10-17-model-capabilities-native-removal.md): the 0.2.1-rc.2 cohort gave the Models page native editors for per-model input type and reasoning level, and the user chose to retire the package whole — provider disable/enable archive included — rather than re-home it. This note stays as the record of why the capability was built the way it was (the whole-array write, the archive-before-unset ordering, the keyed-cell claim protocol); the removal note owns what shipped instead. Where its Decision and Consequences below speak in the present tense, they describe the shipped state from 2026-09-08 until the 2026-10-17 removal.
+
 ## Problem
 
 Custom DSH providers on the Models settings page can declare a model id, display name, context window, and output limit, but the page deliberately ships no editor for two fields the official `llm-pi-ai` settings namespace has always carried: `models[].input`, the request modalities the adapter reads when deciding whether image attachments may ride a request, and `models[].reasoningEfforts`, the level dictionary the session's `reasoningEffort` must land in. A hand-declared vision model therefore could never receive an image, and a hand-declared reasoning model could never offer thinking levels, even though both are plain configuration.
@@ -29,6 +31,8 @@ Custom DSH providers on the Models settings page can declare a model id, display
 - **Hide a disabled provider by writing an enabled flag**: rejected. pi-ai has no such field; the sanctioned removal is the unset the official card performs, and the archive keeps the profile restorable.
 
 ## Consequences
+
+Update 2026-10-17: every capability below left the product with the package's removal in the 0.2.1-rc.2 cohort adaptation — per-model input/reasoning editing moved to the native Models page editors, and the provider disable/enable archive was retired by explicit user decision. The bullets record the consequence state this note shipped from 2026-09-08 to 2026-10-17; [remove dsh-model-capabilities](../simplification/2026-10-17-model-capabilities-native-removal.md) owns the current state.
 
 - Custom models can declare image input, reasoning levels, and each level's wire spelling in place on the Models page; the composer offers the declared thinking levels and DSH offers image attachments only to a model that claims them.
 - Disabling takes a provider out of both model pickers immediately and host-side delegation to it fails closed with `NO_ADAPTER`; its configuration stays recoverable from the footer until the route comes back.

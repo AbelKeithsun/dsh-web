@@ -2,6 +2,8 @@
 
 Status: implemented
 
+已被 [移除 dsh-model-capabilities](../simplification/2026-10-17-model-capabilities-native-removal.md) 完全取代：0.2.1-rc.2 cohort 让 Models 页原生提供逐模型输入类型与推理档位的编辑器，用户选择整包退场——包括供应商停用/启用归档——而非迁移。本记录保留作为该能力当初为何如此构建的记载（整数组写入、先归档再 unset 的顺序、keyed-cell 认领协议）；移除后的现状由移除记录拥有。下文 Decision 与 Consequences 中现在时的表述，描述的是 2026-09-08 起至 2026-10-17 移除前这段已发布的状态。
+
 ## Problem
 
 Models 设置页上的自定义 DSH 提供方只能填模型 ID、显示名称、上下文窗口与最大输出，而官方 `llm-pi-ai` 设置命名空间一直承载的两个字段没有编辑入口：`models[].input`（适配器判断能否随请求携带图片附件时读取的模态）与 `models[].reasoningEfforts`（会话级 `reasoningEffort` 必须落入的档位字典）。手填的视觉模型因此永远收不到图片，手填的推理模型也永远不提供思考档位，而这两者本来都只是普通配置。
@@ -29,6 +31,8 @@ Models 设置页上的自定义 DSH 提供方只能填模型 ID、显示名称�
 - **用 enabled 标志隐藏已禁用提供方**：被否。pi-ai 没有该字段；被认可的移除就是官方卡片同款 unset，存档保证 profile 可恢复。
 
 ## Consequences
+
+2026-10-17 更新：下列能力已随 0.2.1-rc.2 cohort 适配中该包的移除全部离开产品——逐模型输入/推理编辑改由 Models 页原生编辑器提供，供应商停用/启用归档经用户明确决定退场。以下条目记录的是本记录从 2026-09-08 发布到 2026-10-17 移除之间的后果状态；现状由 [移除 dsh-model-capabilities](../simplification/2026-10-17-model-capabilities-native-removal.md) 拥有。
 
 - 自定义模型可以在 Models 页就地声明图片输入、推理档位与每档发送值；输入框按声明的档位提供思考选项，且只有声明了图片的模型才会被 DSH 提供图片附件。
 - 禁用后提供方立即离开两个模型选择器，host 侧对它的委派以 `NO_ADAPTER` 失败关闭；配置在路由回来之前始终可从页脚恢复。

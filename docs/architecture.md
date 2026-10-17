@@ -191,7 +191,6 @@ flowchart LR
 | dsh-session-id | 侧栏底部 Session ID 面板（纯浏览器半区） |
 | dsh-usage | 用量统计：provider 余额、套餐配额与实时 token 流水 |
 | dsh-skill-explorer | 技能中心：按来源浏览、启停、创建技能 |
-| dsh-model-capabilities | 自定义 provider 的按模型能力声明 |
 | dsh-liangshen | 梁神 agent 预设与模式拨杆 |
 | dsh-win-bash | Windows 钉摘要私有 bash（win_bash 持久 shell 工具，仅 win32 x64） |
 | dsh-i18n | 俄语语言包与全家族 ru 词典 |

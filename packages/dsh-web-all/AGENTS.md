@@ -11,17 +11,19 @@
   `rows:` 外部行：依赖写成显式 semver 范围，行 `name` 直接是真实包名（不经共享壳
   包装），浏览器半区由卫星自带的 loader entry 挂载、不再内联进本包 bundle。代价
   是这些行没有壳的 fault-isolation；收益是卫星客户端改动不再要求重建本包。
-- 家族行的 `name` 是按家族的子路径导出 `@linxin666/dsh-web-all/<family>`（官方
-  插件列表因此每行显示独立的 `web-all/<family>` 标题），全部子路径都指向共享
+- 家族行的 `name` 是按家族的子路径导出 `@linxin666/dsh-web-all/<family>`，全部子路径都指向共享
   壳再导出模块 `lib/shells/shell.js`；子路径下必须有扫描器标记 manifest
   （`src/shells/package.json`，构建复制到 `lib/shells/`）：无 `dsh` 声明 +
   `type: module`，阻止 client 模块扫描器的 nearest-package 走查到达包根（否则
   与 compat 行构成同包多来源，扫描器 reconcile 直接抛错）。子路径 exports 键由
-  生成器维护，勿手改。
+  生成器维护，勿手改。DSH 0.2.1 起插件展示元数据不再读取子路径旁最近
+  `package.json`：生成器同时维护 `./<family>/icon` 与
+  `./<family>/locale/{en,zh}.json`，内容在 `shell-metadata/` 下，官方
+  插件列表因此每行显示独立的 `web-all/<family>` 标题与家族图标。
 - 包根 `icon.svg` + `package.json` 顶层 `icon` 是官方插件列表的卡片图标（官方
   展示元信息字段，见 [Agent Note](../../.agents/notes/implemented/feature/2026-09-23-family-plugin-icons.md)）；
-  家族每个包都带同名素材（独立安装时各自生效），读取方按 `<specifier>/package.json`
-  走 exports 表，所以子路径行仍是默认插画。该资源必须留在 npm `files` 白名单内。
+  家族每个包都带同名素材（独立安装时各自生效），聚合子路径行经各自的
+  `<specifier>/icon` export 复用包根图标。该资源必须留在 npm `files` 白名单内。
 - `aggregate.yml` 是唯一手写清单：`patchFrom` 贡献 insert 行（嵌套聚合递归展开、
   按顺序、带源注释），`deps` 解析各子包 name 写入 dependencies（`workspace:*`）。
 - `rows:` 段是仓库外的 npm 外部行（单行 JSON flow mapping，`{"id","name"}`）：解析

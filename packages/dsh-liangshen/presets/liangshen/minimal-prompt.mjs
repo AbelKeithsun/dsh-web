@@ -2,13 +2,13 @@
  * minimal-prompt — keep this preset's system prompt on the builtin Minimal
  * preset's one-line persona (plus the session's workspace directory) while the
  * sibling tool-catalog plugin owns the wire: one presentation declaration per
- * session ('native' | 'ptc' | 'both') and gentle paging for high-fan-out
+ * session ('native' | 'ptc') and gentle paging for high-fan-out
  * namespaces.
  *
  * The assembled prompt is filtered down to the persona section, plus the plan
  * policy when plan mode is active, plus the official PTC tool SDK sections
  * (`tools:sdk` and `tools:ptc-only`) exactly when the assembled wire carries
- * the `run_code` transport (presentations 'ptc' and 'both'; an unreadable wire
+ * the `run_code` transport (presentation 'ptc'; an unreadable wire
  * keeps them, matching the harness's own empty-section drop): the harness
  * identity, web-surface, tool-guidance, file-reference, and structured-output
  * sections never reach the model. Keeping the official SDK sections when the
@@ -804,7 +804,7 @@ export function apply(ctx, config) {
     const assembled = await next()
     if (!Array.isArray(assembled.sections)) return assembled
     // The official SDK sections belong to the run_code transport: keep them
-    // exactly when this assembly's wire carries it ('ptc' and 'both'), drop
+    // exactly when this assembly's wire carries it ('ptc'), drop
     // them from a native wire they would only confuse. An unreadable wire keeps
     // them, matching the harness's own empty-section drop under 'native'.
     const wire = Array.isArray(assembled?.tools) ? assembled.tools : undefined

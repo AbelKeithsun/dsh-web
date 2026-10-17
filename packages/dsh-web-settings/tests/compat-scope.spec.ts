@@ -109,7 +109,6 @@ const ready = <T>(value: T, revision = 1): ConfigFormSnapshot<T> => ({
   user: undefined,
   revision,
   writable: true,
-  mode: 'host',
 })
 
 const unavailable = (): ConfigFormSnapshot<never> => ({
@@ -119,7 +118,6 @@ const unavailable = (): ConfigFormSnapshot<never> => ({
   user: undefined,
   revision: undefined,
   writable: false,
-  mode: 'host',
 })
 
 describe('createCompatScope transport', () => {

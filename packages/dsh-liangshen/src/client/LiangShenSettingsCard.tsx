@@ -18,7 +18,7 @@ import { BooleanField, ChoiceField, PluginSettingsCard, ValueField } from './Plu
 import { CardForm, booleanField, choiceField, numberField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 
 /** Wire presentations the tool catalog accepts (mirrors the Host schema). */
-export const PRESENTATION_CHOICES = ['ptc', 'native', 'both'] as const
+export const PRESENTATION_CHOICES = ['ptc', 'native'] as const
 
 /** Sensitivity presets for the circuit breaker (mirrors the Host schema). */
 export const SENSITIVITY_CHOICES = ['conservative', 'balanced', 'aggressive'] as const

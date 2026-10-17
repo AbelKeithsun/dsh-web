@@ -159,9 +159,7 @@ function harness(config: Record<string, unknown> = {}, options: HarnessOptions =
       // this assembly carries is decided by the presentation the scope had.
       const wire = agent.mode === 'ptc'
         ? [{ ...RUN_CODE }]
-        : agent.mode === 'both'
-          ? [...tools.schemas(agent), { ...RUN_CODE }]
-          : tools.schemas(agent)
+        : tools.schemas(agent)
       return listeners.get('system-prompt/assemble')!.listener(
         { sections: [] },
         { agent },
@@ -321,29 +319,6 @@ describe('gentle paging under the collapsed ptc wire', () => {
     // would keep shrinking the surface instead of holding steady.
     expect(h.tools.sdkSchemas(agent).map((tool: any) => tool.name)).toEqual(once)
     expect(once).toEqual(['bash', 'read'])
-  })
-
-  it("leaves 'both' untouched: no restriction, and the SDK note still reaches paged namespaces", async () => {
-    const h = harness({ presentation: 'both' })
-    const agent = await agentOf(h)
-    const assembled = await h.assemble(agent)
-
-    // The native roster rides beside run_code, and the paged families come off
-    // it exactly as they do under 'native'.
-    expect(assembled.tools.map((tool: any) => tool.name)).toEqual(['bash', 'read', 'run_code'])
-    // Unrestricted at the registry: the documented escape hatch through the SDK
-    // inside a program survives, from the FIRST request on.
-    expect(h.tools.get('mcp__github__create_issue', agent)).toBeDefined()
-    expect(h.tools.sdkSchemas(agent).map((tool: any) => tool.name)).toContain('mcp__codegraph__explore')
-
-    const text = await h.catalog(agent)
-    expect(text).toContain('<inactive_namespaces>')
-    expect(text).toContain('stay reachable through the SDK inside a program even before activation')
-    // The summary itself says which surface is paged, rather than leaving the
-    // difference to the program note further down the catalog.
-    expect(text).toContain('Only the direct-call surface is paged here')
-    expect(text).not.toContain('unreachable from inside a program too')
-    expect(text).toContain('Call `tool_activate({ namespace: "github" })`')
   })
 
   it("leaves 'native' untouched: paging stays a wire-only concern", async () => {

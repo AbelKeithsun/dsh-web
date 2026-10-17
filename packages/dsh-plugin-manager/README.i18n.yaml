@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   node scripts/verify-docs.mjs --write <dir>
-README.md: 1b6a56d40eb8890c6d0b9686a4f63fd6ca809124
-README.zh.md: 1c4837a2aac125af402850c9ed4af7c57d380d2e
+README.md: e8d232d49e54813c31c924d3d41c2249d570ac6e
+README.zh.md: 6b59d9fdbf9871b54ad85d254754a3eecbf430d8

@@ -147,7 +147,6 @@ describe('LiangShenSettingsCard', () => {
       'settings.inherit',
       'presentation.ptc',
       'presentation.native',
-      'presentation.both',
     ])
   })
 
@@ -265,7 +264,7 @@ describe('LiangShenSettingsCard', () => {
   it('keeps the exported choice lists aligned with the Host schema', () => {
     // These mirror the Host's PRESENTATION_OPTIONS; a drift
     // would offer a value the Host rejects or hide one it accepts.
-    expect([...PRESENTATION_CHOICES]).toEqual(['ptc', 'native', 'both'])
+    expect([...PRESENTATION_CHOICES]).toEqual(['ptc', 'native'])
     const settings: LiangShenSettings = { presentation: 'ptc', enabled: true }
     expect(Object.keys(settings).length).toBe(2)
   })

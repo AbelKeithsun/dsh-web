@@ -863,7 +863,7 @@ describe('liangshen-minimal-prompt', () => {
         { name: 'tools:sdk', text: sdkText },
         { name: 'web:surface', text: 'ignore' },
       ]
-      // 'both' / 'ptc' wire: the transport is present, so the SDK sections stay.
+      // 'ptc' wire: the transport is present, so the SDK sections stay.
       const result = await assemble(register(), ptcSections, undefined, agentOf(), RUN_CODE_WIRE)
       const names = result.sections.map((s: any) => s.name)
       expect(names).toContain('tools:ptc-only')

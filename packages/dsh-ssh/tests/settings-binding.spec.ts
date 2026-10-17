@@ -29,7 +29,7 @@ interface FakeForm<T> {
 
 /** A ready snapshot of one entry. */
 function readySnapshot<T>(value: T): ConfigFormSnapshot<T> {
-  return { status: 'ready', value, base: undefined, user: undefined, revision: 1, writable: true, mode: 'host' }
+  return { status: 'ready', value, base: undefined, user: undefined, revision: 1, writable: true }
 }
 
 /** Build a fake entry form that publishes each replacement it is given. */

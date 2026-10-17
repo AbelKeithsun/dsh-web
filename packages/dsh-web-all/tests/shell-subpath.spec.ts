@@ -17,6 +17,9 @@
  *    package that already owns one (a hard "multiple active Loader sources"
  *    reconcile error), and "type": "module" keeps Node from parsing the
  *    re-export as CJS (format detection also stops at the nearest manifest).
+ * 3. DSH 0.2.1 reads display metadata from exported resources instead of a
+ *    subpath package.json: each family subpath therefore also exports its icon
+ *    and locale metadata files.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -65,6 +68,7 @@ describe('family subpath display names', () => {
   const manifest = JSON.parse(readFileSync(join(PACKAGE_DIR, 'package.json'), 'utf8')) as {
     name: string
     exports: Record<string, string>
+    files?: string[]
   }
   const rows = parsePatchRows(patch)
   const familyRows = rows.filter(row => row.plugin !== undefined)
@@ -93,9 +97,27 @@ describe('family subpath display names', () => {
     }
   })
 
+  it('every family subpath exports the metadata resources the host reads', () => {
+    expect(manifest.files).toContain('shell-metadata')
+    const shellSubs = Object.entries(manifest.exports)
+      .filter(([key, target]) => target === './lib/shells/shell.js' && key.slice(2).split('/').length === 1)
+      .map(([key]) => key.slice(2))
+    expect(shellSubs.length).toBeGreaterThan(0)
+    for (const sub of shellSubs) {
+      expect(manifest.exports[`./${sub}/icon`]).toBe('./icon.svg')
+      for (const locale of ['en', 'zh']) {
+        const target = `./shell-metadata/${sub}/locale/${locale}.json`
+        expect(manifest.exports[`./${sub}/locale/${locale}.json`]).toBe(target)
+        const metadata = JSON.parse(readFileSync(join(PACKAGE_DIR, 'shell-metadata', sub, 'locale', `${locale}.json`), 'utf8')) as { meta?: { title?: string } }
+        expect(metadata.meta?.title).toBe(`web-all/${sub}`)
+      }
+    }
+  })
+
   it('retired family subpaths (tombstones) resolve to the shell re-export for backwards compatibility', () => {
     expect(manifest.exports['./desktop-launcher']).toBe('./lib/shells/shell.js')
     expect(manifest.exports['./dsh-perf']).toBe('./lib/shells/shell.js')
+    expect(manifest.exports['./model-capabilities']).toBe('./lib/shells/shell.js')
   })
 
   it('the built shells face re-exports the main face apply (one degraded ledger)', async () => {

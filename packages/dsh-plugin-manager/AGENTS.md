@@ -22,12 +22,14 @@ packages/AGENTS.md 的全局/包级规则。
   行 id 同名，`LOCKED_ENTRY_IDS` 同时收录该独立行 id 与家族行 `web-ui-plugin-manager`；本包
   不变量由 `tests/bundle-row-id.spec.ts` 固定。聚合侧的家族行 id 与子路径 `plugin-manager` 由聚合
   清单的 `familyIds:` 映射钉住，不随本包独立行改名（见 dsh-web-all/AGENTS.md）。
-- **列表级工具条只能插进官方页面的 chrome**：官方「插件」页不为「已安装」标题声明席位（它的
-  扩展点是 `plugins.detail.*`、`plugins.item`、`plugins.bundle.config`、`plugins.row.config`
-  与 `plugins.bundle.activation`），因此工具条由 `plugin-toolbar-mount.tsx` 直接插进
-  `[data-plugin-panel] [data-plugin-group="bundles"]` 的标题元素，并用共享的
-  `body-mutations.ts`（sync-shared 副本，勿手改）自查位；容器自持 React root，不做 DOM 改写。
-  页面重绘/切走时容器自动挪位或摘除，重复 apply 通过 `TOOLBAR_MOUNT_SELECTOR` 去重。
+- **列表级工具条只能插进官方页面的 chrome**：官方「插件」页的扩展点包括
+  `plugins.detail.*`、`plugins.item`、`plugins.bundle.config`、`plugins.row.config`、
+  `plugins.bundle.activation`，以及 0.2.1 起承载整页内容的 `plugins.tab`；后者会把批量更新藏到
+  另一个 tab，不能替代「已安装」标题旁的即时检查/pending 计数。因此工具条仍由
+  `plugin-toolbar-mount.tsx` 直接插进 `[data-plugin-panel] [data-plugin-group="bundles"]`
+  的标题元素，并用共享的 `body-mutations.ts`（sync-shared 副本，勿手改）自查位；
+  容器自持 React root，不做 DOM 改写。页面重绘/切走时容器自动挪位或摘除，重复 apply 通过
+  `TOOLBAR_MOUNT_SELECTOR` 去重。
 - **批量更新策略放 core，不放 host**：`src/core/updates.ts` 是唯一策略源——只更新第三方
   （非 `@deepseek-ai/`）且 `compatible !== false` 的行；官方包随 DSH 本体升级，绝不批量改写。
   单页区块（`plugins.detail.section`）仍可对官方包做单包更新，那是用户逐条确认的动作。

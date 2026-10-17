@@ -6,7 +6,6 @@
     "dsh-i18n": { "lines": 100, "statements": 100, "functions": 100, "branches": 100 },
     "dsh-liangshen": { "lines": 81.05, "statements": 77.65, "functions": 77.7, "branches": 70.3 },
     "dsh-market": { "lines": 77.3, "statements": 73.07, "functions": 67.54, "branches": 60.66 },
-    "dsh-model-capabilities": { "lines": 84.29, "statements": 81.3, "functions": 81.35, "branches": 81.41 },
     "dsh-plugin-manager": { "lines": 81.87, "statements": 77.77, "functions": 73.23, "branches": 72.3 },
     "dsh-remote-bridge": { "lines": 88.21, "statements": 84.04, "functions": 91, "branches": 76.53 },
     "dsh-remote-web-ui": { "lines": 69.99, "statements": 66.31, "functions": 62.21, "branches": 58.7 },

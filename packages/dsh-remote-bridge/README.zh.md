@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/npm/v/@linxin666/dsh-remote-bridge?style=flat-square" alt="Version">
   &nbsp;
-  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
+  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.1--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
   &nbsp;
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
 </p>
@@ -216,6 +216,7 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
 ## 安全模型
 
 - **配对即完全控制凭据。** 已配对设备在同一进程内触达宿主：会话、发言、审批。只配对你掌控的设备，吊销方式是移除名册那一行并重启宿主。
+- **进程内调用以 owner 身份发言，且只在桥自己的门禁之后。** 自 DSH 0.2.1 起，宿主网关要求每次调用都指明代表谁发言，桥的回答是自己在挂载时铸造的一个进程内 owner peer（`{kind:'owner'}`），挂到每一次网关调用上。这个声明之所以安全，是因为它只在桥自己的配对检查之后才会被用到——未配对连接在任何网关调用存在之前即被拒——且协议帧的任何字段都不能设定 principal：客户端在载荷里自报的身份会被忽略。该 peer 不接收转发事件交互，因此它也永远收不到宿主转发事件。
 - **token 端点仅 loopback 可达，且看两个条件。** 来源地址必须是 loopback，且 `Host` header 必须写本机。经隧道的请求由本机的隧道客户端终结，所以对一条全互联网可达的请求，来源地址也读作 `127.0.0.1`；而中继与普通隧道都会把 `Host` 改写成公网名。任一条件不成立即 403。token 只存内存、30 秒过期、被一次 `pair.begin` 用掉即焚，同一条链接还会写进宿主日志——把那一行日志当作活着的密钥。
 - **配对面板渲染的是一份活密钥，也仅止于此。** 它用同源请求读同一条仅 loopback 门禁的路由，所以在 `curl` 够得到的地方它才够得到，别处都不行。它不能签发设备令牌、不能消耗配对码、不能列名册、不能吊销设备：`pair.begin` 始终是手机那一侧的动作，吊销始终是改名册加重启宿主。二维码里装的是裸 token，因此本页自己的 `127.0.0.1` origin 永远不会被交给手机。
 - **未配对连接只有三个方法的白名单。** `hello`、`pair.begin`、`pair.finish`；其余方法在分发前即回 `unpaired`，因此没有设备令牌就够不到会话面、审批面与名册面。

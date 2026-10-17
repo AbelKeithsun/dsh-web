@@ -64,7 +64,6 @@ function fakeForm(policy: {
     user: undefined,
     revision: 1,
     writable: policy.writable ?? true,
-    mode: 'host',
   })
   let held = snapshot(policy.value ?? {})
   const form = {

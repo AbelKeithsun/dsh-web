@@ -76,3 +76,16 @@ test('no family declaration trails the scaffold cohort floor, the aggregate incl
   belowFloor(cohort, assertSupportedMinimum)
   belowFloor(cohort, assertSupportedHostPeer)
 })
+
+test('family packages do not declare the removed runtime invariant surface', () => {
+  const offenders = []
+  for (const pkgPath of familyManifests()) {
+    const manifest = readManifest(pkgPath)
+    const rel = relative(ROOT, pkgPath)
+    if (manifest.exports?.['./invariant'] !== undefined) offenders.push(`${rel}: exports ./invariant`)
+    for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+      if (manifest[section]?.['@deepseek-ai/dsh-invariants'] !== undefined) offenders.push(`${rel}: ${section} @deepseek-ai/dsh-invariants`)
+    }
+  }
+  assert.deepEqual(offenders, [], `runtime invariant companions were removed upstream:\n${offenders.join('\n')}`)
+})

@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/npm/v/@linxin666/dsh-i18n?style=flat-square" alt="Version">
   &nbsp;
-  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
+  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.1--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
   &nbsp;
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
 </p>
@@ -33,7 +33,6 @@ dsh Web GUI 的语言包插件：向 Web GUI 语言目录注册 Русский�
 | `git-graph` | dsh-git-graph |
 | `liangshen` | dsh-liangshen |
 | `dsh-web-ui-market` | dsh-market |
-| `model-caps` | dsh-model-capabilities |
 | `pet` | dsh-pet |
 | `settings.pluginManager` | dsh-plugin-manager |
 | `dsh-web-ui-preset-center` | dsh-preset-center |
@@ -50,7 +49,7 @@ dsh Web GUI 的语言包插件：向 Web GUI 语言目录注册 Русский�
 
 ## 安装
 
-需要 DSH 0.2.0-rc.2 或更高版本：插件针对 0.2.0-rc.2 DSH cohort 开发，其 `@deepseek-ai/*` 运行时服务由宿主自身提供。
+需要 DSH 0.2.1-rc.2 或更高版本：插件针对 0.2.1-rc.2 DSH cohort 开发，其 `@deepseek-ai/*` 运行时服务由宿主自身提供。
 
 在你的 profile（如 `~/.dsh/profiles/web`）中执行：
 

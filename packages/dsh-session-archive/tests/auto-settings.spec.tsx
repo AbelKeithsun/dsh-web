@@ -25,7 +25,7 @@ class PrototypeMethodForm implements ConfigForm<SessionArchiveConfig> {
   accepted = true
 
   constructor(value: Partial<SessionArchiveConfig>) {
-    this.snapshot = { status: 'ready', value, base: {}, user: {}, revision: 1, writable: true, mode: 'host' }
+    this.snapshot = { status: 'ready', value, base: {}, user: {}, revision: 1, writable: true }
   }
 
   getSnapshot(): ConfigFormSnapshot<SessionArchiveConfig> {

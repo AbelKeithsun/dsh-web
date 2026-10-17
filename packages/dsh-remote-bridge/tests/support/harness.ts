@@ -7,14 +7,16 @@
  * @module tests/support/harness
  */
 
+import { Context } from '@deepseek-ai/cordis'
 import { BridgeConnection, type BridgeConnectionOptions, type BridgeTransport, type ConnectionAuth } from '../../src/core/connection.ts'
 import { ApprovalRegistry } from '../../src/core/approvals.ts'
 import { DeviceRoster } from '../../src/core/devices.ts'
 import { BridgeHub } from '../../src/core/hub.ts'
+import { createOwnerPeer } from '../../src/core/owner-peer.ts'
 import { PairingService } from '../../src/core/pairing.ts'
 import { SessionMeta, type SessionMetaFaces } from '../../src/core/session-meta.ts'
 import { SessionPermissions } from '../../src/core/session-permissions.ts'
-import type { BridgeGateway, GatewayInvokeRequest } from '../../src/core/wire.ts'
+import type { BridgeGateway, GatewayInvokeRequest, GatewayPeer } from '../../src/core/wire.ts'
 
 /** One frame as it crossed the wire. */
 export interface WireFrame {
@@ -27,6 +29,8 @@ export interface RecordedCall {
   readonly namespace: string
   readonly method: string
   readonly args: Readonly<Record<string, unknown>>
+  /** The caller the call spoke for; the suites assert the bridge's own owner peer crosses, never a client-supplied one. */
+  readonly peer: GatewayPeer
   readonly signal: AbortSignal | undefined
 }
 
@@ -75,13 +79,13 @@ export class FakeGateway implements BridgeGateway {
   follow: (call: RecordedCall) => AsyncIterable<unknown> = () => new ControllableStream().iterable()
 
   invoke(request: GatewayInvokeRequest): Promise<unknown> {
-    const call: RecordedCall = { namespace: request.namespace, method: request.method, args: request.args, signal: request.signal }
+    const call: RecordedCall = { namespace: request.namespace, method: request.method, args: request.args, peer: request.peer, signal: request.signal }
     this.invocations.push(call)
     return this.handler(call)
   }
 
   stream(request: GatewayInvokeRequest): Promise<AsyncIterable<unknown>> {
-    const call: RecordedCall = { namespace: request.namespace, method: request.method, args: request.args, signal: request.signal }
+    const call: RecordedCall = { namespace: request.namespace, method: request.method, args: request.args, peer: request.peer, signal: request.signal }
     this.streamRequests.push(call)
     return Promise.resolve(this.follow(call))
   }
@@ -170,6 +174,7 @@ export interface ConnectionHarness {
   readonly pairing: PairingService
   readonly roster: DeviceRoster
   readonly approvals: ApprovalRegistry
+  readonly ownerPeer: GatewayPeer
   readonly logs: string[]
 }
 
@@ -234,6 +239,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
   const roster = options.roster ?? new DeviceRoster({ file: options.rosterFile ?? '/tmp/dsh-remote-bridge-test/not-loaded.json' })
   const approvals = new ApprovalRegistry()
   const logs: string[] = []
+  const ownerPeer = createOwnerPeer(new Context())
   const settings: BridgeConnectionOptions = {
     gateway,
     pairing,
@@ -241,6 +247,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     approvals,
     sessionMeta: metaOf(options, message => { logs.push(message) }),
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
+    ownerPeer,
     now: () => Date.now(),
     clientTimeZone: () => 'Asia/Shanghai',
     log: (message: string) => { logs.push(message) },
@@ -248,7 +255,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
   }
   const auth: ConnectionAuth | undefined = options.paired === true ? { deviceId: 'dev_harness' } : undefined
   const connection = new BridgeConnection(settings, transport, auth)
-  return { connection, transport, gateway, pairing, roster, approvals, logs }
+  return { connection, transport, gateway, pairing, roster, approvals, ownerPeer, logs }
 }
 
 /** One request frame, serialized the way a client sends it. */
@@ -280,6 +287,7 @@ export interface HubHarness {
   readonly transport: RecordingTransport
   readonly gateway: FakeGateway
   readonly approvals: ApprovalRegistry
+  readonly ownerPeer: GatewayPeer
   readonly logs: string[]
 }
 
@@ -296,6 +304,7 @@ export interface BareHubHarness {
   readonly hub: BridgeHub
   readonly gateway: FakeGateway
   readonly approvals: ApprovalRegistry
+  readonly ownerPeer: GatewayPeer
   readonly logs: string[]
 }
 
@@ -304,6 +313,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
   const gateway = new FakeGateway()
   const approvals = new ApprovalRegistry()
   const logs: string[] = []
+  const ownerPeer = createOwnerPeer(new Context())
   const hub = new BridgeHub({
     gateway,
     pairing: new PairingService(),
@@ -311,11 +321,12 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     approvals,
     sessionMeta: metaOf(options, message => { logs.push(message) }),
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
+    ownerPeer,
     now: () => Date.now(),
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },
   })
-  return { hub, gateway, approvals, logs }
+  return { hub, gateway, approvals, ownerPeer, logs }
 }
 
 /** One response frame's `ok`, `r` and `e`, exactly as the client reads them. */

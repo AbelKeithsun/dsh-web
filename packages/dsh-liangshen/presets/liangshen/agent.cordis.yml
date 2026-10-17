@@ -7,16 +7,15 @@
 #
 # The presentation is the SDK's ToolPresentationMode, picked by the
 # tool-catalog row's `presentation` key (default `'ptc'`): `'native'` keeps
-# the assembled roster on the wire, `'ptc'` collapses the wire to the single
-# `run_code` transport, and `'both'` keeps the full native roster AND the
-# `run_code` transport co-resident — native calls carry ordinary work while
-# `run_code` covers programmatic batch computation and wide fan-out. The
-# declaration lands once per agent scope through agent.ctx.tools.presentAs as
-# early as the scope exists, and degrades to the native surface with a
-# one-time warning when the deployment has no code runtime or the host
-# declines. The retired anchor-turn staging is gone: the legacy `anchorTools`
-# and boolean `ptcPresentation` keys are still accepted (the latter mapping
-# true -> 'ptc' and false -> 'native') but only warn once.
+# the assembled roster on the wire, and `'ptc'` collapses the wire to the
+# single `run_code` transport with every other tool reached from inside the
+# program through the generated SDK. The declaration lands once per agent
+# scope through agent.ctx.tools.presentAs as early as the scope exists, and
+# degrades to the native surface with a one-time warning when the deployment
+# has no code runtime or the host declines. The retired anchor-turn staging is
+# gone: the legacy `anchorTools` and boolean `ptcPresentation` keys are still
+# accepted (the latter mapping true -> 'ptc' and false -> 'native') but only
+# warn once.
 #
 # Gentle tool paging keeps high-fan-out families out of reach until needed:
 # tools matching `pagedToolPatterns` (default `mcp__*`) stay paged out, the
@@ -132,12 +131,11 @@
 # `tool-catalog` owns the wire presentation and the model-visible catalog.
 # `presentation` selects the SDK ToolPresentationMode for the session's whole
 # lifetime: `'ptc'` (default) collapses the wire to the `run_code` transport
-# and reaches every other tool through the generated SDK, `'native'` keeps the
-# assembled roster alone, and `'both'` keeps the roster and the transport
-# co-resident. The shipped default is a static-context choice, not a measured
-# win: the official scaffold comparison ranks this presentation below the native
-# surface on both code-agent benchmarks, and the bundled benchmark matrix is how
-# that trade would be settled locally. `pagedToolPatterns` (default `['mcp__*']`) names the
+# and reaches every other tool through the generated SDK, and `'native'` keeps
+# the assembled roster alone. The shipped default is a static-context choice,
+# not a measured win: the official scaffold comparison ranks this presentation
+# below the native surface on both code-agent benchmarks, and the bundled
+# benchmark matrix is how that trade would be settled locally. `pagedToolPatterns` (default `['mcp__*']`) names the
 # high-fan-out families that stay paged out of the wire until activated; the
 # active set replays from the session event stream, so resume and compaction
 # rebuild it. `maxResidentTokens` (default 6000, calibrated above the shipped
@@ -178,7 +176,7 @@
   name: ./tool-catalog.mjs
   config:
     descriptionMaxLength: 200
-    presentation: 'both'
+    presentation: 'ptc'
     pagedToolPatterns: ['mcp__*']
     maxResidentTokens: 8000
 

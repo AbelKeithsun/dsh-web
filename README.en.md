@@ -23,7 +23,7 @@ dsh-web is an all-in-one modular plugin ecosystem and AI agent workbench for Dee
   &nbsp;
   <a href="https://dsh-market.com"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fdsh-market.com%2Fapi%2Ftelemetry%2Fbadge%2Fusers&style=flat-square&label=users" alt="users"></a>
   &nbsp;
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh"><img src="https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH"></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh"><img src="https://img.shields.io/badge/DSH-%3E%3D0.2.1--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH"></a>
   &nbsp;
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
 </p>
@@ -72,7 +72,6 @@ dsh-web mounts directly into `dsh web` via official profiles without modifying D
 | Monitor DeepSeek API and LLM token usage metrics, query provider account balances, and track subscription quotas | Usage Statistics: daily token breakdown, balance queries, bill estimation & Token Bank | [Usage statistics and Token Bank](packages/dsh-usage/README.md) |
 | Multi-agent concurrent coding produces file collisions, requiring isolated Git branches and filesystem worktrees | Git Graph & Worktree: visual commit history, automatic dedicated worktree branches & directories | [Git visualization and worktree isolation](packages/dsh-git-graph/README.md) |
 | Accumulated chat history is hard to search, requiring full-text multi-filter queries, batch archiving, and lifecycle pruning | Session Archive Manager: multi-filter search, batch archiving, cascade pruning & automated lifecycle policies | [Full session archive management](packages/dsh-session-archive/README.md) |
-| Visually configure multimodal vision image inputs and DeepSeek-R1 reasoning effort tiers for custom providers | Model Capabilities: visual declarations for image inputs and reasoning effort profiles without service restarts | [Model capabilities declarations](packages/dsh-model-capabilities/README.md) |
 | Customize interface aesthetics with dark eye-care themes, Wallpaper Engine live backgrounds, and desktop pets | Workshop & Skin Center: built-in Blue Fantasy dark theme, plus vast skins, live wallpapers & pets | [Explore the DSH Workshop](https://dsh-market.com) |
 | Use the complete plugin and theme ecosystem directly inside the official DeepSeek Harness Desktop client | Official Desktop Client: install the full aggregate bundle directly via in-app plugin manager | [Official desktop client guide](#official-desktop-client) |
 | Install the all-in-one plugin bundle into an existing DeepSeek Harness CLI or Web GUI environment with one command | Quick Start: one-command installation via npm or direct GitHub repository URL | [Quick start installation](#quick-start) |
@@ -151,17 +150,6 @@ Monitor token consumption, provider balances, and subscription quotas under "Set
 Tracking starts upon initial plugin activation without backfilling historical sessions; vouchers cover DeepSeek official usage within configured ledger retention windows. See [dsh-usage README](packages/dsh-usage/README.md) for supported providers and limitations.
 
 ![DeepSeek Token Usage Tracker & Token Bank — API expenditure tracking and bill estimation](docs/screenshots/35-usage-token-bank.webp)
-
-### Model Capabilities（Model Capabilities · Multimodal Vision & Reasoning Effort Profiles）
-
-Configure model-level parameters for custom providers directly within "Settings > Models". This plugin supplies a visual editor for capabilities omitted from default cards:
-
-- **Image Input Declarations**: Expand "Model Capabilities" within custom provider cards to explicitly declare multimodal support (`["text","image"]` or `["text"]`);
-- **Reasoning Effort Profiles**: Mark non-reasoning models (hiding thinking sliders in the chat composer), inherit global defaults, or define explicit reasoning tiers with exact payload values;
-- **Immediate Effect & Conflict Protection**: Changes save through official storage pathways and apply immediately without restarting the host; writes enforce revision checks to prevent overwriting concurrent updates;
-- **One-Click Provider Toggling**: Temporarily disable provider routes without losing stored API keys, instantly hiding inactive models from selection pickers.
-
-*Note: Declarations inform outgoing request payloads and do not perform automated gateway probing. If a model is declared with image support but the upstream provider gateway rejects multimodal payloads, the request will fail at the gateway level. Details in [dsh-model-capabilities README](packages/dsh-model-capabilities/README.md).*
 
 ### Git Graph（Git Graph · Visual Commits & Worktree Session Isolation）
 
@@ -264,7 +252,6 @@ dsh plugin --profile web add @linxin666/dsh-client-ui-task-board@latest         
 dsh plugin --profile web add @linxin666/dsh-client-ui-task-board-github@latest      # Task board GitHub Issues sync extension
 dsh plugin --profile web add @linxin666/dsh-ssh@latest                             # SSH Remote Ops
 dsh plugin --profile web add @linxin666/dsh-usage@latest                           # Usage Statistics
-dsh plugin --profile web add @linxin666/dsh-client-ui-model-capabilities@latest    # Model Capabilities
 dsh plugin --profile web add @linxin666/dsh-pet@latest                             # Desktop Pet
 dsh plugin --profile web add @linxin666/dsh-session-archive@latest                 # Session Archive Manager
 dsh plugin --profile web add @linxin666/dsh-liangshen@latest                       # LiangShen Mode
@@ -287,7 +274,6 @@ All plugins are published under the `@linxin666/dsh-*` npm scope:
 | [@linxin666/dsh-remote-web-ui](https://www.npmjs.com/package/@linxin666/dsh-remote-web-ui) | Mobile remote control: QR pairing, cross-device sync, and touch gestures |
 | [@linxin666/dsh-ssh](https://www.npmjs.com/package/@linxin666/dsh-ssh) | SSH operations: web terminal, SFTP transfers, tunnels, and cluster commands |
 | [@linxin666/dsh-usage](https://www.npmjs.com/package/@linxin666/dsh-usage) | Usage statistics: token consumption, balances, plan tracking, and Token Bank |
-| [@linxin666/dsh-client-ui-model-capabilities](https://www.npmjs.com/package/@linxin666/dsh-client-ui-model-capabilities) | Model capabilities: declare multimodal input and reasoning effort profiles |
 | [@linxin666/dsh-pet](https://www.npmjs.com/package/@linxin666/dsh-pet) | Desktop pet: registry-driven interactive floating companions |
 | [@linxin666/dsh-client-ui-git-graph](https://www.npmjs.com/package/@linxin666/dsh-client-ui-git-graph) | Git graph: visual commit logs, branch flows, and worktree isolation |
 | [@linxin666/dsh-client-ui-skin-center](https://www.npmjs.com/package/@linxin666/dsh-client-ui-skin-center) | Skin center: runtime engine for themes and dynamic backgrounds |
@@ -468,7 +454,7 @@ Licensed under [Apache-2.0](LICENSE). Imported third-party code must retain orig
 
 **Plugins**
 
-- **dsh-task-board / dsh-task-board-github / dsh-git-graph / dsh-pet / dsh-remote-web-ui / dsh-web-settings / dsh-ssh / dsh-skill-explorer / dsh-market / dsh-plugin-manager / dsh-community-plugins / dsh-web-all / dsh-liangshen / dsh-update / dsh-session-id / dsh-usage / dsh-session-archive / dsh-model-capabilities / dsh-i18n** — authored by zhu1090093659, Apache-2.0 (zhu1090093659)
+- **dsh-task-board / dsh-task-board-github / dsh-git-graph / dsh-pet / dsh-remote-web-ui / dsh-web-settings / dsh-ssh / dsh-skill-explorer / dsh-market / dsh-plugin-manager / dsh-community-plugins / dsh-web-all / dsh-liangshen / dsh-update / dsh-session-id / dsh-usage / dsh-session-archive / dsh-i18n** — authored by zhu1090093659, Apache-2.0 (zhu1090093659)
 - **dsh-ssh** — implemented against the capability list of [badseal/ssh-skill](https://github.com/badseal/ssh-skill); code is this repository's Apache-2.0 (zhu1090093659), the upstream capability list belongs to badseal/ssh-skill
 - **Community plugin index** — 130+ external plugins with sources and licenses declared by their authors, registered in [community.json](https://github.com/zhu1090093659/dsh-community-plugins/blob/main/community.json), browsable in Settings → Community Plugins and on dsh-market.com
 

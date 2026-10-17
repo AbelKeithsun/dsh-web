@@ -170,7 +170,7 @@ describe('resolveConfig', () => {
     // appended rule block; presentation changes the WIRE, the tool surface),
     // When the operator reads every combination, Then each field resolves to
     // the value it was given with no cross-talk between them.
-    for (const presentation of ['ptc', 'native', 'both'] as const) {
+    for (const presentation of ['ptc', 'native'] as const) {
       for (const dispatcher of [true, false]) {
         expect(resolveConfig({ presentation, dispatcher })).toMatchObject({ presentation, dispatcher })
       }

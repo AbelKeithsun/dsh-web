@@ -224,7 +224,7 @@ describe('dsh-liangshen preset declaration', () => {
     // Then the preset is declared again and the previous declaration released.
     vi.resetModules()
     const mod = await import('../src/index.ts')
-    let presentation = 'both'
+    let presentation = 'ptc'
     let announceToAgent = false
     const host = makeHost()
     mounted.push(host)
@@ -252,7 +252,7 @@ describe('dsh-liangshen preset declaration', () => {
     // last value and every predecessor is released.
     vi.resetModules()
     const mod = await import('../src/index.ts')
-    let presentation = 'both'
+    let presentation = 'ptc'
     const host = makeHost()
     mounted.push(host)
     mod.apply(host.ctx, { presentation: { get: () => presentation } as never })

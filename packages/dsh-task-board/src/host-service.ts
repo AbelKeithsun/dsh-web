@@ -4,7 +4,7 @@ import { DEFAULT_SESSION_POLL_SECONDS, normalizeSessionPollSeconds, sessionPollM
 import { reusableSessionId } from './core/session-reuse.ts'
 import { LaunchAdmissionQueue, type QueuedLaunch } from './host/launch-admission.ts'
 import { HostTaskLedger, type OpenedRun, type OpenExecutionReference } from './host-ledger.ts'
-import { HostExecutionRunner, SessionLaunchError, promptText, type SessionCommandDispatcher, type SessionSummary, type TaskBoardWorkspaceRegistry } from './host-runner.ts'
+import { HostExecutionRunner, SessionLaunchError, promptText, type GatewayPeer, type SessionCommandDispatcher, type SessionSummary, type TaskBoardWorkspaceRegistry } from './host-runner.ts'
 import { teammateName } from './core/subtask.ts'
 import { workspaceOwningSession } from './core/workspace-target.ts'
 import { PowerInhibitor } from './power-inhibitor.ts'
@@ -262,6 +262,13 @@ export class TaskBoardHostService {
     commandDispatcher?: SessionCommandDispatcher
     workspaceRegistry?: TaskBoardWorkspaceRegistry
     /**
+     * The owner peer every gateway request the runner makes speaks for.
+     * Production passes the peer bound to the plugin fiber (see
+     * {@link createOwnerPeer}); absent is fine for tests and bare mounts,
+     * where the runner binds one to a fresh root context.
+     */
+    ownerPeer?: GatewayPeer
+    /**
      * Permission baseline of the confirmation gate: a fixed value, or a live
      * resolver the board re-reads so a Host Settings change needs no remount.
      */
@@ -305,7 +312,7 @@ export class TaskBoardHostService {
       maxSubtaskDepth: options.maxSubtaskDepth,
       cardDefaults: options.cardDefaults,
     })
-    this.runner = new HostExecutionRunner(gateway, options.commandDispatcher, options.workspaceRegistry)
+    this.runner = new HostExecutionRunner(gateway, options.commandDispatcher, options.workspaceRegistry, undefined, options.ownerPeer)
     this.workspaceRegistry = options.workspaceRegistry
     this.team = options.team
     this.timers = options.timers ?? PROCESS_TIMERS

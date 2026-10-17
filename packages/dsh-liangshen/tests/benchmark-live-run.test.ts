@@ -86,25 +86,20 @@ function variantPatch(variantId: string): { text: string, presetDir: string } {
 describe('benchmark variant materialization', () => {
   it('keeps the shipped persona and presentation for the baseline group', () => {
     const text = composition('B')
-    expect(text).toMatch(/^\s*presentation: 'both'$/m)
+    expect(text).toMatch(/^\s*presentation: 'ptc'$/m)
     expect(text).toContain('You are a helpful software engineer assistant.')
     expect(text).toContain('Thinking Disruption')
   })
 
   it('applies the candidate persona without touching the presentation config', () => {
     const text = composition('P')
-    expect(text).toMatch(/^\s*presentation: 'both'$/m)
+    expect(text).toMatch(/^\s*presentation: 'ptc'$/m)
     for (const line of CANDIDATE_PERSONA.split('\n')) {
       if (line === '') continue
       expect(text).toContain(line)
     }
     expect(text).not.toContain('Thinking Disruption')
     expect(text).not.toContain('Do not mentally pre-rehearse full code implementations')
-  })
-
-  it("switches group T to the 'ptc' presentation", () => {
-    const text = composition('T')
-    expect(text).toMatch(/^\s*presentation: 'ptc'$/m)
   })
 
   it('switches group N to the native presentation', () => {
@@ -163,7 +158,7 @@ describe('benchmark variant materialization', () => {
   it('operator gets every derived composition read by the declaration reader', () => {
     // Given the persona and presentation variants, When the operator reads
     // their compositions, Then each one parses into registry rows.
-    for (const variantId of ['P', 'T', 'N']) {
+    for (const variantId of ['P', 'N']) {
       const target = materializePreset(scratchDir(), variantId, LIVE_VARIANTS[variantId as keyof typeof LIVE_VARIANTS])
       const text = readFileSync(join(target, 'agent.cordis.yml'), 'utf8')
       expect(() => readCompositionRows(text, target), variantId).not.toThrow()
@@ -306,11 +301,11 @@ describe('benchmark task corpus and acceptance checks', () => {
   })
 
   it('interleaves every group inside each task so a limit cannot starve later groups', () => {
-    const plan = suitePlan(['B', 'P', 'T', 'N', 'M'], [{ id: 't1' }, { id: 't2' }], 2)
-    expect(plan).toHaveLength(20)
-    expect(plan.slice(0, 5).map((entry: { group: string }) => entry.group)).toEqual(['B', 'P', 'T', 'N', 'M'])
-    expect(plan.slice(0, 5).every((entry: { task: { id: string } }) => entry.task.id === 't1')).toBe(true)
-    expect(plan[5]).toMatchObject({ group: 'B', repetition: 2 })
+    const plan = suitePlan(['B', 'P', 'N', 'M'], [{ id: 't1' }, { id: 't2' }], 2)
+    expect(plan).toHaveLength(16)
+    expect(plan.slice(0, 4).map((entry: { group: string }) => entry.group)).toEqual(['B', 'P', 'N', 'M'])
+    expect(plan.slice(0, 4).every((entry: { task: { id: string } }) => entry.task.id === 't1')).toBe(true)
+    expect(plan[4]).toMatchObject({ group: 'B', repetition: 2 })
   })
 
   it('grades a task by running its Node check in the workspace', async () => {

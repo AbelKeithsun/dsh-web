@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 <p align="center">
   <img src="https://img.shields.io/npm/v/@linxin666/dsh-client-ui-remote-web-ui?style=flat-square" alt="Version">
   &nbsp;
-  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.0--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
+  <img src="https://img.shields.io/badge/DSH-%3E%3D0.2.1--rc.2-4c6ef5?style=flat-square&amp;labelColor=454a54" alt="DSH">
   &nbsp;
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License">
 </p>
@@ -136,7 +136,7 @@ pnpm --filter @linxin666/dsh-remote-web-ui test
 pnpm --filter @linxin666/dsh-remote-web-ui run typecheck
 ```
 
-The peer APIs come from the official NPM SDK: every `@deepseek-ai/*` package used here is declared in devDependencies (0.2.0-rc.2 cohort), and TypeScript/Vitest resolve types straight from node_modules — no DSH source checkout is required. The consumer-side `prepare` build (`tsdown.prepare.config.ts`) transpiles without type checking, so git installs work without any harness checkout either.
+The peer APIs come from the official NPM SDK: every `@deepseek-ai/*` package used here is declared in devDependencies (0.2.1-rc.2 cohort), and TypeScript/Vitest resolve types straight from node_modules — no DSH source checkout is required. The consumer-side `prepare` build (`tsdown.prepare.config.ts`) transpiles without type checking, so git installs work without any harness checkout either.
 
 ## Checks
 
@@ -148,7 +148,7 @@ pnpm run build
 
 ## Harness contract dependencies
 
-Pinned to the 0.2.0-rc.2 line; the seams this build relies on:
+Pinned to the 0.2.1-rc.2 line; the seams this build relies on:
 
 - **`sidebar.footer.action` foot seat** (the 0.1.7 shell composition): the sidebar declares and renders the seat the remote entry occupies.
 - **`ctx.layout.toggleSidebar()`** (packages/client/ui-layout): the whale button expands the collapsed sidebar through the official panel-action face.
@@ -175,7 +175,7 @@ The public path is the same round trip through a tunnel (see "Remote access over
 
 - **Pairing is the access control for the `/remote` channel, unconditionally**: every request must carry a live paired-device cookie, enforced before any bytes are forwarded. A missing or revoked session receives HTTP 403 with a JSON rejection carrying `error.code: "unpaired"`; the browser's `EventSource` API exposes only the stream failure, not that response body. This gate does **not** follow `requirePairingForLan`: the channel re-issues every call with the process's own browser-auth credential, so admitting an unpaired caller would hand out that authority. The LAN policy governs the plain `/api` surface only and can never widen the channel (issue #1665).
 - **The channel carries the process's own inner credential.** The harness browser-auth cookie is authority-bound (minted for the exact `host:port` a browser visited) and has no loopback exemption, so a proxied re-issue to `127.0.0.1` cannot reuse a device's cookie. The plugin therefore redeems its own launch token once — the same exchange a first browser visit performs — and attaches that cookie to re-issued requests. The credential is only ever exercised behind the pairing gate above; 停止/取消配对 immediately stop exercising it.
-- **Runtime reality: pairing does not gate direct `/api`.** Nothing in the official runtime emits the `api/gate` seam (verified against the 0.2.0-rc.2 packages installed by this repository), so a direct `/api` call from a LAN origin is governed solely by the harness fence (which auto-trusts LAN literals under a `0.0.0.0` bind) plus the harness browser-auth cookie. A browser credential a device has already redeemed therefore survives 停止/取消配对 until its natural expiry (30 days) — revocation binds the `/remote` channel and the pairing cookie, not that credential. The plugin probes the `/api` posture and warns loudly; treat a LAN-exposed bind as a deliberate decision, and prefer loopback plus tunnels when the machine is shared.
+- **Runtime reality: pairing does not gate direct `/api`.** Nothing in the official runtime emits the `api/gate` seam (verified against the 0.2.1-rc.2 packages installed by this repository), so a direct `/api` call from a LAN origin is governed solely by the harness fence (which auto-trusts LAN literals under a `0.0.0.0` bind) plus the harness browser-auth cookie. A browser credential a device has already redeemed therefore survives 停止/取消配对 until its natural expiry (30 days) — revocation binds the `/remote` channel and the pairing cookie, not that credential. The plugin probes the `/api` posture and warns loudly; treat a LAN-exposed bind as a deliberate decision, and prefer loopback plus tunnels when the machine is shared.
 - **A paired device is a full-control credential.** With host mode active it reaches the complete host API — chat, sessions, settings, credentials, agent presets, deliverables — mirroring the SDK's own stance that a loopback desktop is trusted. Only the three control planes (pairing, self-update, plugin install/remove) stay physically local. Only pair devices you control; 停止 or per-device 取消配对 revokes immediately.
 - **Control endpoints stay loopback-only**: mint/stop/revoke, the device roster, and the lan-bind status answer only to loopback, and the gated channel keeps the self-update and plugin-install paths physically local. A LAN-origin browser sees the "配对面板仅限本机使用" banner.
 - **Background file uploads ride the channel too.** The official upload service prefers a Web Worker carrier whose own globals no main-thread patch reaches, so the boot patch (and the browser patch as a fallback) publishes the official pre-Cordis hook `__DSH_FILE_UPLOAD__` and hands it the patched `fetch`: the raw `/api/session/uploadFileBinary` POST is rewritten onto `/remote` and carries the device credential exactly like every other gated call. Without the hook a paired browser's uploads bypass the channel and the harness browser-auth fence answers 401 (issue #1580). The hook is only published on non-loopback origins, only while the channel is installed, and never overwrites a hook the page already owns.
@@ -196,7 +196,7 @@ The public path is the same round trip through a tunnel (see "Remote access over
 - **A refused worker registration falls back to the harness gate**: the reopen worker registers only where service workers exist. When an otherwise secure origin refuses it (deployment policy, a hardened browser profile), the address bar has already moved to `/` and a reopen needs a fresh QR; the plain-HTTP LAN path has no such gap, because its shell stays on `/pair-app`.
 - **The adaptation selectors track the official build**: the semantic-suffix strategy survives hash churn but not semantic renames; each official GUI update needs a visual QA pass (per the dsh-LAN reference, these suffixes have been stable across many official releases).
 - **Dev HMR**: `dsh web --dev` polls every roster bundle by path, so rebuilding this package (its own `tsdown --watch`) hot-reloads the client bundle; the host half needs a restart.
-- **A mounted `@deepseek-ai/dsh-hmr` row blocks every settings save**: the official config editor serializes its writes through `hmr.runExclusive` whenever the `hmr` service is mounted, and on this cohort such a write is rejected as a nested transaction - the Host answers `HMR transactions cannot be nested` and each family settings card (and the official settings pages) reports a failed save. The row is user-added (no bundle ships it); a Desktop profile carries it to hot-reload a local plugin's host half. Remove the `- id: hmr` row from the profile patch to restore saves, and re-add it only while iterating on that plugin. Observed on the Desktop client 0.2.0-rc.2 (2026-09-30).
+- **A mounted `@deepseek-ai/dsh-hmr` row blocks every settings save**: the official config editor serializes its writes through `hmr.runExclusive` whenever the `hmr` service is mounted, and on this cohort such a write is rejected as a nested transaction - the Host answers `HMR transactions cannot be nested` and each family settings card (and the official settings pages) reports a failed save. The row is user-added (no bundle ships it); a Desktop profile carries it to hot-reload a local plugin's host half. Remove the `- id: hmr` row from the profile patch to restore saves, and re-add it only while iterating on that plugin. Observed on the Desktop client 0.2.1-rc.2 (2026-09-30).
 
 ## Dependency rationale
 

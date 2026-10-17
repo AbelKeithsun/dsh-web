@@ -14,9 +14,8 @@
  *   data-dsh-part    : message-row | message-body | scrollport | composer-input |
  *                      composer-chip | queue-dock | turn-tail | resize-handle |
  *                      new-session | sidebar-entry
- *   data-dsh-plugin  : doctor | git-graph | liangshen | model-capabilities | pet |
- *                      preset-center | remote-web-ui | session-archive | ssh |
- *                      task-board | usage
+ *   data-dsh-plugin  : doctor | git-graph | liangshen | pet | preset-center |
+ *                      remote-web-ui | session-archive | ssh | task-board | usage
  *   data-pane        : sidebar | conversation | details
  *   plus [data-composer-card], [data-composer-seat], [data-shell-overlay],
  *   [data-chat-flow-kind], [data-slot="…"], [role], [aria-*]
@@ -226,8 +225,7 @@ a {
 [data-dsh-plugin="ssh"],
 [data-dsh-plugin="session-archive"],
 [data-dsh-plugin="preset-center"],
-[data-dsh-plugin="doctor"],
-[data-dsh-plugin="model-capabilities"] {
+[data-dsh-plugin="doctor"] {
   border-radius: var(--cl-radius-lg);
   font-family: var(--cl-sans);
 }

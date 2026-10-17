@@ -26,7 +26,6 @@ function unavailableSettingsForm() {
       user: undefined,
       revision: undefined,
       writable: false,
-      mode: 'host',
     }),
     subscribe: () => () => {},
     mutate: async () => false,

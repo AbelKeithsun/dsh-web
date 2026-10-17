@@ -103,7 +103,6 @@ function fakeForm(initial: UsageSettings = {}): { form: ConfigForm<UsageSettings
     user: undefined,
     revision: 1,
     writable: true,
-    mode: 'host',
   })
   let held = snapshot(initial)
   return {

@@ -52,4 +52,21 @@ describe('tunnelPlanOf', () => {
     expect(tunnelPlanOf({ tunnelToken: '' }, 3080)).toEqual({ mode: 'off' })
     expect(tunnelPlanOf({}, 3080)).toEqual({ mode: 'off' })
   })
+
+  it('defers the quick plan to off while the port is unbound (0.2.1-rc.2 port type)', () => {
+    // The quick target URL names the bound port; before the listener binds
+    // there is no honest target, so the plan is off and the caller re-plans
+    // once the port settles — never an http://127.0.0.1:undefined target.
+    expect(tunnelPlanOf({ autoTunnel: true }, undefined)).toEqual({ mode: 'off' })
+    expect(tunnelPlanOf({ autoTunnel: true, tunnelToken: 'tok', publicBaseUrl: 'https://dsh.example.com' }, undefined)).toEqual({ mode: 'off' })
+  })
+
+  it('the named and off plans do not need the port', () => {
+    expect(tunnelPlanOf({ tunnelToken: 'tok', publicBaseUrl: 'https://dsh.example.com' }, undefined)).toEqual({
+      mode: 'named',
+      token: 'tok',
+      publicUrl: 'https://dsh.example.com',
+    })
+    expect(tunnelPlanOf({}, undefined)).toEqual({ mode: 'off' })
+  })
 })

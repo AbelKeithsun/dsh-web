@@ -16,18 +16,18 @@
  * - Session persistence is redirected into the run directory, so real session
  *   history is never appended to.
  *
- * The candidate matrix follows the LiangShen V4.1 Flash improvement plan:
- * B (current persona), P (candidate persona), T (candidate persona + PTC-only
- * presentation), T (candidate persona + 'both' presentation), N (candidate
- * persona + native presentation throughout), and M
- * (the official bundle's Minimal preset as an external reference). Persona
- * wording and tool presentation vary independently, and a run records the
- * baseline it ran against so an aggregated report can attribute a difference to
- * one factor.
+ * The candidate matrix follows the LiangShen V4.1 Flash improvement plan,
+ * minus the retired 'both' presentation arm (the SDK dropped the mode, so the
+ * shipped default IS the ptc wire): B (current persona + shipped 'ptc'
+ * presentation), P (candidate persona + shipped 'ptc' presentation), N
+ * (candidate persona + native presentation throughout), and M (the official
+ * bundle's Minimal preset as an external reference). Persona wording and tool
+ * presentation vary independently, and a run records the baseline it ran
+ * against so an aggregated report can attribute a difference to one factor.
  *
  * Usage:
  *   node tools/benchmark-live-run.mjs --variant B [--timeout 300000] [--keep]
- *   node tools/benchmark-live-run.mjs --tasks tools/tasks/liangshen-v41-flash.json --groups B,P,T,N,M --repeat 3 --max-sessions 60 --budget-cny 10 --prices tools/prices/deepseek-flash.json --out .benchmark-results
+ *   node tools/benchmark-live-run.mjs --tasks tools/tasks/liangshen-v41-flash.json --groups B,P,N,M --repeat 3 --max-sessions 60 --budget-cny 10 --prices tools/prices/deepseek-flash.json --out .benchmark-results
  *
  * Cost is CNY: DeepSeek bills in CNY, and the published row the route prices at
  * is quoted in CNY per million tokens (cache hit / cache miss / output) off-peak,
@@ -60,7 +60,7 @@ export const DEFAULT_TURNS = [
 ]
 
 /**
- * The candidate persona for groups P/T/N. It keeps the identity line and replaces
+ * The candidate persona for groups P/N. It keeps the identity line and replaces
  * the shipped discipline: no ban on reasoning through concrete implementation, a
  * loop exits by changing method or using a tool instead of stopping, and PDCA is
  * expressed as inspect, smallest sufficient change, verify.
@@ -86,17 +86,12 @@ export const LIVE_VARIANTS = {
   B: {
     persona: 'current',
     presentation: null,
-    note: "baseline: shipped persona, shipped 'both' presentation",
+    note: "baseline: shipped persona, shipped 'ptc' presentation",
   },
   P: {
     persona: 'candidate',
     presentation: null,
-    note: "candidate persona, shipped 'both' presentation",
-  },
-  T: {
-    persona: 'candidate',
-    presentation: 'ptc',
-    note: "candidate persona, 'ptc' presentation (collapsed wire to run_code)",
+    note: "candidate persona, shipped 'ptc' presentation",
   },
   N: {
     persona: 'candidate',

@@ -38,8 +38,10 @@ function copyCommittedTree(dir) {
   const pairs = [
     [join(ROOT, 'scripts', 'market-build'), join(dir, 'scripts', 'market-build')],
     [join(ROOT, 'scripts', 'lib', 'market-zip.cjs'), join(dir, 'scripts', 'lib', 'market-zip.cjs')],
-    // The pin guard imports this to compare the cache against the gitlinks.
+    // The pin guard imports this to compare the cache against the gitlinks,
+    // plus the shared tar capability helper its tarball fallback uses.
     [join(ROOT, 'scripts', 'market-fetch-inputs.mjs'), join(dir, 'scripts', 'market-fetch-inputs.mjs')],
+    [join(ROOT, 'scripts', 'tar-args.cjs'), join(dir, 'scripts', 'tar-args.cjs')],
     [join(ROOT, 'market', 'src'), join(dir, 'market', 'src')],
     [join(ROOT, 'market', 'editor-picks.json'), join(dir, 'market', 'editor-picks.json')],
     [join(ROOT, 'market', 'dist'), join(dir, 'market', 'dist')],

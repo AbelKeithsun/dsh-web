@@ -30,7 +30,6 @@ function fakeForm(entryId: string) {
       user: undefined,
       revision: 1,
       writable: true,
-      mode: 'host' as const,
     }),
     subscribe: (listener: () => void) => {
       listeners.add(listener)

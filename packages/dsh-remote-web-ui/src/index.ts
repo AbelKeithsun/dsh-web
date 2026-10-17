@@ -262,6 +262,12 @@ export const Config = z.object({
 const SWEEP_INTERVAL_MS = 10_000
 
 /**
+ * Re-plan retry while the quick tunnel waits for the webServer port to bind
+ * (a recompose pass can run this apply ahead of the listener's bind).
+ */
+const PORT_SETTLE_RETRY_MS = 1_000
+
+/**
  * Fully resolved config: every field non-optional except `publicBaseUrl`,
  * which legitimately resolves to `undefined` when unset (the schema keeps it
  * optional, so `Required` alone would over-narrow it to `string`).
@@ -489,6 +495,14 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   // 'off' until a sync pass turns a mode on; the phase listener only feeds
   // the public base while a plugin-managed tunnel (quick or named) runs.
   let tunnelMode: 'off' | 'quick' | 'named' = resolve().autoTunnel ? 'quick' : 'off'
+  /**
+   * Retry timer while the quick tunnel waits for the webServer port to bind
+   * (undefined when no deferral is pending). Unref'd: never keeps the
+   * process alive on its own.
+   */
+  let portSettleTimer: ReturnType<typeof nodeSetTimeout> | undefined
+  /** Dedupes the unbound-port warning to one line per unsettled episode. */
+  let portSettleWarned = false
   tunnel.onPhase((info: TunnelInfo) => {
     if (tunnelMode === 'off') return
     if (info.phase === 'running' && info.url !== undefined) {
@@ -515,6 +529,7 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
     disposeRelayRegistrar()
     publicBase.dispose()
     tunnel.dispose()
+    if (portSettleTimer !== undefined) clearTimeout(portSettleTimer)
   }, 'remote-web-ui: auto tunnel')
   // The bind facts are known by now (webServer is an inject edge): the LAN
   // bases are frozen per process, matching the CLI's once-per-invocation
@@ -662,13 +677,13 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
     // credential to everything it forwards (issue #1665).
     ...makeRemoteApiRoutes({
       service,
-      port: ctx.webServer.port,
+      port: () => ctx.webServer.port,
       auth: innerAuth,
     }),
   ]
   const upgrades = makeRemoteApiUpgradeRoutes({
     service,
-    port: ctx.webServer.port,
+    port: () => ctx.webServer.port,
     auth: innerAuth,
   })
   const gate = makeGateListener(service, () => resolve().requirePairingForLan, () => resolve().enabled)
@@ -684,7 +699,12 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   let postureWasExposed = false
   const runPostureProbe = (): void => {
     if (!resolve().enabled) return
-    const targets = postureTargets(service.publicBaseUrl, service.lanAddresses, ctx.webServer.port)
+    // The probe and the LAN targets need the bound port; before it settles
+    // (a recompose pass) there is nothing honest to probe — keep the previous
+    // snapshot and let the next trigger retry.
+    const port = ctx.webServer.port
+    if (port === undefined) return
+    const targets = postureTargets(service.publicBaseUrl, service.lanAddresses, port)
     if (targets.length === 0) {
       postureKey = undefined
       service.setPosture(undefined)
@@ -694,7 +714,7 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
     const claim = claimPostureKey(postureKey, key)
     if (!claim.run) return
     postureKey = claim.next
-    void probePosture({ port: ctx.webServer.port, targets }).then((snapshot) => {
+    void probePosture({ port, targets }).then((snapshot) => {
       service.setPosture(snapshot)
       const exposedHosts = snapshot.hosts.filter(host => host.exposed).map(host => host.host)
       const exposed = exposedHosts.length > 0
@@ -848,18 +868,13 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   }
   ctx.effect(() => () => { lanBindWorkPending = false }, 'remote-web-ui: lan-bind work')
 
-  // Apply the effective configuration to the running surfaces once per
-  // activation: the service tunables, the LAN-bind block/firewall, the tunnel
-  // plan, the pairing routes, the presence sweep, and the posture probe.
-  const sync = (): void => {
-    const value = resolve()
-    service.config = pairingConfigOf(value)
-    scheduleLanBindWork()
-    // The plugin-managed tunnels own the public base while one runs: the URL
-    // lands in the service through the tunnel's phase listener (the minted
-    // quick URL, or the named tunnel's fixed public hostname). The manual
-    // publicBaseUrl applies only when no tunnel runs.
-    const plan = tunnelPlanOf(value, ctx.webServer.port)
+  // Apply one tunnel plan to the running surfaces. The plugin-managed tunnels
+  // own the public base while one runs: the URL lands in the service through
+  // the tunnel's phase listener (the minted quick URL, or the named tunnel's
+  // fixed public hostname). The manual publicBaseUrl applies only when no
+  // tunnel runs.
+  const applyTunnelPlan = (value: ResolvedConfig, port: number | undefined): void => {
+    const plan = tunnelPlanOf(value, port)
     tunnelMode = plan.mode
     publicBase.setMode(plan.mode)
     const liveTunnelUrl = publicBase.quickUrl()
@@ -917,6 +932,36 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
       } else {
         service.setPublicBaseUrl(value.publicBaseUrl)
       }
+    }
+  }
+
+  // Apply the effective configuration to the running surfaces once per
+  // activation: the service tunables, the LAN-bind block/firewall, the tunnel
+  // plan, the pairing routes, the presence sweep, and the posture probe.
+  const sync = (): void => {
+    const value = resolve()
+    service.config = pairingConfigOf(value)
+    scheduleLanBindWork()
+    // The quick tunnel's loopback target URL needs the bound port. A recompose
+    // pass can run this apply before the listener binds: defer the tunnel
+    // branch (and re-plan on a short timer) instead of minting an
+    // http://127.0.0.1:undefined target; everything else in sync applies.
+    const livePort = ctx.webServer.port
+    if (livePort === undefined && value.autoTunnel === true) {
+      if (!portSettleWarned) {
+        portSettleWarned = true
+        console.warn('remote-web-ui: autoTunnel is on but the web server port is not bound yet — the quick tunnel starts once the port settles')
+      }
+      if (portSettleTimer === undefined) {
+        portSettleTimer = nodeSetTimeout(() => {
+          portSettleTimer = undefined
+          sync()
+        }, PORT_SETTLE_RETRY_MS)
+        portSettleTimer.unref()
+      }
+    } else {
+      portSettleWarned = false
+      applyTunnelPlan(value, livePort)
     }
     const enabled = value.enabled
     if (!enabled) {

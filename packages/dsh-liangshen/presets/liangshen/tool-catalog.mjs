@@ -6,12 +6,9 @@
  * PRESENTATION: the `presentation` config picks how this session's tools sit
  * on the wire, matching the SDK's ToolPresentationMode:
  * - `native`: the assembled native roster, no code transport;
- * - `ptc`: the wire collapses to the single `run_code` transport and every
- *   other tool is reached from inside the program through the generated SDK;
- * - `both` (default): the full native roster plus the `run_code` transport
- *   co-resident on the wire — native calls carry ordinary work, `run_code`
- *   covers batch computation, overlapped fan-out, and the calls whose large
- *   raw output only a conclusion is needed from.
+ * - `ptc` (default): the wire collapses to the single `run_code` transport
+ *   and every other tool is reached from inside the program through the
+ *   generated SDK.
  *
  * The declaration happens once per agent scope (agent.ctx.tools.presentAs) as
  * early as the scope exists — there is no turn-boundary staging: the retired
@@ -46,15 +43,8 @@
  *
  * WHICH PRESENTATION PAGES WHAT: the registry restriction is installed for
  * `ptc` alone, because a collapsed wire is the one presentation where the
- * scope's registry IS the whole reachable surface. `both` deliberately leaves
- * the registry unrestricted: its wire carries the full native roster beside
- * `run_code`, so a paged namespace is off the direct-call surface while the
- * SDK inside a program still reaches it. That reachability is the native wire's
- * own — the wire carries every registered tool and nothing removes the paged
- * ones from the scope's registry — rather than an exemption paging grants, and
- * it is why the paged-out summary states each presentation's reachability
- * instead of describing both with one sentence. `native` carries no program at
- * all, so the wire partition is the whole of paging there.
+ * scope's registry IS the whole reachable surface. `native` carries no
+ * program at all, so the wire partition is the whole of paging there.
  *
  * TIMING: that restriction is installed from OUTSIDE the assembly waterfall.
  * `SystemPrompt.assemble()` collects the tool providers and calls every
@@ -69,10 +59,9 @@
  * CATALOG: the durable user message appended after the user's own message
  * names exactly the tools the current request's wire carries (each tool's
  * argument signature plus a one-line summary), then summarizes the paged-out
- * namespaces with their activation pointer. Under 'both' the catalog lists
- * `run_code` like any other tool and notes the programmatic-escape hatch; the
- * 'ptc' program contract only ships when the wire actually collapsed to it.
- * A tool the catalog curates renders the hand-written line from
+ * namespaces with their activation pointer. The 'ptc' program contract ships
+ * when the wire actually collapsed to the transport. A tool the catalog
+ * curates renders the hand-written line from
  * {@link CURATED_TOOL_SUMMARIES}; only an uncurated tool falls back to the
  * mechanical `descriptionMaxLength` truncation of its own schema description,
  * because a character-count cut can slice off exactly the sentence that says
@@ -111,7 +100,7 @@ export const inject = ['systemPrompt']
 const DEFAULT_DESCRIPTION_MAX_LENGTH = 200
 
 /** The presentation modes the SDK's ToolPresentationMode supports. */
-export const PRESENTATION_MODES = ['native', 'ptc', 'both']
+export const PRESENTATION_MODES = ['native', 'ptc']
 
 /**
  * The default presentation: the wire collapses to the single \`run_code\` transport
@@ -120,7 +109,7 @@ export const PRESENTATION_MODES = ['native', 'ptc', 'both']
  *
  * This is a deliberate trade, not a measured win. Collapsing the wire removes the
  * native roster's schema payload from every request, which is the cheapest static
- * context of the three modes; the official published scaffold comparison, however,
+ * context of the two modes; the official published scaffold comparison, however,
  * places this presentation BELOW the natively presented surface on both code-agent
  * benchmarks (DeepSWE v1.1: 67.6 against 72.6; Terminal-Bench 2.1: 85.8 against
  * 90.6). The default is chosen for its static-context cost on long sessions and is
@@ -231,28 +220,6 @@ function validateRetiredAnchorTools(value) {
 }
 
 /**
- * The batching pointer the SHELL tools carry when `run_code` is co-resident
- * ('both'), appended to the curated line below.
- *
- * It lives in its own table rather than inside {@link CURATED_TOOL_SUMMARIES}
- * because the curated table renders under EVERY presentation, and under
- * `native` this deployment carries no program at all: a shell line that named
- * `run_code` there would announce a transport the request does not open — the
- * exact claim the declare-only-what-the-request-opens contract forbids, and a
- * claim the native catalog tests already pin. Gating the suffix on the same
- * flag that puts `run_code` on the wire keeps one fact in one place: the shell
- * line points at a program exactly when a program exists.
- *
- * Kept inside the same one-line budget as the curated table, and countable for
- * the same reason the contract's triggers are: a vague "for long outputs"
- * leaves the boundary to the model's judgement.
- */
-const CO_RESIDENT_SHELL_HINTS = new Map([
-  ['bash', ' 2+ commands or long output: `run_code`.'],
-  ['pwsh', ' 2+ commands or long output: `run_code`.'],
-])
-
-/**
  * Curated one-line summaries, one per host builtin tool this preset can put on
  * a wire. Each line says what the tool is FOR and names the arguments that
  * decide how it is called, kept well inside {@link DEFAULT_DESCRIPTION_MAX_LENGTH}.
@@ -294,6 +261,11 @@ const CO_RESIDENT_SHELL_HINTS = new Map([
  * The goal tools and `exit_plan_mode` ARE here, because the `tool-goal` and
  * `plan-mode` rows below mount them.
  *
+ * `run_code` is also absent: it is the transport the harness adds for a code
+ * presentation, not a row-mounted builtin, and the catalog never lists it as
+ * an entry — under `ptc` the program contract describes it, under `native` the
+ * request does not carry it.
+ *
  * Adding a tool the preset mounts is the one edit an entry needs, and no test
  * pins the exact text of any line: an operator reword is not a behavior change.
  * That is why the table is exported — a test can prove every key is a tool name
@@ -301,7 +273,6 @@ const CO_RESIDENT_SHELL_HINTS = new Map([
  */
 
 export const CURATED_TOOL_SUMMARIES = new Map([
-  ['run_code', 'Execute a TypeScript program (`code`, `description`) reaching tools as `await tools.<name>(args)`; use it for two or more independent targets, or one large output needed only as a conclusion.'],
   ['bash', 'Run a command in a fresh bash shell (`command`, optional `timeoutMs`, `workdir`, `run_in_background`).'],
   ['pwsh', 'Run a command in a fresh PowerShell process (`command`, optional `timeoutMs`, `workdir`, `run_in_background`); native Windows paths and `$env:NAME` variables.'],
   ['read', 'Read one UTF-8 text file as line-numbered content (`file_path`, optional `offset` and `limit`).'],
@@ -353,18 +324,12 @@ export function catalogDescription(value, maxLength) {
  * for a tool nobody has written a line for yet.
  * @param {{ name?: unknown, description?: unknown }} schema - one tool definition.
  * @param {number} maxLength - the schema-description cap, in characters.
- * @param {{ coResident?: boolean }} [options] - whether `run_code` shares this
- *   request's wire, which is what lets a shell line point at a program.
  * @returns the summary text for the catalog entry.
  */
-export function toolSummary(schema, maxLength, options) {
+export function toolSummary(schema, maxLength) {
   const name = schema?.name
   if (typeof name === 'string' && CURATED_TOOL_SUMMARIES.has(name)) {
-    const line = CURATED_TOOL_SUMMARIES.get(name)
-    // The shell pointer only ships where a program does: see
-    // {@link CO_RESIDENT_SHELL_HINTS}.
-    const hint = options?.coResident === true ? CO_RESIDENT_SHELL_HINTS.get(name) : undefined
-    return hint === undefined ? line : `${line}${hint}`
+    return CURATED_TOOL_SUMMARIES.get(name)
   }
   return catalogDescription(schema?.description, maxLength)
 }
@@ -426,21 +391,19 @@ export function renderSignature(parameters) {
 /**
  * Catalog entries for one tool surface, sorted by name so an unchanged surface
  * renders byte-identical text across assemblies. Nameless definitions are
- * skipped; the `run_code` transport is listed only when the presentation puts
- * it on the wire beside the native tools ('both'). Each entry's summary is
- * resolved by {@link toolSummary}: the curated line where the table has one,
- * the capped schema description otherwise. `includeRunCode` is also what lets
- * a curated SHELL line carry its batching pointer, so the pointer and the
- * transport it names always travel together.
+ * skipped; the `run_code` transport never renders as an entry — under `ptc`
+ * the program contract describes it, under `native` the request does not
+ * carry it. Each entry's summary is resolved by {@link toolSummary}: the
+ * curated line where the table has one, the capped schema description
+ * otherwise.
  */
 export function catalogEntries(schemas, maxLength, options) {
-  const includeRunCode = options?.includeRunCode === true
   const patterns = Array.isArray(options?.patterns) ? options.patterns : []
   const entries = []
   for (const schema of Array.isArray(schemas) ? schemas : []) {
     const toolName = schema?.name
     if (typeof toolName !== 'string' || toolName === '') continue
-    if (toolName === 'run_code' && !includeRunCode) continue
+    if (toolName === 'run_code') continue
     // A tool from a paged family carries its namespace so the catalog can group
     // it the way the model calls it, instead of scattering one server's tools
     // through an alphabetical list.
@@ -448,7 +411,7 @@ export function catalogEntries(schemas, maxLength, options) {
     entries.push({
       name: toolName,
       signature: renderSignature(schema.parameters),
-      description: toolSummary(schema, maxLength, { coResident: includeRunCode }),
+      description: toolSummary(schema, maxLength),
       ...(namespace === undefined ? {} : { namespace }),
     })
   }
@@ -473,32 +436,9 @@ const PTC_PROGRAM_LINES = [
 ]
 
 /**
- * The short note the catalog carries when `run_code` sits on the wire beside
- * the native roster ('both'): native calls are the primary surface, and the
- * transport covers batch work and context economy. Both triggers are countable,
- * because a shape rule alone leaves the boundary to the model's judgement: two
- * or more independent targets in one intent, and a single call whose raw output
- * is expected to be large while the next step needs only a conclusion. The
- * second trigger is context economics rather than capability — the program is
- * how a large raw output is kept out of the conversation instead of being
- * carried in it. Paged-out namespaces stay reachable through the SDK inside a
- * program even before activation — the native wire carries every registered
- * tool and 'both' leaves the scope's registry unrestricted, so nothing removed
- * them from the program's own surface.
- */
-const BOTH_PROGRAM_LINES = [
-  'Prefer calling the tools above directly by name: ordinary single-step work (read, edit, bash, one search) goes through the native call, never through `run_code`. Reach for `run_code` when a direct call cannot do the job as well — an async TypeScript body (`code`, with a short `description`) that reaches tools as `await tools.<name>({ ... })`, overlaps independent read-only calls under `Promise.all`, and catches `ToolCallError` to continue: batch computation, wide fan-out, multi-step data shaping, or keeping a large raw output out of the conversation.',
-  '',
-  'Two countable triggers, either one sufficient. (1) Two or more independent targets in one intent: two reads, two searches, two commands. (2) Context economy: one call whose raw output is expected to be large — a long log, bulk file contents, a whole table — while the next step needs only a conclusion, a summary, or a count; the program then returns that conclusion and the raw output never enters the conversation. Below both, call the tools directly: one target whose output the next step reads in full stays a native call. Every call inside a program must handle its own failure with `try/catch`, so the error chain a program produces is longer than a direct call — wrapping one-step work in a program to save a call pays that cost for nothing.',
-  '',
-  'Paged-out namespaces stay off the NATIVE direct-call surface but stay reachable through the SDK inside a program even before activation — the native wire carries every registered tool and nothing removes the paged ones from the scope registry, so this is the reachability the wire itself carries rather than an exemption paging grants — and activating one also puts its tools back on the direct surface.',
-]
-
-/**
  * Model-facing catalog text.
- * - Native presentation: the on-wire tool list plus the paged-out namespace summary.
- * - 'both': the on-wire list INCLUDING `run_code`, the namespace summary with
- *   its direct-call-only reachability, and the short programmatic-escape note.
+ * - Native presentation: the on-wire tool list plus the paged-out namespace
+ *   summary with its wire-only reachability.
  * - 'ptc' (wire collapsed to `run_code`): the SDK-reachable list plus the full
  *   program contract naming `run_code` the one direct transport, and a
  *   namespace summary whose page covers the whole surface.
@@ -532,13 +472,10 @@ export function renderCatalogText(entries, presentation = 'native', inactive = [
   // The paged-out summary states its own reachability per presentation, because
   // the presentations differ on exactly the fact a reader would otherwise have
   // to infer from the program contract further down: 'ptc' pages the whole
-  // surface, 'both' pages the direct-call surface only while a program still
-  // reaches what it withholds, and 'native' carries no program at all.
+  // surface, and 'native' carries no program at all.
   const inactiveReachability = presentation === 'ptc'
     ? 'The page covers the whole surface here, not the wire alone: these namespaces are unreachable from inside a program too until they are activated.'
-    : presentation === 'both'
-      ? 'Only the direct-call surface is paged here: a program still reaches these namespaces before activation, and activating one returns its tools to the direct-call surface as well.'
-      : 'This presentation carries no program transport, so the wire is the only surface these namespaces can be reached through.'
+    : 'This presentation carries no program transport, so the wire is the only surface these namespaces can be reached through.'
   const inactiveBlock = inactive.length === 0 ? [] : [
     '',
     'These tool namespaces are registered but currently paged out of the wire:',
@@ -549,9 +486,7 @@ export function renderCatalogText(entries, presentation = 'native', inactive = [
   ]
   const presentationLines = presentation === 'ptc'
     ? ['', ...PTC_PROGRAM_LINES]
-    : presentation === 'both'
-      ? ['', ...BOTH_PROGRAM_LINES]
-      : []
+    : []
   return [
     '<system-reminder>',
     'The following tools are available in this session:',
@@ -811,10 +746,8 @@ export function apply(ctx, config) {
    * GATED ON THE WIRE ACTUALLY COLLAPSING, not on the configuration asking for
    * it. Both halves of that gate matter, and each covers a deployment where
    * paging at the registry would be wrong:
-   * - `presentation === 'ptc'` is what the operator configured, and it excludes
-   *   `both`, whose documented contract is that a paged-out namespace stays
-   *   reachable through the SDK inside a program before activation. Installing
-   *   the restriction there would break that contract for the first request;
+   * - `presentation === 'ptc'` is what the operator configured, and it is the
+   *   only presentation whose registry is the whole reachable surface;
    * - `agentDeclared.has(agent)` is the scope's own declaration actually
    *   landing, which is NOT the same as `transportReady()`. A deployment with
    *   no mounted code runtime (and one whose host declines the declaration)
@@ -1017,8 +950,7 @@ export function apply(ctx, config) {
       // transport and lists the tools from their SDK projection. Where no
       // projection can be read at all, declaring would collapse the executor and
       // then have to undo it, losing the native wire on the way out. Stay native
-      // instead. Under 'both' the native roster stays on the wire either way, so
-      // the declaration needs no projection guard.
+      // instead.
       const projectable = publicSchemas(agent)
       if (presentation === 'ptc' && (projectable === undefined || projectable.length === 0)) {
         warnOnce('runtime', 'no tool schema projection available — keeping the native tool surface')
@@ -1074,17 +1006,14 @@ export function apply(ctx, config) {
 
     // Under a collapsed `ptc` wire the registry is the ONLY surface a tool can
     // be reached through, so the page is expressed as a registry restriction.
-    // Every other wire still carries paging by itself on the assembled array,
-    // and `both` deliberately stays unrestricted: that is what keeps its
-    // documented "paged namespaces stay reachable through the SDK inside a
-    // program" behavior intact. A wire that carries the native roster again (a
-    // reverted declaration) must also drop a page left over from a collapsed
-    // assembly, or the filter would keep hiding tools that wire just handed
-    // back.
+    // The native wire carries paging by itself on the assembled array. A wire
+    // that carries the native roster again (a reverted declaration) must also
+    // drop a page left over from a collapsed assembly, or the filter would keep
+    // hiding tools that wire just handed back.
     let surface = agent !== undefined ? publicSchemas(agent) : undefined
     // The wire partition replays the durable log itself: `pagingState` exists
-    // only where a restriction was installed (the collapsed ptc wire), and
-    // native/both still page the assembled array from the same event stream.
+    // only where a restriction was installed (the collapsed ptc wire), and the
+    // native wire still pages the assembled array from the same event stream.
     const activeNamespaces = new Set(
       replayActivations(sessionEvents(agent?.session), maxActiveNamespaces, pagedToolPatterns).active,
     )
@@ -1104,13 +1033,12 @@ export function apply(ctx, config) {
     }
 
     const effectiveWire = correctedWire ?? assembledTools
-    const effectiveHasRunCode = (effectiveWire ?? []).some(t => t?.name === 'run_code')
     const effectiveOnlyRunCode = effectiveWire !== undefined && effectiveWire.length > 0 && effectiveWire.every(t => t?.name === 'run_code')
 
     // The catalog describes the transport this request actually carries, never
-    // the configuration's intent: a collapsed wire is 'ptc', run_code beside the
-    // native roster is 'both', and anything else is native.
-    const effectivePresentation = effectiveOnlyRunCode ? 'ptc' : (effectiveHasRunCode ? 'both' : 'native')
+    // the configuration's intent: a collapsed wire is 'ptc', and anything else
+    // is native.
+    const effectivePresentation = effectiveOnlyRunCode ? 'ptc' : 'native'
 
     // Gentle paging: the active namespaces were replayed from the durable event
     // stream above; here the paged-but-inactive tools come off the wire itself.
@@ -1135,8 +1063,7 @@ export function apply(ctx, config) {
     // The catalog describes this request's ACTUAL surface: with a live page it
     // summarizes exactly the namespaces that page withholds (the same fact the
     // restriction was built from), and otherwise the namespaces the WIRE
-    // partition found — which under `both` stay reachable through the SDK
-    // inside a program, as the programmatic-escape note below states.
+    // partition found.
     const catalogInactive = summarizeInactive(
       pagingState?.inactive ?? inactive,
       describe => catalogDescription(describe, descriptionMaxLength),
@@ -1149,10 +1076,7 @@ export function apply(ctx, config) {
       entries = catalogEntries(surface ?? [], descriptionMaxLength, { patterns: pagedToolPatterns })
     } else {
       const merged = mergeProjectedSchemas(resident, surface)
-      entries = catalogEntries(merged, descriptionMaxLength, {
-        includeRunCode: effectivePresentation === 'both',
-        patterns: pagedToolPatterns,
-      })
+      entries = catalogEntries(merged, descriptionMaxLength, { patterns: pagedToolPatterns })
     }
     const inactiveSummary = catalogInactive
 

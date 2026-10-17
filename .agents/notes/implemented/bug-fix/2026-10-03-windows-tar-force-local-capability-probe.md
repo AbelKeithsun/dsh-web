@@ -39,7 +39,7 @@ bsdtar exits 1 on) and sends the flag only to a binary that accepted it. Off
 Windows the probe never runs, so the Linux lane is byte-for-byte unchanged.
 
 The helper is CommonJS because `scripts/e2e-mount-rewrite` is a CommonJS CLI
-invoked by shebang from `scripts/e2e-mount.sh`; the two ESM callers reach its
+invoked by shebang from `scripts/e2e-mount.sh`; the ESM callers reach its
 exports through Node's CommonJS named-export detection, which is why the module
 ends in a plain `module.exports = { ... }` assignment.
 
@@ -61,8 +61,9 @@ statement.
   the real `tar` in PATH with the resolved arguments, which is the one the
   injected branches cannot prove -- on this host it resolves to `[]` and bsdtar
   exits 0 on `tar --version`.
-- The helper is the single source: the three former copies are gone, so the
-  publish path and the mount smoke can no longer disagree about the flag.
+- The helper is the single source: the three former copies are gone, and
+  `scripts/market-fetch-inputs.mjs` consumes it too, so the publish path, mount
+  smoke and market content fetch cannot disagree about the flag.
 
 ## Alternatives considered
 

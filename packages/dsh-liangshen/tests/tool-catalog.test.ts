@@ -57,16 +57,6 @@ const SDK_SURFACE = [
   { name: 'read', description: 'Read a UTF-8 text file and return line-numbered content.' },
 ]
 
-/**
- * The exact summary a curated SHELL tool renders when `run_code` is
- * co-resident. Reads the table line and the render-time pointer through the
- * same public `toolSummary` the catalog uses, so the assertion cannot pass
- * against a hand-copied string the renderer never produces.
- */
-function coResidentShellLine(shell: string) {
-  return toolSummary({ name: shell, description: 'schema description curation replaces' }, 200, { coResident: true })
-}
-
 /** The run_code transport schema the harness adds for code presentations. */
 const RUN_CODE = {
   name: 'run_code',
@@ -198,9 +188,7 @@ async function runAssembly(harness: Harness, agent: any, tools: unknown[] = WIRE
   const input = harness.assemblyInput ?? { tools: WIRE, sections: [] }
   const wire = agent?.mode === 'ptc'
     ? [{ ...RUN_CODE }]
-    : agent?.mode === 'both'
-      ? [...input.tools, { ...RUN_CODE }]
-      : input.tools
+    : input.tools
   harness.declarationsBeforeNext = -1
   const assembled = await listener(harness, 'system-prompt/assemble')(
     { sections: input.sections },
@@ -241,7 +229,7 @@ function durableEvent(seq: number, message: any) {
 describe('liangshen-tool-catalog', () => {
   test('exports a diagnostic plugin name and injects the prompt registry', () => {
     expect(name).toBe('liangshen-tool-catalog')
-    expect(PRESENTATION_MODES).toEqual(['native', 'ptc', 'both'])
+    expect(PRESENTATION_MODES).toEqual(['native', 'ptc'])
   })
 
   test('registers both hooks outermost in their waterfalls', () => {
@@ -277,22 +265,6 @@ describe('liangshen-tool-catalog', () => {
     expect(harness.presentCalls).toEqual(['ptc'])
   })
 
-  test("'both' catalog lists run_code like any other tool and carries no PTC exclusivity contract", async () => {
-    const harness = register({ presentation: 'both' })
-    const agent = agentOf()
-    await assemble(harness, agent)
-    const text = catalogText((await preStep(harness, agent)).messages)
-    expect(text).toContain(`- \`run_code({ code: string, description: string })\`: ${CURATED_TOOL_SUMMARIES.get('run_code')}`)
-    expect(text).toContain('- `bash')
-    expect(text).toContain('Prefer calling the tools above directly by name')
-    expect(text).toContain('`await tools.<name>({ ... })`')
-    expect(text).toContain('`Promise.all`')
-    expect(text).toContain('`ToolCallError`')
-    // The PTC exclusivity contract belongs to the collapsed wire only.
-    expect(text).not.toContain('only tool that can be called directly')
-    expect(text).not.toContain('presents these tools through `run_code`')
-  })
-
   test("'ptc' presentation collapses the wire and ships the program contract", async () => {
     const harness = register({ presentation: 'ptc' })
     const agent = agentOf([], undefined, harness)
@@ -322,6 +294,14 @@ describe('liangshen-tool-catalog', () => {
   test('rejects an invalid presentation value', () => {
     expect(() => register({ presentation: 'yes' })).toThrow(/presentation must be one of/)
     expect(() => register({ presentation: '' })).toThrow(/presentation must be one of/)
+  })
+
+  test("rejects the removed 'both' presentation: an old profile fails closed instead of mapping", () => {
+    // The SDK dropped the 'both' ToolPresentationMode, and this preset ships no
+    // compatibility mapping: a profile that still names it is refused at
+    // registration, so the operator migrates the key to 'ptc' or 'native'
+    // instead of silently running a different wire than the one documented.
+    expect(() => register({ presentation: 'both' })).toThrow(/presentation must be one of \["native","ptc"\]/)
   })
 
   test('maps the legacy ptcPresentation key onto the enum with one deprecation warning', async () => {
@@ -573,25 +553,6 @@ describe('liangshen-tool-catalog', () => {
     expect(text).not.toContain('<inactive_namespaces>')
   })
 
-  test("under 'both' the paged note says the SDK still reaches paged namespaces", async () => {
-    const harness = register({ presentation: 'both' }, { sdk: [...SDK_SURFACE, ...MCP_TOOLS] })
-    const agent = agentOf()
-    await assemble(harness, agent, [...WIRE, ...MCP_TOOLS])
-    const text = catalogText((await preStep(harness, agent)).messages)
-    expect(text).toContain('- `run_code({ code: string, description: string })`')
-    expect(text).toContain('<inactive_namespaces>')
-    // 'both' is the one presentation that leaves the registry unrestricted, so
-    // the SDK inside a program still reaches a paged namespace before
-    // activation. Only 'ptc' pages the whole surface. The summary states that
-    // reachability itself instead of leaving it to the program contract, and it
-    // names the wire as the reason rather than claiming a paging exemption.
-    expect(text).toContain('Paged-out namespaces stay off the NATIVE direct-call surface but stay reachable through the SDK inside a program even before activation')
-    expect(text).toContain('the reachability the wire itself carries rather than an exemption paging grants')
-    // The paged summary distinguishes the two code presentations on reachability.
-    expect(text).toContain('Only the direct-call surface is paged here: a program still reaches these namespaces before activation')
-    expect(text).not.toContain('unreachable from inside a program too')
-  })
-
   test('stays native and says nothing about run_code without a PTC runtime', async () => {
     const harness = register({}, { ptcRuntime: false })
     const agent = agentOf([], undefined, harness)
@@ -735,7 +696,7 @@ describe('liangshen-tool-catalog', () => {
     expect(renderSignature(undefined)).toBe('')
   })
 
-  test('catalogEntries sorts by name, skips nameless tools, and gates run_code on the option', () => {
+  test('catalogEntries sorts by name, skips nameless tools, and never lists the run_code transport', () => {
     const entries = catalogEntries([
       { name: 'b', description: 'second' },
       { description: 'nameless' },
@@ -746,11 +707,6 @@ describe('liangshen-tool-catalog', () => {
       { name: 'a', signature: '(Record<string, JsonValue>)', description: 'first' },
       { name: 'b', signature: '', description: 'second' },
     ])
-    const withRunCode = catalogEntries([
-      { name: 'run_code', description: 'transport' },
-      { name: 'a', description: 'first' },
-    ], 200, { includeRunCode: true })
-    expect(withRunCode.map((entry: any) => entry.name)).toEqual(['a', 'run_code'])
     expect(catalogEntries(undefined, 200)).toEqual([])
   })
 
@@ -803,7 +759,7 @@ describe('liangshen-tool-catalog', () => {
     // hostile one-character cap, and every line stays one printable ASCII
     // line well inside the shipped 200-character summary budget.
     const hostBuiltins = [
-      'run_code', 'bash', 'pwsh', 'read', 'read_image', 'write', 'edit', 'str_replace_editor',
+      'bash', 'pwsh', 'read', 'read_image', 'write', 'edit', 'str_replace_editor',
       'glob', 'grep', 'job_output', 'job_list', 'job_kill', 'todo_write',
       'create_goal', 'get_goal', 'update_goal', 'exit_plan_mode',
       'subagent', 'subagent_fork', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
@@ -811,6 +767,11 @@ describe('liangshen-tool-catalog', () => {
       'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource',
     ].sort()
     expect([...CURATED_TOOL_SUMMARIES.keys()].sort()).toEqual(hostBuiltins)
+
+    // The transport itself is deliberately uncurated: the catalog never lists
+    // run_code as an entry — under 'ptc' the program contract describes it,
+    // under 'native' the request does not carry it.
+    expect(CURATED_TOOL_SUMMARIES.has('run_code')).toBe(false)
 
     for (const tool of hostBuiltins) {
       expect(toolSummary({ name: tool, description: 'x' }, 1)).toBe(CURATED_TOOL_SUMMARIES.get(tool))
@@ -832,9 +793,15 @@ describe('liangshen-tool-catalog', () => {
     expect(renderCatalogText([], 'ptc')).toContain('presents these tools through `run_code`')
     expect(renderCatalogText([], 'ptc')).toContain('Compose one program per intent')
     expect(renderCatalogText([], 'native')).not.toContain('Promise.all')
-    const both = renderCatalogText([{ name: 'run_code', signature: '()', description: 'Run a program.' }], 'both')
-    expect(both).toContain('Prefer calling the tools above directly by name')
-    expect(both).not.toContain('only tool that can be called directly')
+    // The transport never renders as a list entry: catalogEntries is the gate
+    // (under 'ptc' the program contract describes run_code, under 'native' the
+    // request does not carry it), so a surface that includes it yields no
+    // entry for it.
+    const entries = catalogEntries([{ name: 'run_code', signature: '()', description: 'Run a program.' }], 200)
+    expect(entries).toEqual([])
+    const ptc = renderCatalogText(entries, 'ptc')
+    expect(ptc).not.toContain('- `run_code')
+    expect(ptc).toContain('only tool that can be called directly')
     const paged = renderCatalogText([], 'native', [
       { namespace: 'github', count: 2, sample: 'mcp__github__create_issue', description: 'Create a GitHub issue.' },
     ])
@@ -843,109 +810,52 @@ describe('liangshen-tool-catalog', () => {
     expect(paged).toContain('This is the current on-wire list')
   })
 
-  test('operator reads the both-contract trigger as two countable conditions', () => {
-    // Given the 'both' presentation, whose program note is the model's only
-    // statement of WHEN to reach for run_code.
-    const text = renderCatalogText([], 'both')
-    // When the contract renders, Then it states both triggers countably: the
-    // lowered independent-target threshold and the context-economy condition.
-    // A soft word like 'several' or 'when large' would leave the boundary to
-    // the model's judgement, which is exactly what the note exists to remove.
-    expect(text).toContain('Two countable triggers, either one sufficient.')
-    expect(text).toContain('(1) Two or more independent targets in one intent')
-    expect(text).toContain('(2) Context economy')
-    expect(text).toContain('only a conclusion, a summary, or a count')
-    // The retired threshold is gone, so a model cannot read three as the bar.
-    expect(text).not.toContain('three or more')
-    expect(text).not.toContain('Below that, call the tools directly')
-    // The unchanged halves survive: direct calls first, and the per-call
-    // ToolCallError discipline that makes a one-step program a bad trade.
-    expect(text).toContain('Prefer calling the tools above directly by name')
-    expect(text).toContain('try/catch')
-    expect(text).toContain('wrapping one-step work in a program to save a call pays that cost for nothing')
+  test('operator reads the ptc program contract as the run_code usage note', () => {
+    // Given the collapsed wire, When the contract renders, Then it teaches the
+    // program discipline: one program per intent, SDK access, Promise.all
+    // overlap, ToolCallError handling, and the exclusivity of the transport.
+    // A soft summary would leave the boundary to the model's judgement, which
+    // is exactly what the contract exists to remove.
+    const text = renderCatalogText([], 'ptc')
+    expect(text).toContain('The session presents these tools through `run_code`')
+    expect(text).toContain('Compose one program per intent instead of one tool call per step')
+    expect(text).toContain('`await tools.<name>({ ... })`')
+    expect(text).toContain('`Promise.all`')
+    expect(text).toContain('`ToolCallError`')
+    expect(text).toContain('`run_code` is the only tool that can be called directly once it is on the wire')
+    // The paged-out page covers the whole surface under the collapsed wire.
+    expect(text).toContain('the page is a page on the whole surface, not only on the wire')
   })
 
-  test('operator sees the canonical both-contract statement stay byte-stable', () => {
-    // Given the program note the shipped 'both' session reads, When it renders
-    // twice, Then the bytes match: the note is part of the durable message and
-    // its republish rule compares text.
-    const first = renderCatalogText([], 'both')
-    expect(renderCatalogText([], 'both')).toBe(first)
-    // The lowered threshold and the economy clause are both reachable from the
-    // ONE note the catalog ships, so neither can drift out of the contract.
-    expect(first).toContain('Two or more independent targets')
-    expect(first).toContain('Context economy')
+  test('operator sees the ptc contract statement stay byte-stable', () => {
+    // Given the program note a 'ptc' session reads, When it renders twice, Then
+    // the bytes match: the note is part of the durable message and its
+    // republish rule compares text.
+    const first = renderCatalogText([], 'ptc')
+    expect(renderCatalogText([], 'ptc')).toBe(first)
+    // The exclusivity claim and the SDK access shape are both reachable from
+    // the ONE contract the catalog ships, so neither can drift out of it.
+    expect(first).toContain('only tool that can be called directly')
+    expect(first).toContain('Compose one program per intent')
   })
 
-  test('operator sees the three shell-family curated lines state the batch split', () => {
-    // Given the curated table, When the run_code, bash and pwsh lines are read,
-    // Then each names its side of the split the both-contract states: run_code
-    // carries two or more independent targets or a conclusion-only output, and
-    // each shell points at run_code for two or more commands or a long output.
-    // The lines are what the catalog renders, so a shell entry that does not
-    // point at the transport leaves the model with the old one-call habit.
-    const runCode = CURATED_TOOL_SUMMARIES.get('run_code')!
-    expect(runCode).toContain('two or more independent targets')
-    expect(runCode).toContain('one large output needed only as a conclusion')
-    expect(runCode).toContain('`await tools.<name>(args)`')
-    // The shell lines are presentation-NEUTRAL in the table, because the same
-    // table renders under `native` where no program exists. Their batching
-    // pointer is added at render time, and only when run_code is co-resident.
-    const shell = coResidentShellLine('bash')
-    const winShell = coResidentShellLine('pwsh')
-    expect(shell).toContain('2+ commands or long output')
-    expect(shell).toContain('`run_code`')
-    expect(winShell).toContain('2+ commands or long output')
-    expect(winShell).toContain('`run_code`')
-    // Each line still says what its own tool IS and how it is called, so the
-    // batching pointer was added without displacing the signature.
-    expect(shell).toContain('`command`')
-    expect(winShell).toContain('native Windows paths')
-  })
-
-  test('operator sees the shell batching pointer gated on the co-resident transport', () => {
-    // Given the shared curated table, which renders under EVERY presentation,
-    // When each shell line is resolved with and without run_code co-resident,
-    // Then the pointer appears exactly when a program exists. Under `native`
-    // the line must stay silent about run_code: naming a transport the request
-    // does not open is the one claim this catalog contract forbids.
+  test('operator sees the two shell curated lines stay silent about run_code', () => {
+    // Given the curated table, When the bash and pwsh lines are read, Then
+    // each says what its own tool IS and how it is called, and neither names
+    // `run_code`: under `native` no program exists to point at, and under
+    // `ptc` the program contract owns the batching guidance. A shell line that
+    // named the transport would announce a surface the native request never
+    // opens — the one claim this catalog contract forbids.
     for (const shell of ['bash', 'pwsh']) {
-      const base = CURATED_TOOL_SUMMARIES.get(shell)!
-      expect(base).not.toContain('run_code')
-      const coResident = toolSummary({ name: shell, description: 'x' }, 200, { coResident: true })
-      expect(coResident).toContain('run_code')
-      expect(coResident.startsWith(base)).toBe(true)
-      // Native resolution is the table line byte for byte: no pointer at all.
-      expect(toolSummary({ name: shell, description: 'x' }, 200, { coResident: false })).toBe(base)
-      expect(toolSummary({ name: shell, description: 'x' }, 200)).toBe(base)
+      const line = CURATED_TOOL_SUMMARIES.get(shell)!
+      expect(line).not.toContain('run_code')
     }
-    // An uncurated tool is unaffected by the flag either way.
-    const vendor = 'A'.repeat(60)
-    expect(toolSummary({ name: 'vendor_tool', description: vendor }, 20, { coResident: true }))
-      .toBe(catalogDescription(vendor, 20))
+    expect(CURATED_TOOL_SUMMARIES.get('bash')).toContain('`command`')
+    expect(CURATED_TOOL_SUMMARIES.get('pwsh')).toContain('native Windows paths')
   })
-  test('operator sees the curated lines reach the rendered catalog entry', () => {
-    // Given the 'both' presentation, whose catalog lists run_code beside the
-    // native roster, When the entries render, Then the batching split is
-    // visible in the model-facing text rather than only in the table.
-    const entries = catalogEntries([
-      { name: 'run_code', description: 'schema description that curation replaces' },
-      { name: 'bash', description: 'schema description that curation replaces' },
-    ], 200, { includeRunCode: true })
-    const text = renderCatalogText(entries, 'both')
-    expect(text).toContain(`- \`run_code\`: ${CURATED_TOOL_SUMMARIES.get('run_code')}`)
-    expect(text).toContain(`- \`bash\`: ${coResidentShellLine('bash')}`)
-    expect(text).toContain(' 2+ commands or long output: `run_code`.')
-    // Rendering the SAME surface without the transport drops the pointer: the
-    // shell line must not name a program the request never opens.
-    const nativeEntries = catalogEntries([
-      { name: 'bash', description: 'schema description that curation replaces' },
-    ], 200, { includeRunCode: false })
-    const nativeText = renderCatalogText(nativeEntries, 'native')
-    expect(nativeText).not.toContain('run_code')
-  })
+
   test('operator sees the paged summary state its reachability per presentation', () => {
-    // Given one paged-out namespace and the three presentations, When the
+    // Given one paged-out namespace and both presentations, When the
     // operator's catalog renders each of them, Then every presentation names
     // its own reachability next to the summary, so the model never has to
     // derive it from the program contract further down.
@@ -954,29 +864,23 @@ describe('liangshen-tool-catalog', () => {
     ]
     const native = renderCatalogText([], 'native', inactive)
     const ptc = renderCatalogText([], 'ptc', inactive)
-    const both = renderCatalogText([], 'both', inactive)
 
     // Each presentation names its own reachability next to the summary.
     expect(native).toContain('This presentation carries no program transport, so the wire is the only surface these namespaces can be reached through.')
     expect(ptc).toContain('The page covers the whole surface here, not the wire alone: these namespaces are unreachable from inside a program too until they are activated.')
-    expect(both).toContain('Only the direct-call surface is paged here: a program still reaches these namespaces before activation, and activating one returns its tools to the direct-call surface as well.')
 
     // The sentences are mutually exclusive: a model in one presentation never
     // reads another presentation's claim.
     expect(native).not.toContain('unreachable from inside a program too')
-    expect(native).not.toContain('Only the direct-call surface is paged here')
-    expect(ptc).not.toContain('Only the direct-call surface is paged here')
     expect(ptc).not.toContain('This presentation carries no program transport')
-    expect(both).not.toContain('unreachable from inside a program too')
-    expect(both).not.toContain('This presentation carries no program transport')
 
     // Nothing paged means no summary and no reachability sentence at all.
-    expect(renderCatalogText([], 'both')).not.toContain('direct-call surface is paged')
+    expect(renderCatalogText([], 'native')).not.toContain('This presentation carries no program transport')
     expect(renderCatalogText([], 'ptc')).not.toContain('unreachable from inside a program')
   })
 
   test('operator sees repeated renders of one tool surface be byte-identical', () => {
-    // Given one tool surface and the three presentations, When the catalog
+    // Given one tool surface and both presentations, When the catalog
     // renders that surface twice and then renders an equal copy of it, Then the
     // bytes match every time, because the catalog is republished only when its
     // text changes; the paged summary and the program notes are part of it.

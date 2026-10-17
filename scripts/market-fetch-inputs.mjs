@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { TAR_LOCAL } from './tar-args.cjs'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 export const REPO_ROOT = resolve(SCRIPT_DIR, '..')
@@ -276,7 +277,7 @@ export async function fetchInput(input, cache) {
       cpSync(input.worktree, input.dir, { recursive: true, filter: source => basename(source) !== '.git' })
     } else {
       await download(tarballUrl(input.repo, input.sha), tarball)
-      const untar = spawnSync('tar', ['-xzf', tarball, '-C', work], { stdio: 'inherit' })
+      const untar = spawnSync('tar', [...TAR_LOCAL, '-xzf', tarball, '-C', work], { stdio: 'inherit' })
       if (untar.status !== 0) throw new Error(`tar failed for ${input.repo}@${input.sha.slice(0, 9)}`)
       const repoName = input.repo.split('/').pop()
       const unpacked = readdirSync(work).find(entry => entry.startsWith(`${repoName}-`))

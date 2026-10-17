@@ -49,7 +49,6 @@ function mountProps(extra: Partial<UsageFootCardProps> = {}): UsageFootCardProps
     user: undefined,
     revision: 1,
     writable: true,
-    mode: 'host',
   }
   const settings = {
     getSnapshot: () => snapshot,

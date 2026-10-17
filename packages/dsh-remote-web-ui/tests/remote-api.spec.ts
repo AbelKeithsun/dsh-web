@@ -185,7 +185,7 @@ describe('innerPathOf / loopbackOnlyDenial', () => {
 describe('remote desktop channel (/remote)', () => {
   it('refuses unpaired requests before forwarding', async () => {
     const service = makeService()
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: 1 }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => 1 }))
     try {
       const result = await call(port, 'POST', '/remote/api/session.list', { body: ENVELOPE('rpc-9', 'session.list', {}) })
       expect(result.status).toBe(403)
@@ -201,7 +201,7 @@ describe('remote desktop channel (/remote)', () => {
 
   it('refuses an unknown device cookie like a missing one', async () => {
     const service = makeService()
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: 1 }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => 1 }))
     try {
       const result = await call(port, 'POST', '/remote/api/session.list', {
         body: ENVELOPE('rpc-1', 'session.list', {}),
@@ -210,6 +210,43 @@ describe('remote desktop channel (/remote)', () => {
       expect(result.status).toBe(403)
     } finally {
       await close()
+    }
+  })
+
+  it('refuses with 503 while the port is unbound and proxies once it binds', async () => {
+    // The 0.2.1-rc.2 webServer type leaves ctx.webServer.port undefined until
+    // the listener binds (a recompose pass mounts routes ahead of the bind):
+    // a paired request must get an explicit refusal, never an :undefined URL.
+    const service = makeService()
+    const cookie = pairedCookie(service)
+    const upstream = await startUpstream(() => ({
+      status: 200,
+      body: JSON.stringify({ type: 'server-response', rpcId: 'rpc-p', result: { ok: true } }),
+    }))
+    let bound: number | undefined
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => bound }))
+    try {
+      const refused = await call(port, 'POST', '/remote/api/session.list', {
+        body: ENVELOPE('rpc-p', 'session.list', {}),
+        cookie,
+      })
+      expect(refused.status).toBe(503)
+      const refusalBody = JSON.parse(refused.body) as { result: { ok: boolean; error: { code: string } } }
+      expect(refusalBody.result.ok).toBe(false)
+      expect(refusalBody.result.error.code).toBe('port-unbound')
+      expect(upstream.hits).toHaveLength(0)
+
+      bound = upstream.port
+      const proxied = await call(port, 'POST', '/remote/api/session.list', {
+        body: ENVELOPE('rpc-p', 'session.list', {}),
+        cookie,
+      })
+      expect(proxied.status).toBe(200)
+      expect(upstream.hits).toHaveLength(1)
+      expect(upstream.hits[0].host).toBe(`127.0.0.1:${String(upstream.port)}`)
+    } finally {
+      await close()
+      await upstream.close()
     }
   })
 
@@ -222,7 +259,7 @@ describe('remote desktop channel (/remote)', () => {
       }
       return { status: 404, body: 'no' }
     })
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       const result = await call(port, 'POST', '/remote/api/session.list', {
         body: ENVELOPE('rpc-2', 'session.list', {}),
@@ -254,7 +291,7 @@ describe('remote desktop channel (/remote)', () => {
     // not inherit that authority by flipping requirePairingForLan.
     const service = makeService()
     const upstream = await startUpstream(() => ({ status: 200, body: '{"leaked":true}' }))
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       const result = await call(port, 'POST', '/remote/api/session.list', { body: ENVELOPE('rpc-open', 'session.list', {}) })
       expect(result.status).toBe(403)
@@ -280,7 +317,7 @@ describe('remote desktop channel (/remote)', () => {
       }
       return { status: 404, body: 'no' }
     })
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       const live = await call(port, 'POST', '/remote/api/session.list', { body: ENVELOPE('rpc-live', 'session.list', {}), cookie })
       expect(live.status).toBe(200)
@@ -310,7 +347,7 @@ describe('remote desktop channel (/remote)', () => {
       if (req.url === '/api/dsh-web-ui-settings/mutate') return { status: 200, body: JSON.stringify({ ok: true }) }
       return { status: 404, body: 'no' }
     })
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       const paired = await call(port, 'POST', '/remote/api/dsh-web-ui-settings/mutate', { cookie, body: '{}' })
       expect(paired.status).toBe(200)
@@ -330,7 +367,7 @@ describe('remote desktop channel (/remote)', () => {
     const service = makeService()
     const cookie = pairedCookie(service)
     const upstream = await startUpstream(() => ({ status: 200, body: '{"leaked":true}' }))
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       const pair = await call(port, 'POST', '/remote/api/pair/status', { cookie, body: '{}' })
       expect(pair.status).toBe(403)
@@ -356,7 +393,7 @@ describe('remote desktop channel (/remote)', () => {
       if (req.url === '/sidebar/api/fs.tree') return { status: 200, body: JSON.stringify({ ok: true, value: { entries: [] } }) }
       return { status: 404, body: 'no' }
     })
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       const pet = await call(port, 'GET', '/remote/api/pet/state', { cookie })
       expect(pet.status).toBe(200)
@@ -374,7 +411,7 @@ describe('remote desktop channel (/remote)', () => {
   it('denies every physically-local control plane with a forbidden envelope', async () => {
     const service = makeService()
     const cookie = pairedCookie(service)
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: 1 }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => 1 }))
     try {
       for (const prefix of LOCAL_ONLY_PREFIXES) {
         const result = await call(port, 'POST', `/remote${prefix}/probe`, {
@@ -398,7 +435,7 @@ describe('remote desktop channel (/remote)', () => {
     const service = makeService()
     const cookie = pairedCookie(service)
     const upstream = await startUpstream(() => ({ status: 200, body: '{"leaked":true}' }))
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       for (const path of ['/remote/api/pair/status', '/remote/api/pair/revoke', '/remote/api/pair/issue']) {
         const result = await call(port, 'POST', path, { cookie, body: '{}' })
@@ -420,7 +457,7 @@ describe('remote desktop channel (/remote)', () => {
       if (req.url === '/api/dsh-web-ui-settings/describe') return { status: 200, body: JSON.stringify({ ok: true, value: {} }) }
       return { status: 404, body: 'no' }
     })
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       const result = await call(port, 'POST', '/remote/api/dsh-web-ui-settings/describe', { cookie, body: '{}' })
       expect(result.status).toBe(200)
@@ -441,7 +478,7 @@ describe('remote desktop channel (/remote)', () => {
       }
       return { status: 404, body: 'no' }
     })
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       const result = await call(port, 'GET', '/remote/api/session.export?sessionId=s-1&includeDescendants=1', { cookie })
       expect(result.status).toBe(200)
@@ -455,7 +492,7 @@ describe('remote desktop channel (/remote)', () => {
   it('rejects unknown shapes: wrong method, bare prefix, traversal', async () => {
     const service = makeService()
     const cookie = pairedCookie(service)
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: 1 }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => 1 }))
     try {
       expect((await call(port, 'OPTIONS', '/remote/api/session.list', { cookie })).status).toBe(405)
       expect((await call(port, 'POST', '/remote/api/', { body: ENVELOPE('r', 'x', {}), cookie })).status).toBe(404)
@@ -468,7 +505,7 @@ describe('remote desktop channel (/remote)', () => {
   it('returns a fixed 502 message instead of the upstream error text', async () => {
     const service = makeService()
     const cookie = pairedCookie(service)
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: 1 }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => 1 }))
     try {
       const result = await call(port, 'POST', '/remote/api/session.list', {
         body: ENVELOPE('rpc-502', 'session.list', {}),
@@ -504,7 +541,7 @@ describe('remote desktop channel (/remote)', () => {
       return { status: 404, body: 'no' }
     })
     const auth = createInnerAuth(() => `http://127.0.0.1:${String(upstream.port)}/?token=launch-1`)
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port, auth }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port, auth }))
     try {
       const result = await call(port, 'POST', '/remote/api/session.list', {
         body: ENVELOPE('rpc-auth', 'session.list', {}),
@@ -544,7 +581,7 @@ describe('remote desktop channel (/remote)', () => {
       return { status: 404, body: 'no' }
     })
     const auth = createInnerAuth(() => `http://127.0.0.1:${String(upstream.port)}/?token=launch-1`)
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port, auth }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port, auth }))
     try {
       const stale = await call(port, 'POST', '/remote/api/session.list', {
         body: ENVELOPE('rpc-stale', 'session.list', {}),
@@ -569,7 +606,7 @@ describe('remote desktop channel (/remote)', () => {
   it('accepts the cookieless header credential with no device cookie at all', async () => {
     const service = makeService()
     const upstream = await startUpstream(() => ({ status: 200, body: JSON.stringify({ type: 'server-response', rpcId: 'rpc-h', result: { ok: true } }) }))
-    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: upstream.port }))
+    const { port, close } = await serve(makeRemoteApiRoutes({ service, port: () => upstream.port }))
     try {
       service.issue()
       const device = service.accept('tok-1')

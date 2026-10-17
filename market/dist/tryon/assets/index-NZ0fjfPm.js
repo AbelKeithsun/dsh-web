@@ -1,0 +1,1 @@
+import{aR as t}from"./index-FenqlmyD.js";import"./git-BU1FIAb7.js";const w=(o,a,c)=>new Promise((m,s)=>{t(o,[...a],{encoding:"utf8",signal:c,windowsHide:!0},(e,n,i)=>{if(e!==null){s(Object.assign(new Error(e.message,{cause:e}),{code:e.code,stdout:n,stderr:i}));return}m({stdout:n,stderr:i})})});export{w as runNativeCommand};

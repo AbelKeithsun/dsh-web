@@ -86,6 +86,7 @@ describe('family row / client child consistency', () => {
 
   it('the shells marker manifest ships beside the built shell module', () => {
     expect(existsSync(join(PACKAGE_DIR, 'src/shells/package.json'))).toBe(true)
+    expect(existsSync(join(PACKAGE_DIR, 'icon.svg'))).toBe(true)
   })
 
   it('operator mounting a host-only family child gets no client child for it', () => {

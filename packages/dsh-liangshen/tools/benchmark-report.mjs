@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 /** Presentational order of the candidate matrix. */
-export const GROUP_ORDER = ['B', 'P', 'T', 'N', 'M']
+export const GROUP_ORDER = ['B', 'P', 'N', 'M']
 
 /** Two-sided 95% t critical values for small samples; the normal limit past 30 df. */
 const T95 = {
@@ -180,8 +180,7 @@ export function plannedComparisons(runs, baselineGroup = 'B') {
   const present = new Set(runs.map((run) => run.variant))
   const comparisons = []
   if (present.has(baselineGroup) && present.has('P')) comparisons.push(pairedComparison(runs, baselineGroup, 'P'))
-  if (present.has('P') && present.has('T')) comparisons.push(pairedComparison(runs, 'P', 'T'))
-  if (present.has('T') && present.has('N')) comparisons.push(pairedComparison(runs, 'T', 'N'))
+  if (present.has('P') && present.has('N')) comparisons.push(pairedComparison(runs, 'P', 'N'))
   if (present.has(baselineGroup) && present.has('M')) comparisons.push(pairedComparison(runs, baselineGroup, 'M'))
   return comparisons
 }
@@ -322,9 +321,8 @@ export function renderMarkdown(report) {
   lines.push('| Comparison | Purpose | Tasks paired | Mean delta (95% CI) |')
   lines.push('| --- | --- | --- | --- |')
   const purposes = {
-    'B-P': 'isolates the persona change',
-    'P-T': "compares the 'both' presentation against 'ptc'",
-    'T-N': 'compares the PTC transport against the native roster',
+    'B-P': 'isolates the persona change at the shipped ptc wire',
+    'P-N': "compares the 'ptc' presentation against the native roster",
     'B-M': 'external reference, not single-factor attribution',
   }
   for (const comparison of report.comparisons) {

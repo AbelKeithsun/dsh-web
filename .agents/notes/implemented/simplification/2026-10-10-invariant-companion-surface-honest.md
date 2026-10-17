@@ -2,6 +2,8 @@
 
 Status: implemented
 
+Superseded on the invariant surface by [sdk-cohort-0.2.1-rc.2](../architecture/2026-10-17-sdk-cohort-0.2.1-rc.2.md): the 0.2.1 line removed the runtime invariants registry upstream (`@deepseek-ai/dsh-invariants` publishes no 0.2.1 release), so the family deleted its last two companions — `dsh-git-graph` and `dsh-remote-web-ui` no longer declare `./invariant`, ship `src/invariant.ts`, or depend on the registry — and no family package declares the subpath anywhere. `scripts/family-dsh-engines.test.mjs` now fails the build if a manifest regresses. What still holds: the note's core rationale (a declared subpath must resolve to what it claims, never a silent no-op) and the audit below as the record of the six-package state this note fixed.
+
 ## Problem
 
 `@deepseek-ai/dsh-invariants` is the official registry for package-owned runtime checks: any package may ship a `./invariant` companion, companions register under their package's exact npm name through `ctx.invariants`, and a composition that mounts the registry decides which of them run. Six family packages declare that subpath. Four of the six cannot do what the declaration promises.
@@ -25,9 +27,9 @@ The web profile composes no invariants service (the git-graph companion's header
 
 Six of the family packages declared the `./invariant` subpath and four of them could not serve it. Those four declarations are gone: `dsh-i18n` (which never had a source), `dsh-session-id` (which never emitted the file), and `dsh-ssh` and `dsh-task-board` (whose four-line stubs never registered anything). Their `src/invariant.ts` files are deleted and `dsh-ssh` and `dsh-task-board` no longer list the entry in their tsdown configs.
 
-The two working companions stay: `dsh-git-graph` and `dsh-remote-web-ui` keep the cordis shape — `name`, `inject: ['invariants']`, and an `apply` that registers an installer through `ctx.invariants` — and both still emit `lib/invariant.js`.
+The two working companions stay: `dsh-git-graph` and `dsh-remote-web-ui` keep the cordis shape — `name`, `inject: ['invariants']`, and an `apply` that registers an installer through `ctx.invariants` — and both still emit `lib/invariant.js`. (Update 2026-10-17: this sentence records the state this note shipped; the 0.2.1-rc.2 cohort adaptation removed both companions with the upstream registry — see the supersession note above.)
 
-`scripts/plugin-template` no longer scaffolds the export block, so a new package cannot start in the state `dsh-i18n` was in, and `shared/tsdown.client.ts` no longer claims a package-invariants gate this repository does not implement. `packages/AGENTS.md` states the obligation in its place: a package that declares `./invariant` must publish a companion the registry can load.
+`scripts/plugin-template` no longer scaffolds the export block, so a new package cannot start in the state `dsh-i18n` was in, and `shared/tsdown.client.ts` no longer claims a package-invariants gate this repository does not implement. `packages/AGENTS.md` states the obligation in its place: a package that declares `./invariant` must publish a companion the registry can load. (Update 2026-10-17: the `packages/AGENTS.md` obligation paragraph was removed with the convention in the 0.2.1-rc.2 adaptation; the durable gate the shared-preset comment imagined now exists as `scripts/family-dsh-engines.test.mjs`, which asserts the subpath stays gone.)
 
 ## Context & Efficiency Impact
 
@@ -47,7 +49,7 @@ The gain is that the subpath stops meaning two different things: after the chang
 
 - **Keep all six declarations and treat the companion as a seam declared for future checks.** Rejected: two of them cannot resolve at all, and the others register nothing, so a composition that mounts them gets a module error or a silent no-op instead of the check the declaration advertises.
 - **Convert every stub to the real cordis shape.** Rejected as the default: it adds a registration that installs no checks — the shape without the content. It is the right answer only for a package that expects checks soon and wants the seam declared; the proposal leaves that choice per package.
-- **Drop the convention from the repository entirely**, including the two working companions, the template block and the shared-preset comment. Rejected: `dsh-git-graph` and `dsh-remote-web-ui` ship companions the registry can load, and the convention is official; the loss would be the one seam a composition uses to check a family package.
+- **Drop the convention from the repository entirely**, including the two working companions, the template block and the shared-preset comment. Rejected: `dsh-git-graph` and `dsh-remote-web-ui` ship companions the registry can load, and the convention is official; the loss would be the one seam a composition uses to check a family package. (Update 2026-10-17: this alternative later happened anyway, from the upstream side — the 0.2.1 line removed the registry, so the convention left with it rather than by family decision.)
 - **Only fix the template.** Rejected as insufficient: it stops new packages inheriting the defect while leaving the current four exactly as they are.
 
 ## Testing

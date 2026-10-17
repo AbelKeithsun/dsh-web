@@ -2360,8 +2360,7 @@ window.__ModuleLoader__.load({
 				base: void 0,
 				user: void 0,
 				revision: void 0,
-				writable: false,
-				mode: "host"
+				writable: false
 			};
 		}
 		/**

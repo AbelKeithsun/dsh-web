@@ -96,7 +96,7 @@ test('no aggregate deps entry resolves to a private workspace package', () => {
 test('web-ui-all leaves the unbundled dsh-better-sidebar out of the patch', () => {
   const patch = readFileSync(join(ROOT, 'packages/dsh-web-all/cordis.patch.yml'), 'utf8')
   // Alpha-branch decision (2026-09-17): the plugin's 0.19.1 peers declare
-  // ^0.1.5-rc.1, which does not cover this branch's 0.2.0-rc.2 cohort, so the
+  // ^0.1.5-rc.1, which does not cover this branch's 0.2.1-rc.2 cohort, so the
   // aggregate neither mounts nor depends on it. Re-add the row in aggregate.yml
   // together with this assertion when the branch bundles it again.
   assert.doesNotMatch(patch, /^ {4}- id: web-ui-better-sidebar$/m, 'dsh-better-sidebar must not be a bundled row on the alpha branch')
@@ -126,6 +126,30 @@ test('web-ui-all keeps the removed doctor/describe-image plugins out but their t
   assert.ok(!('@linxin666/dsh-tool-describe-image' in pkg.dependencies), 'dsh-tool-describe-image must not be a workspace dependency')
   assert.equal(pkg.exports['./doctor'], './lib/shells/shell.js', 'doctor tombstone export must survive')
   assert.equal(pkg.exports['./describe-image'], './lib/shells/shell.js', 'describe-image tombstone export must survive')
+})
+
+test('web-ui-all shell metadata covers exactly the exported family subpaths', () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'packages/dsh-web-all/package.json'), 'utf8'))
+  const shellSubs = Object.entries(pkg.exports)
+    .filter(([key, target]) => target === './lib/shells/shell.js' && key.startsWith('./') && !key.slice(2).includes('/'))
+    .map(([key]) => key.slice(2))
+    .sort()
+  const metadataRoot = join(ROOT, 'packages/dsh-web-all/shell-metadata')
+  const dirs = readdirSync(metadataRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort()
+  assert.deepEqual(dirs, shellSubs, 'stale or missing shell metadata directories')
+  for (const sub of shellSubs) {
+    assert.equal(pkg.exports[`./${sub}/icon`], './icon.svg', `${sub} must export the family icon`)
+    for (const locale of ['en', 'zh']) {
+      const exportKey = `./${sub}/locale/${locale}.json`
+      const target = `./shell-metadata/${sub}/locale/${locale}.json`
+      assert.equal(pkg.exports[exportKey], target, `${sub} must export its ${locale} metadata`)
+      const metadata = JSON.parse(readFileSync(join(metadataRoot, sub, 'locale', `${locale}.json`), 'utf8'))
+      assert.equal(metadata.meta?.title, `web-all/${sub}`)
+    }
+  }
 })
 
 test('web-ui-all ships the opt-in family rows disabled by default', () => {

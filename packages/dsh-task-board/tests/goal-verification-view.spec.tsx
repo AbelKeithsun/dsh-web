@@ -23,7 +23,7 @@ afterEach(() => {
 /** A bound configuration form over one stored section, as the settings slot hands it over. */
 function settingsForm(value: Record<string, unknown>) {
   return {
-    getSnapshot: () => ({ status: 'ready' as const, value, base: value, user: value, revision: 1, writable: true, mode: 'host' as const }),
+    getSnapshot: () => ({ status: 'ready' as const, value, base: value, user: value, revision: 1, writable: true as const }),
     subscribe: () => () => {},
     mutate: async () => true,
     set: async () => true,

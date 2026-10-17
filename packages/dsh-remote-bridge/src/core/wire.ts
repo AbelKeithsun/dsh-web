@@ -14,11 +14,26 @@
  * @module dsh-remote-bridge/core/wire
  */
 
+import type { InvokeRemoteRequest } from '@deepseek-ai/dsh-api-gateway'
+
+/**
+ * The peer every gateway request names: derived from the public
+ * `InvokeRemoteRequest` type so this package needs no direct dependency on
+ * `@deepseek-ai/dsh-typert-protocol` for the shape.
+ */
+export type GatewayPeer = InvokeRemoteRequest['peer']
+
 /** One Remote call after the carrier has decoded its envelope. */
 export interface GatewayInvokeRequest {
   readonly namespace: string
   readonly method: string
   readonly args: Readonly<Record<string, unknown>>
+  /**
+   * The caller this call speaks for. The bridge mints this peer in-process
+   * (`core/owner-peer.ts`) and attaches it to every gateway call itself; no
+   * field of a client frame is ever read into it.
+   */
+  readonly peer: GatewayPeer
   readonly signal?: AbortSignal
 }
 
