@@ -51,3 +51,13 @@ Status: implemented
 
 - `packages/dsh-plugin-manager/tests/rows.spec.ts` 固定纯编辑行为：失效覆盖被删除，注释块、仍然有效的覆盖与配置行逐字节不变；对已清理的层再次运行返回原文本且不报告任何清理；配置行、insert 包装行与带额外键的行永远不会被判为覆盖。
 - `packages/dsh-plugin-manager/tests/gateway-jobs.spec.ts` 固定事务行为：带有失效 id 的层经更新后被清理，`cordis.patch.yml.bak-plugin-manager` 保存清理前的文本；同一次更新再跑一次不写入（备份仍是清理前的文本）；覆盖全部有效的层逐字节不变且不产生备份；写入失败把任务结算为 `error` 且备份在位；桌面自有 profile 的更新经只读探针完成清理，拿不到组合时则原样保留该层。
+
+## 已知限制：制造失效覆盖的那次升级跑不到清理逻辑
+
+发布后按真实 registry 复验（隔离 home、固定 `0.2.1-rc.2` CLI）表明，`0.4.6` 升到 `0.4.7` 时并不会清理：旧覆盖仍在，没有写出 `.bak-plugin-manager` 备份，`dsh --dump-config` 持续打印 `patch: entry "web-ui-model-capabilities" not found`。
+
+原因是结构性的，不是接错线。更新执行的是运行中宿主已经加载的插件管理器代码，所以把 `0.4.7` 装上的那次更新由 `0.4.6` 的处理逻辑完成（对 `@linxin666/dsh-client-ui-plugin-manager@0.4.6` 做 npm pack 后，`pruneOrphanRowOverrides` 的引用数为零）。之后也没有补救路径：启动只组合、不改 patch，再次更新会以 `409 already at 0.4.7` 短路。该条目会由下一次在 `0.4.7` 或更高版本下执行的更新顺带清掉，因此残留是落后一个更新，而不是永久存在。
+
+`0.4.7` 的升级矩阵之所以通过，是因为它从仓库源码导入 `makeGatewayRoutes`，等于用 `0.4.7` 的处理逻辑去跑 `0.4.6` 的 profile；用本地 registry 替代尚未发布的 `0.4.7` tarball 时，被替换的不只是清单来源，还有真正关键的被测处理代码。
+
+`0.4.7` 的处理决定：在 release notes 与 release body 里如实披露该限制并给出手工处理步骤，下一个版本把清理移到对「已升级宿主」也会执行的路径（启动后或首次访问网关时，外加持装与卸载任务）。今后任何行退役都必须在退役版本执行那次升级之前清理，否则就要接受同样的滞后一个更新。
