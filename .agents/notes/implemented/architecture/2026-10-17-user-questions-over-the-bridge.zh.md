@@ -30,3 +30,4 @@ Status: implemented
 - 验证：本包 21 个测试文件、226 个用例全绿，`pnpm typecheck` 干净。认领、铸造 id、open/continued 分流、`question-unknown` 各分支、宿主错误穿透、最后一个客户端离开即让位、以及 legacy 客户端路径都有用例。
 - 这里未验证：对真宿主进程的端到端。`@deepseek-ai/dsh-user-questions` 在本包无法 resolve，认领是用 waterfall 形状的替身驱动的，类型也本地声明。这条往返需要一次人工确认。
 - 桌面 profile 解析这个包走的是 `dsh-web/.pinned/dsh-remote-bridge` 那份拷贝，而不是 checkout，所以只重建 `packages/dsh-remote-bridge` 对运行中的宿主不产生任何影响：要把 `lib/` 同步进 pinned 副本再重启宿主。记下来是因为它让第一次真机验证白跑了一趟。
+- 桌面宿主里这条认领从来不会被执行。在 `user-questions/request` 监听器入口写临时诊断后，真机上提一个提问并在桌面 UI 作答，诊断文件始终没有生成——说明 waterfall 在轮到本桥之前已被更早的应答者接住。能力、事件、作答方法与手机端卡片都已就位并在 fixture 宿主上验证过，但只要桌面客户端还在答题，提问就到达不了手机；要改变这一点需要调整宿主的应答者顺序（或把本桥注册到更前面），这在本包内做不到。
