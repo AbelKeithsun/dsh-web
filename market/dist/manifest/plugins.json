@@ -1792,6 +1792,19 @@
       "repo": "https://github.com/xgxx666/dsh-clear-usage",
       "category": "utility",
       "subcategory": "stats"
+    },
+    {
+      "id": "dsh-vitals",
+      "name": "硬件监视",
+      "rank": 141,
+      "nameEn": "Vitals",
+      "author": "JoblessJoe",
+      "description": "btop 风格的实时硬件监视：会话标题栏中的 CPU / GPU 迷你小组件（点击打开完整视图），以及 Chat / Trajectory 旁边的 Hardware 标签页：CPU 总负载、60 秒走势和每核负载、内存、CPU 温度，以及每块 NVIDIA GPU 的温度、负载、功耗和显存（通过 nvidia-smi）。已在 Linux 上实测；macOS 和 Windows 的读取逻辑目前仅用样例输出测试过。每项信号使用系统提供的免特权数据源，没有时自动隐藏。零运行时依赖，无需配置。",
+      "descriptionEn": "Live btop-style hardware monitor: a CPU / GPU mini widget in the session header (click opens the full view) and a Hardware tab next to Chat / Trajectory with overall CPU load, a 60 s sparkline and per-core load, memory, CPU temperature, and per NVIDIA GPU temperature, load, power draw and VRAM (via nvidia-smi). Tested live on Linux; the macOS and Windows readers are only checked against sample output so far. Each signal uses an unprivileged OS source and hides itself when there is none. Zero runtime dependencies, no config.",
+      "repo": "https://github.com/JoblessJoe/dsh-vitals",
+      "npm": "dsh-vitals",
+      "category": "utility",
+      "subcategory": "stats"
     }
   ]
 }
