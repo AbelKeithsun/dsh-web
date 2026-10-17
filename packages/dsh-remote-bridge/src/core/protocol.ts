@@ -58,6 +58,18 @@ export const CAP_SESSION_SNAPSHOT_PAGE = 'session.snapshot.page.v1'
 export const CAP_QUESTIONS = 'questions.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to be told where a
+ * message came from and that an agent spawned a child session.
+ *
+ * Declaring it is what makes the `subagent` delta part of that client's
+ * protocol: a client that does not declare it — including every client written
+ * before this channel existed — receives no such event, exactly as that frame
+ * was dropped before. The `actor` of a `user-message` is not gated: it is an
+ * additive field a client that does not read it ignores.
+ */
+export const CAP_SUBAGENT_THREAD = 'subagent.thread.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.
@@ -103,6 +115,12 @@ export const CODE_APPROVAL_UNKNOWN = 'approval-unknown'
  * failures crossing this method keep their own codes instead.
  */
 export const CODE_QUESTION_UNKNOWN = 'question-unknown'
+/**
+ * The named session is a delegated child whose durable parent is not a session
+ * this connection may read. The bridge follows an addressable child and refuses
+ * an unaddressable one, rather than reading it blind.
+ */
+export const CODE_SESSION_NOT_FOLLOWABLE = 'session-not-followable'
 export const CODE_SNAPSHOT_UNAVAILABLE = 'snapshot-unavailable'
 export const CODE_SNAPSHOT_TOO_LARGE = 'snapshot-too-large'
 export const CODE_INTERNAL = 'internal'
@@ -112,12 +130,28 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
- * 1 when the extension seam shipped: a client learns from it that a mounted
- * plugin may answer methods outside {@link KNOWN_METHODS} once it declares the
- * capability that plugin requires. The major version and every frozen field,
- * method name and topic name are unchanged by that addition.
+ * 2 when the subagent thread shipped: a client learns from it that a
+ * `user-message` delta may carry an `actor` and that a `subagent` delta exists
+ * behind {@link CAP_SUBAGENT_THREAD}. 1 was the extension seam — a mounted
+ * plugin may answer methods outside {@link KNOWN_METHODS} once the client
+ * declares the capability that plugin requires. Neither addition changed the
+ * major version, a frozen field, a method name or a topic name.
  */
-export const MINOR = 1
+export const MINOR = 2
+
+/**
+ * The capabilities this bridge itself serves, as `hello` advertises them.
+ *
+ * A capability a mounted plugin adds is not listed here: the bridge cannot know
+ * what it is not the author of. A client learns such a capability from the
+ * plugin's own documentation, exactly as it did before this list existed.
+ */
+export const SERVED_CAPABILITIES: readonly string[] = [
+  CAP_SESSION_SNAPSHOT_TRIM,
+  CAP_SESSION_SNAPSHOT_PAGE,
+  CAP_QUESTIONS,
+  CAP_SUBAGENT_THREAD,
+]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'
 

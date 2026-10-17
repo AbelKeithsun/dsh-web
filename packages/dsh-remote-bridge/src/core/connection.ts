@@ -18,7 +18,7 @@
 
 import type { ApprovalRegistry } from './approvals.ts'
 import type { DeviceRoster } from './devices.ts'
-import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
+import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, SpawnCallIndex, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
 import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
@@ -28,11 +28,13 @@ import {
   CAP_QUESTIONS,
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_SESSION_SNAPSHOT_TRIM,
+  CAP_SUBAGENT_THREAD,
   CODE_APPROVAL_UNKNOWN,
   CODE_INTERNAL,
   CODE_INVALID_ARGS,
   CODE_NONCE_INVALID,
   CODE_PROTO_UNSUPPORTED,
+  CODE_SESSION_NOT_FOLLOWABLE,
   CODE_SNAPSHOT_TOO_LARGE,
   CODE_SNAPSHOT_UNAVAILABLE,
   CODE_TOKEN_INVALID,
@@ -57,6 +59,7 @@ import {
   METHOD_SESSION_TITLES,
   MINOR,
   PROTO,
+  SERVED_CAPABILITIES,
   SERVER_ID,
   TOPIC_SESSION_DELTA,
   UNPAIRED_METHODS,
@@ -373,6 +376,13 @@ export class BridgeConnection {
   #capabilities: ReadonlySet<string> = new Set()
   /** Delegated children this connection has learned the durable parent of, by child id. */
   readonly #lineage = new Map<string, string>()
+  /**
+   * Sessions this connection may read: the ordinary sessions the host's roster
+   * names, plus every session this connection already opened. A delegated child
+   * belongs here only once it has been opened itself, never because the roster
+   * merely names it.
+   */
+  readonly #authorized = new Set<string>()
   #lineageRead = false
   #deviceId: string | undefined
   #nonce: { readonly value: string; readonly expiresAt: number } | undefined
@@ -566,6 +576,7 @@ export class BridgeConnection {
         proto: PROTO,
         minor: MINOR,
         server: SERVER_ID,
+        capabilities: [...SERVED_CAPABILITIES],
         resume: 'snapshot',
         auth: this.paired ? 'paired' : 'unpaired',
       },
@@ -688,6 +699,8 @@ export class BridgeConnection {
   async #sessionSnapshot(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {
     const sessionId = stringArg(payload, 'sessionId')
     if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.snapshot requires sessionId')
+    const unfollowable = await this.#unfollowable(sessionId)
+    if (unfollowable !== undefined) return refusal(CODE_SESSION_NOT_FOLLOWABLE, unfollowable)
     const opening = await this.#awaitOpening(this.#ensureSubscription(sessionId))
     if (!opening.ok) return refusal(opening.code, `session ${sessionId} produced no opening frame (${opening.msg})`)
     // A client that declared the trim capability chooses what it is sent, never
@@ -728,6 +741,8 @@ export class BridgeConnection {
     }
     const budget = pageBudgetOf(payload.maxBytes, METHOD_SESSION_HISTORY)
     if (!budget.ok) return budget
+    const unfollowable = await this.#unfollowable(sessionId)
+    if (unfollowable !== undefined) return refusal(CODE_SESSION_NOT_FOLLOWABLE, unfollowable)
     const opening = await this.#awaitOpening(this.#ensureSubscription(sessionId))
     if (!opening.ok) return refusal(opening.code, `session ${sessionId} produced no opening frame (${opening.msg})`)
     const page = pageTurns(this.#projectionOf(opening.baseline.records), before, budget.maxBytes, (turns, nextBefore, hasMore) =>
@@ -974,10 +989,20 @@ export class BridgeConnection {
     return parent === undefined ? sessionAddress(sessionId) : subagentAddress(parent, sessionId)
   }
 
-  /** Remember the durable parent of every delegated child a roster carried. */
+  /**
+   * Remember the durable parent of every delegated child a roster carried, and
+   * which sessions that same roster authorizes this connection to read.
+   *
+   * A child is not authorized by being named: authorizing it on its own row
+   * would let one refused read teach the connection to follow it on the retry.
+   */
   #rememberLineage(rows: readonly SessionRow[]): void {
     for (const row of rows) {
-      if (row.origin === 'subagent' && row.parentSessionId !== undefined) this.#lineage.set(row.id, row.parentSessionId)
+      if (row.origin !== 'subagent') {
+        this.#authorized.add(row.id)
+        continue
+      }
+      if (row.parentSessionId !== undefined) this.#lineage.set(row.id, row.parentSessionId)
     }
   }
 
@@ -995,6 +1020,27 @@ export class BridgeConnection {
     const roster = await this.#sessionList()
     if (roster.ok) this.#lineageRead = true
     return this.#lineage.get(sessionId)
+  }
+
+  /**
+   * Whether this connection may follow one session at all.
+   *
+   * Following a delegated child is the one case that needs an answer before the
+   * stream is asked for: relaxing the child gate must not become a channel to
+   * any session a caller happens to name. A session this connection already
+   * opened is authorized by that fact, an ordinary session the roster names is
+   * authorized by the host's own roster, and a delegated child is authorized
+   * only when the parent it hangs off is one of those. A session the roster does
+   * not know at all keeps the old path — the harness itself answers for an id
+   * this host does not have.
+   * @returns the refusal to answer with, or undefined when the session may be followed.
+   */
+  async #unfollowable(sessionId: string): Promise<string | undefined> {
+    if (this.#authorized.has(sessionId)) return undefined
+    const parent = await this.#parentOf(sessionId)
+    if (parent === undefined) return undefined
+    if (this.#authorized.has(parent)) return undefined
+    return `session ${sessionId} is a delegated child whose parent ${parent} is not a session this connection may read`
   }
 
   /**
@@ -1053,6 +1099,9 @@ export class BridgeConnection {
         await iterator.return?.()
         return { ok: false, code: CODE_SNAPSHOT_UNAVAILABLE, msg: 'session/follow returned no opening snapshot frame' }
       }
+      // A stream that opened is proof this connection may read that session,
+      // which is what lets a child of it be followed afterwards.
+      this.#authorized.add(subscription.sessionId)
       void this.#drain(subscription, iterator)
       return { ok: true, baseline }
     } catch (error) {
@@ -1062,11 +1111,17 @@ export class BridgeConnection {
 
   /** Consume the rest of a follow stream, publishing every increment. */
   async #drain(subscription: Subscription, iterator: AsyncIterator<unknown>): Promise<void> {
+    // Turn and step belong to this stream, not to the connection: a phone
+    // following a parent and a child at once interleaves two turn sequences.
+    const memory = {
+      subagentThread: this.declares(CAP_SUBAGENT_THREAD),
+      spawnCalls: new SpawnCallIndex(),
+    }
     try {
       for (;;) {
         const next = await iterator.next()
         if (next.done === true) return
-        const delta = deltaOfFollowFrame(next.value, this.#toolCalls, this.#messages)
+        const delta = deltaOfFollowFrame(next.value, this.#toolCalls, this.#messages, memory)
         if (delta === undefined) continue
         this.#emit(TOPIC_SESSION_DELTA, { sessionId: subscription.sessionId, ...delta })
       }

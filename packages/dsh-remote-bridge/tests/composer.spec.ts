@@ -121,7 +121,7 @@ describe('protocol v1 composer parity: deltas', () => {
     await settle()
     // Then it crosses as one increment, with no attachments key at all
     expect(deltasOf(harness)).toEqual([
-      { sessionId: 's-1', kind: 'user-message', text: 'ship it', messageId: 'msg-1' },
+      { sessionId: 's-1', kind: 'user-message', text: 'ship it', messageId: 'msg-1', actor: { kind: 'human', sourceKind: 'user' } },
     ])
   })
 
@@ -149,6 +149,7 @@ describe('protocol v1 composer parity: deltas', () => {
         text: 'first\nsecond',
         messageId: 'msg-2',
         attachments: [{ attachmentId: 'att-1', mediaType: 'image/png', name: 'shot.png' }],
+        actor: { kind: 'human', sourceKind: 'user' },
       },
     ])
   })
@@ -173,6 +174,7 @@ describe('protocol v1 composer parity: deltas', () => {
         text: '',
         messageId: 'msg-3',
         attachments: [{ attachmentId: 'att-2', mediaType: 'image/webp' }],
+        actor: { kind: 'human', sourceKind: 'user' },
       },
     ])
   })
@@ -189,7 +191,7 @@ describe('protocol v1 composer parity: deltas', () => {
     await settle()
     // Then the transcript gained one line, not two
     expect(deltasOf(harness)).toEqual([
-      { sessionId: 's-1', kind: 'user-message', text: 'again', messageId: 'msg-4' },
+      { sessionId: 's-1', kind: 'user-message', text: 'again', messageId: 'msg-4', actor: { kind: 'human', sourceKind: 'user' } },
     ])
   })
 

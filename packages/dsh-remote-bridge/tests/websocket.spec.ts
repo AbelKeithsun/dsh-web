@@ -236,7 +236,7 @@ describe('WebSocket carrier over a real socket', () => {
       t: 'res',
       id: 1,
       ok: true,
-      r: { proto: 1, minor: 1, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' },
+      r: { proto: 1, minor: 2, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1'], resume: 'snapshot', auth: 'unpaired' },
     })
   })
 
@@ -251,7 +251,7 @@ describe('WebSocket carrier over a real socket', () => {
     await settle()
     // Then the leftover bytes were parsed, not discarded
     const answers = serverFrames(pair.serverBytes()).map(frame => JSON.parse(frame.payload.toString('utf8')) as { id: number; ok: boolean })
-    expect(answers).toEqual([{ t: 'res', id: 2, ok: true, r: { proto: 1, minor: 1, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' } }])
+    expect(answers).toEqual([{ t: 'res', id: 2, ok: true, r: { proto: 1, minor: 2, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1'], resume: 'snapshot', auth: 'unpaired' } }])
   })
 
   it('user writes two frames into the socket in one chunk and both are answered in order', async () => {
@@ -284,7 +284,7 @@ describe('WebSocket carrier over a real socket', () => {
     // Then the frame that arrived first is delivered instead of being dropped
     const answers = serverFrames(pair.serverBytes()).map(frame => JSON.parse(frame.payload.toString('utf8')) as unknown)
     expect(answers).toEqual([
-      { t: 'res', id: 3, ok: true, r: { proto: 1, minor: 1, server: 'dsh-remote-bridge', resume: 'snapshot', auth: 'unpaired' } },
+      { t: 'res', id: 3, ok: true, r: { proto: 1, minor: 2, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1'], resume: 'snapshot', auth: 'unpaired' } },
     ])
   })
 })

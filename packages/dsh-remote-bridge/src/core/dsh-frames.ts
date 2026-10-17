@@ -26,6 +26,25 @@ export interface MessageUsage {
   readonly reasoningTokens?: number
 }
 
+/**
+ * Where one user message came from, as the host's durable `source` says.
+ *
+ * The three kinds are the only classification this protocol makes, and they are
+ * read off `source.kind` mechanically: `user` and `user-approval` are a human,
+ * `agent-message` and `subagent-settled` are an agent, and every other kind —
+ * including one this bridge has never seen — is the system. `sourceKind` is the
+ * host's own string, verbatim, so a client can tell "the system" apart without
+ * the bridge inventing a taxonomy it cannot keep current.
+ */
+export interface MessageActor {
+  readonly kind: 'human' | 'agent' | 'system'
+  readonly sourceKind: string
+  /** Durable id of the session that sent the message; only known for an agent. */
+  readonly sessionId?: string
+  /** The host's own display label for the source, when it wrote one. */
+  readonly label?: string
+}
+
 /** One protocol v1 delta, before the session id and event sequence are attached. */
 export type SessionDelta =
   | { readonly kind: 'text'; readonly text: string; readonly blockIndex: number }
@@ -33,7 +52,8 @@ export type SessionDelta =
   | { readonly kind: 'tool-call'; readonly callId: string; readonly name: string; readonly argumentsDelta: string }
   | { readonly kind: 'tool-result'; readonly callId: string; readonly output: string; readonly isError: boolean }
   | { readonly kind: 'turn-end'; readonly reason: string }
-  | { readonly kind: 'user-message'; readonly text: string; readonly messageId?: string; readonly attachments?: readonly UserMessageAttachment[] }
+  | { readonly kind: 'user-message'; readonly text: string; readonly messageId?: string; readonly attachments?: readonly UserMessageAttachment[]; readonly actor?: MessageActor }
+  | { readonly kind: 'subagent'; readonly childId: string; readonly label?: string; readonly mode?: string; readonly callId?: string }
   | { readonly kind: 'usage'; readonly usage: MessageUsage; readonly turn?: number; readonly step?: number }
 
 /** Highest number of tool calls one connection remembers by id. */
@@ -60,6 +80,8 @@ export interface SnapshotEntry {
   readonly time: number
   readonly type: string
   readonly data: unknown
+  /** Where a `user/message` came from; absent on every other entry type. */
+  readonly actor?: MessageActor
 }
 
 /** One turn of a session snapshot: the durable events from `turn/start` to `turn/end`. */
@@ -151,6 +173,67 @@ export class MessageIndex {
 }
 
 /**
+ * Correlates one `subagent/catalog` event to the tool call that spawned the
+ * child it registers.
+ *
+ * The catalog event names the child but not the call, so the call is read off
+ * the same stream: the nearest preceding `tool/call` of the same turn and step.
+ * That is decidable only while one call is the whole story — a step that issued
+ * several calls leaves two candidates, and a call that already produced a child
+ * leaves one call behind two children; a guessed id would point a thread at the
+ * wrong card. Both cases answer undefined instead of a guess.
+ */
+export class SpawnCallIndex {
+  #turn: number | undefined
+  #step: number | undefined
+  #calls: string[] = []
+  #correlated: string | undefined
+
+  /**
+   * Read one durable event into the correlation state.
+   *
+   * A turn boundary or a new step is the only reset: a call belongs to the step
+   * that issued it, so a call from an earlier step can never be the nearest
+   * preceding one.
+   */
+  observe(type: string, data: unknown): void {
+    if (type === 'turn/start') {
+      this.#turn = numberOf(isRecord(data) ? data.turn : undefined)
+      this.#step = undefined
+      this.#calls = []
+      this.#correlated = undefined
+      return
+    }
+    if (type === 'step/start') {
+      this.#turn = numberOf(isRecord(data) ? data.turn : undefined) ?? this.#turn
+      this.#step = numberOf(isRecord(data) ? data.step : undefined)
+      this.#calls = []
+      this.#correlated = undefined
+      return
+    }
+    if (type !== 'tool/call') return
+    const callId = stringField(data, 'callId')
+    if (callId === undefined || callId === '') return
+    this.#turn = numberOf(isRecord(data) ? data.turn : undefined) ?? this.#turn
+    this.#step = numberOf(isRecord(data) ? data.step : undefined) ?? this.#step
+    this.#calls.push(callId)
+  }
+
+  /**
+   * The call that spawned the child this catalog event registered.
+   * @returns its call id, or undefined when the stream does not decide it.
+   */
+  spawnCallId(): string | undefined {
+    if (this.#turn === undefined || this.#step === undefined) return undefined
+    if (this.#calls.length !== 1) return undefined
+    const callId = this.#calls[0]
+    if (callId === undefined || callId === this.#correlated) return undefined
+    this.#correlated = callId
+    return callId
+  }
+}
+
+/**
  * Read the opening frame of a follow stream.
  * @returns the cursor and records, or undefined when this frame is not a snapshot.
  */
@@ -162,14 +245,28 @@ export function readFollowBaseline(frame: unknown): FollowBaseline | undefined {
   return { cursor, records, hasMore: frame.hasMore === true }
 }
 
+/** What one follow stream remembers beyond its two bounded message indexes. */
+export interface FollowMemory {
+  /** Whether this connection declared `subagent.thread.v1`. */
+  readonly subagentThread?: boolean
+  /** This stream's spawning-call correlation state; absent when the kind is off. */
+  readonly spawnCalls?: SpawnCallIndex
+}
+
 /**
  * Map one DSH follow frame to a delta, or undefined when the frame carries no
  * increment this protocol publishes.
  * @param frame - one `SessionFollowFrame`.
  * @param toolCalls - this connection's tool-call memory.
  * @param messages - this connection's published-user-message memory.
+ * @param memory - the stream's own correlation state, and which optional kinds it declared.
  */
-export function deltaOfFollowFrame(frame: unknown, toolCalls: ToolCallIndex, messages: MessageIndex): SessionDelta | undefined {
+export function deltaOfFollowFrame(
+  frame: unknown,
+  toolCalls: ToolCallIndex,
+  messages: MessageIndex,
+  memory: FollowMemory = {},
+): SessionDelta | undefined {
   if (!isRecord(frame)) return undefined
   if (frame.type === 'assistant-stream') return deltaOfAssistantStream(frame.frame, toolCalls)
   if (frame.type !== 'event') return undefined
@@ -177,12 +274,76 @@ export function deltaOfFollowFrame(frame: unknown, toolCalls: ToolCallIndex, mes
   if (!isRecord(event)) return undefined
   const type = event.type
   const data = event.data
+  // Observed before dispatch: a turn boundary, a new step and every call update
+  // the correlation state whether or not this contract publishes a delta for it.
+  memory.spawnCalls?.observe(typeof type === 'string' ? type : '', data)
   if (type === 'tool/result') return toolResultDelta(data)
   if (type === 'turn/end') return turnEndDelta(data)
   if (type === 'tool/call') return assembledToolCallDelta(data, toolCalls)
   if (type === 'user/message') return userMessageDelta(data, messages)
   if (type === 'assistant/message') return usageDelta(data)
+  if (type === 'subagent/catalog') return memory.subagentThread === true ? subagentDelta(data, memory.spawnCalls) : undefined
   return undefined
+}
+
+/**
+ * Map one durable `subagent/catalog` to the increment that opens a thread on a
+ * subscribed phone.
+ *
+ * The child id is the only field the host must have written: without it the
+ * event registers nothing this protocol can address, so it publishes nothing
+ * rather than an increment a client could not use.
+ */
+function subagentDelta(data: unknown, spawnCalls: SpawnCallIndex | undefined): SessionDelta | undefined {
+  const childId = stringField(data, 'childId')
+  if (childId === undefined || childId === '') return undefined
+  const label = textField(data, 'label')
+  const mode = textField(data, 'mode')
+  const callId = spawnCalls?.spawnCallId()
+  return {
+    kind: 'subagent',
+    childId,
+    ...(label === undefined ? {} : { label }),
+    ...(mode === undefined ? {} : { mode }),
+    ...(callId === undefined ? {} : { callId }),
+  }
+}
+
+/**
+ * Where one durable user message came from.
+ *
+ * Absent when the event carries no readable `source.kind`: an event from a log
+ * written before sources existed has no source kind, and inventing one would
+ * report an origin the host never recorded.
+ */
+function actorOf(data: unknown): MessageActor | undefined {
+  return actorOfSource(isRecord(data) ? data.source : undefined)
+}
+
+/**
+ * Derive one message's actor from the host's own `source` record, mechanically.
+ * @param source - the `source` member of a durable `user/message`.
+ * @returns the actor, or undefined when the source carries no kind.
+ */
+export function actorOfSource(source: unknown): MessageActor | undefined {
+  const sourceKind = stringField(source, 'kind')
+  if (sourceKind === undefined || sourceKind === '') return undefined
+  const sessionId = stringField(source, 'senderSessionId')
+  const label = textField(source, 'label')
+  const named = {
+    sourceKind,
+    ...(label === undefined ? {} : { label }),
+    ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
+  }
+  if (sourceKind === 'user' || sourceKind === 'user-approval') return { kind: 'human', ...named }
+  if (sourceKind === 'agent-message' || sourceKind === 'subagent-settled') return { kind: 'agent', ...named }
+  return { kind: 'system', ...named }
+}
+
+/** @returns a non-empty string field, or undefined. */
+function textField(value: unknown, key: string): string | undefined {
+  const field = stringField(value, key)
+  return field === undefined || field === '' ? undefined : field
 }
 
 function deltaOfAssistantStream(frame: unknown, toolCalls: ToolCallIndex): SessionDelta | undefined {
@@ -264,11 +425,13 @@ function userMessageDelta(data: unknown, messages: MessageIndex): SessionDelta |
     messages.remember(messageId)
   }
   const attachments = imageAttachmentsOf(data.content)
+  const actor = actorOf(data)
   return {
     kind: 'user-message',
     text: textOfBlocks(data.content),
     ...(messageId === undefined ? {} : { messageId }),
     ...(attachments.length === 0 ? {} : { attachments }),
+    ...(actor === undefined ? {} : { actor }),
   }
 }
 
@@ -482,5 +645,16 @@ function snapshotEntryOf(record: unknown): SnapshotEntry | undefined {
   const event = isRecord(record) ? record.event : undefined
   if (!isRecord(event)) return undefined
   if (typeof event.type !== 'string' || typeof event.seq !== 'number') return undefined
-  return { seq: event.seq, time: typeof event.time === 'number' ? event.time : 0, type: event.type, data: event.data }
+  // A user message is the one entry that carries its actor: the delta and the
+  // baseline must report the same origin for the same message, and the entry's
+  // data stays the host's own record so a client written before actors existed
+  // still reads it unchanged.
+  const actor = event.type === 'user/message' ? actorOf(event.data) : undefined
+  return {
+    seq: event.seq,
+    time: typeof event.time === 'number' ? event.time : 0,
+    type: event.type,
+    data: event.data,
+    ...(actor === undefined ? {} : { actor }),
+  }
 }

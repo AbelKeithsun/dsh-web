@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ControllableStream, answerOf, makeConnection, requestFrame, type ConnectionHarness } from './support/harness.ts'
+import { ControllableStream, answerOf, makeConnection, requestFrame, settle, type ConnectionHarness } from './support/harness.ts'
 
 /** One follow record as DSH writes it. */
 function record(type: string, seq: number, time: number, data: unknown): unknown {
@@ -38,6 +38,14 @@ function childRow(childSessionId: string, parentSessionId: string): Record<strin
   return { sessionId: childSessionId, updatedAt: 1, running: false, blank: false, origin: 'subagent', parentSessionId }
 }
 
+/**
+ * One roster row for the ordinary session a child hangs off. A child is
+ * followable only while its parent is a session this roster authorizes.
+ */
+function parentRow(parentSessionId: string): Record<string, unknown> {
+  return { sessionId: parentSessionId, updatedAt: 1, running: false, blank: false }
+}
+
 /** The refusal the harness raises for a delegated child asked as an ordinary session. */
 function agentBusy(): Error {
   return Object.assign(new Error('subagent Sessions require their durable parent address'), { code: 'session/agent-busy' })
@@ -50,7 +58,7 @@ function agentBusy(): Error {
 function harnessForChild(harness: ConnectionHarness, childSessionId: string, parentSessionId: string): ControllableStream {
   const follow = new ControllableStream()
   harness.gateway.handler = async call =>
-    call.method === 'list' ? { items: [childRow(childSessionId, parentSessionId)] } : { accepted: true }
+    call.method === 'list' ? { items: [parentRow(parentSessionId), childRow(childSessionId, parentSessionId)] } : { accepted: true }
   harness.gateway.follow = call => {
     const request = call.args.request as { address?: { kind?: string } } | undefined
     if (request?.address?.kind !== 'subagent') throw agentBusy()
@@ -73,13 +81,47 @@ describe('delegated sessions over protocol v1', () => {
     const pending = snapshotOf(harness, 1, 'child-1')
     follow.push(baseline(oneTurn('the child wrote this'), 42))
     await pending
-    // Then the real turn crosses, and the second attempt used the child's own address kind
+    // Then the real turn crosses, and the child was addressed as a delegated one
     const payload = answerOf(harness, 1).r as { turns: WireTurn[]; lastSeq: number }
     expect(payload.lastSeq).toBe(42)
     expect(payload.turns).toHaveLength(1)
     expect(payload.turns[0]?.entries.map(entry => entry.type)).toEqual(['turn/start', 'user/message', 'turn/end'])
     expect(payload.turns[0]?.entries[1]?.data).toEqual({ text: 'the child wrote this' })
     expect(payload.turns[0]?.reason).toBe('completed')
+    expect(harness.gateway.streamRequests).toHaveLength(1)
+    expect(harness.gateway.streamRequests[0]?.args).toEqual({
+      request: {
+        address: { kind: 'subagent', parentSessionId: 'session-parent', childSessionId: 'child-1', mode: 'unknown' },
+        assistantStream: true,
+        maxMessages: 200,
+      },
+    })
+  })
+
+  it('user opening a delegated session whose lineage the first roster read lost still reaches it on the harness refusal', async () => {
+    // Given a roster read that fails once, and a harness that serves only the delegated address
+    const harness = makeConnection({ paired: true })
+    const follow = new ControllableStream()
+    let reads = 0
+    harness.gateway.handler = async call => {
+      if (call.method !== 'list') return { accepted: true }
+      reads += 1
+      if (reads === 1) throw Object.assign(new Error('the roster is unavailable'), { code: 'gateway/arguments-invalid' })
+      return { items: [parentRow('session-parent'), childRow('child-1', 'session-parent')] }
+    }
+    harness.gateway.follow = call => {
+      const request = call.args.request as { address?: { kind?: string } } | undefined
+      if (request?.address?.kind !== 'subagent') throw agentBusy()
+      return follow.attach(call.signal).iterable()
+    }
+    // When the user snapshots that child
+    const pending = snapshotOf(harness, 6, 'child-1')
+    await settle()
+    follow.push(baseline(oneTurn('served on the retry'), 7))
+    await pending
+    // Then the refusal triggered a second roster read and the delegated retry
+    expect(answerOf(harness, 6).ok).toBe(true)
+    expect(reads).toBe(2)
     expect(harness.gateway.streamRequests).toHaveLength(2)
     expect(harness.gateway.streamRequests[0]?.args).toEqual({
       request: { address: { kind: 'session', sessionId: 'child-1' }, assistantStream: true, maxMessages: 200 },
@@ -98,7 +140,7 @@ describe('delegated sessions over protocol v1', () => {
     const harness = makeConnection({ paired: true })
     const streams = new Map([['child-1', new ControllableStream()], ['child-2', new ControllableStream()]])
     harness.gateway.handler = async call => call.method === 'list'
-      ? { items: [childRow('child-1', 'session-parent'), childRow('child-2', 'session-parent')] }
+      ? { items: [parentRow('session-parent'), childRow('child-1', 'session-parent'), childRow('child-2', 'session-parent')] }
       : { accepted: true }
     harness.gateway.follow = call => {
       const request = call.args.request as { address?: { childSessionId?: string; kind?: string } } | undefined
