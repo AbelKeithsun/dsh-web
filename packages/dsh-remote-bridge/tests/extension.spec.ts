@@ -11,7 +11,7 @@ async function greet(connection: { handleText(text: string): Promise<void> }, id
 }
 
 describe('the extension seam registry', () => {
-  it('plugin registers a method table and a declaring client reaches it', () => {
+  it('operator registers a method table and a declaring client reaches it', () => {
     // Given a registry and a table that requires a capability
     const registry = new RemoteBridgeRegistry()
     const handler = (): { ok: true; r: unknown } => ({ ok: true, r: { echoed: true } })
@@ -23,7 +23,7 @@ describe('the extension seam registry', () => {
     expect(registry.has('demo.echo')).toBe(true)
   })
 
-  it('plugin withdraws its table and the methods stop existing', () => {
+  it('operator withdraws a plugin table and the methods stop existing', () => {
     // Given a registered table
     const registry = new RemoteBridgeRegistry()
     const dispose = registry.registerMethods({ methods: { 'demo.echo': () => ({ ok: true }) } })
@@ -34,7 +34,7 @@ describe('the extension seam registry', () => {
     expect(registry.handlerFor('demo.echo', () => true)).toBeUndefined()
   })
 
-  it('plugin withdraws twice and the second call is a no-op for the method registered later', () => {
+  it('operator withdraws the same table twice and the method registered later survives', () => {
     // Given one plugin table that was withdrawn, and a second one registered after it
     const registry = new RemoteBridgeRegistry()
     const first = registry.registerMethods({ methods: { 'demo.echo': () => ({ ok: true }) } })
@@ -47,7 +47,7 @@ describe('the extension seam registry', () => {
     expect(registry.handlerFor('demo.echo', () => true)).toBe(second)
   })
 
-  it('plugin names a protocol method and the registration is refused', () => {
+  it('operator registers a table naming a protocol method and the registration is refused', () => {
     // Given a registry and a table that tries to shadow the handshake
     const registry = new RemoteBridgeRegistry()
     // When it registers
@@ -57,7 +57,7 @@ describe('the extension seam registry', () => {
     expect(registry.has('session.list')).toBe(false)
   })
 
-  it('plugin registers a name another plugin already owns and the registration is refused', () => {
+  it('operator registers a name another plugin already owns and the registration is refused', () => {
     // Given a method a first plugin already registered
     const registry = new RemoteBridgeRegistry()
     registry.registerMethods({ methods: { 'demo.echo': () => ({ ok: true, r: 1 }) } })
@@ -68,7 +68,7 @@ describe('the extension seam registry', () => {
     expect((registry.handlerFor('demo.echo', () => true) as () => unknown)()).toEqual({ ok: true, r: 1 })
   })
 
-  it('plugin table carries one unusable name and none of its methods are registered', () => {
+  it('operator registers a table with one unusable name and none of its methods are registered', () => {
     // Given a table whose second entry shadows a protocol method
     const registry = new RemoteBridgeRegistry()
     // When it registers
@@ -80,18 +80,19 @@ describe('the extension seam registry', () => {
     expect(registry.has('demo.echo')).toBe(false)
   })
 
-  it('plugin table leaves the capability out and a paired client needs none to reach it', () => {
+  it('operator registers a table without a capability and a paired client needs none to reach it', () => {
     // Given a table registered without a capability
     const registry = new RemoteBridgeRegistry()
-    registry.registerMethods({ methods: { 'demo.open': () => ({ ok: true }) } })
+    const open = (): { ok: true } => ({ ok: true })
+    registry.registerMethods({ methods: { 'demo.open': open } })
     // When a client that declared nothing asks for it
     // Then the method is still reachable
-    expect(registry.handlerFor('demo.open', () => false)).not.toBeUndefined()
+    expect(registry.handlerFor('demo.open', () => false)).toBe(open)
   })
 })
 
 describe('extension methods over a connection', () => {
-  it('client declares the capability and reads the answer the plugin gave', async () => {
+  it('user declares the capability and reads the answer the plugin gave', async () => {
     // Given a plugin method that answers a payload echo
     const harness = makeConnection({ paired: true })
     harness.extensions.registerMethods({
@@ -106,7 +107,7 @@ describe('extension methods over a connection', () => {
     expect(harness.gateway.invocations).toEqual([])
   })
 
-  it('client never declares the capability and the method does not exist for it', async () => {
+  it('user never declares the capability and the method does not exist for it', async () => {
     // Given a registered method and a greeting that declares nothing
     const harness = makeConnection({ paired: true })
     harness.extensions.registerMethods({ capability: DEMO_CAP, methods: { 'demo.echo': () => ({ ok: true }) } })
@@ -117,7 +118,7 @@ describe('extension methods over a connection', () => {
     expect(answerOf(harness, 2).e?.code).toBe('unknown-method')
   })
 
-  it('client calls a plugin method on an unpaired connection and is refused as unpaired', async () => {
+  it('user calls a plugin method on an unpaired connection and is refused as unpaired', async () => {
     // Given a registered method and a connection carrying no device token
     const harness = makeConnection()
     harness.extensions.registerMethods({ capability: DEMO_CAP, methods: { 'demo.echo': () => ({ ok: true }) } })
@@ -128,7 +129,7 @@ describe('extension methods over a connection', () => {
     expect(answerOf(harness, 2).e?.code).toBe('unpaired')
   })
 
-  it('client calls a method after the plugin withdrew it and is refused as unknown', async () => {
+  it('user calls a method after the plugin withdrew it and is refused as unknown', async () => {
     // Given a method that was registered and then withdrawn
     const harness = makeConnection({ paired: true })
     const dispose = harness.extensions.registerMethods({ capability: DEMO_CAP, methods: { 'demo.echo': () => ({ ok: true }) } })
@@ -140,7 +141,7 @@ describe('extension methods over a connection', () => {
     expect(answerOf(harness, 2).e?.code).toBe('unknown-method')
   })
 
-  it('plugin states its own refusal and the client reads that code and message', async () => {
+  it('user reads the refusal code and message the plugin itself stated', async () => {
     // Given a method that refuses with a code this bridge has never heard of
     const harness = makeConnection({ paired: true })
     harness.extensions.registerMethods({
@@ -154,7 +155,7 @@ describe('extension methods over a connection', () => {
     expect(answerOf(harness, 2)).toEqual({ ok: false, e: { code: 'demo-refused', msg: 'the demo said no' } })
   })
 
-  it('plugin throws and the client reads an internal failure instead of a lost frame', async () => {
+  it('user reads an internal failure when the plugin throws instead of a lost frame', async () => {
     // Given a method whose handler throws
     const harness = makeConnection({ paired: true })
     harness.extensions.registerMethods({
@@ -172,7 +173,7 @@ describe('extension methods over a connection', () => {
     expect(harness.logs.some(line => line.includes('demo.boom failed'))).toBe(true)
   })
 
-  it('plugin answers no result at all and the client reads an internal failure', async () => {
+  it('user reads an internal failure when the plugin answers no result at all', async () => {
     // Given a handler that returns something the seam does not define
     const harness = makeConnection({ paired: true })
     harness.extensions.registerMethods({
@@ -186,7 +187,7 @@ describe('extension methods over a connection', () => {
     expect(answerOf(harness, 2).e).toEqual({ code: 'internal', msg: 'demo.nothing answered no result' })
   })
 
-  it('plugin reads the calling connection id and it is stable per socket, distinct across sockets', async () => {
+  it('user calls twice on one socket and once on another and the plugin sees a stable per-connection id', async () => {
     // Given a method that reports which connection called it
     const harvester = makeConnection({ paired: true })
     const seen: string[] = []
@@ -216,7 +217,7 @@ describe('the seam event fan-out', () => {
     return transport
   }
 
-  it('plugin publishes an event and only the paired connections that declared the capability take it', async () => {
+  it('operator publishes an event and only the paired connections that declared the capability take it', async () => {
     // Given one declared, one undeclared and one unpaired connection
     const hub = makeBareHub()
     const declared = await attach(hub, true, [DEMO_CAP])
@@ -232,7 +233,7 @@ describe('the seam event fan-out', () => {
     expect(unpaired.ofType('ev')).toEqual([])
   })
 
-  it('plugin publishes without a capability and every paired connection takes it while no unpaired one does', async () => {
+  it('operator publishes without a capability and every paired connection takes it while no unpaired one does', async () => {
     // Given a paired and an unpaired connection that declared nothing
     const hub = makeBareHub()
     const paired = await attach(hub, true, [])
@@ -246,7 +247,7 @@ describe('the seam event fan-out', () => {
     expect(unpaired.ofType('ev')).toEqual([])
   })
 
-  it('plugin payload crosses verbatim under the plugin topic name', async () => {
+  it('user receives the plugin payload verbatim under the plugin topic name', async () => {
     // Given a paired declaring connection
     const hub = makeBareHub()
     const transport = await attach(hub, true, [DEMO_CAP])
