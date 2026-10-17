@@ -30,6 +30,13 @@
  * delegated to `next()`, never answered with a decision the operator did not
  * make.
  *
+ * A timed ask's deadline is read back from the host itself
+ * (`userQuestions/attachWait`) and published as `expiresAt`, so the phone can
+ * count down the wait the host is actually serving. Holding that subscription
+ * parks the host's own deadline timer, so this module also has to let go at the
+ * instant the deadline it learned has passed: only then does the host raise
+ * `ASK_TIMED_OUT` and hand the claim its `continued` state.
+ *
  * The types below mirror `@deepseek-ai/dsh-user-questions` field for field. The
  * package is not a dependency of this one (it is the host's, not the bridge's),
  * so the contract is declared locally instead of imported.
@@ -110,12 +117,30 @@ export interface ClaimedQuestionView {
   readonly sessionId: string
   readonly callId: string
   readonly questions: readonly QuestionItem[]
+  /**
+   * Epoch milliseconds at which the host's own deadline falls — the absolute
+   * form of the remaining wait the host reported through `attachWait`.
+   *
+   * Absent when the host said nothing: a blocking ask has no deadline at all,
+   * and a timed one is only known once a wait frame arrived.
+   */
+  readonly expiresAt?: number
 }
 
 /** One claim the hub holds while the host's ask is still open. */
 export interface ClaimedQuestion extends ClaimedQuestionView {
   /** The host's ask: the phone's answer, or whatever the next answerer says. */
   readonly answer: Promise<QuestionAnswer>
+  /**
+   * Epoch milliseconds at which the host's own deadline falls, from the first
+   * wait frame of this claim.
+   *
+   * Resolves undefined when there is no deadline to publish — a blocking ask, a
+   * failed subscription, or a stream that ended before its first frame — and
+   * never rejects: a phone must be shown the question whether or not the host
+   * would say how long it has.
+   */
+  readonly deadline: Promise<number | undefined>
 }
 
 /** What one `question.answer` produced: acknowledgement, or the refusal to send. */
@@ -134,6 +159,15 @@ export const QUESTION_TIMED_OUT_CODE = 'ASK_TIMED_OUT'
 export const MINTED_CALL_ID_PREFIX = 'bridge:'
 /** Entropy of one minted call id. */
 export const MINTED_CALL_ID_BYTES = 16
+/**
+ * How often at most a phone is told that the host's deadline moved, in
+ * milliseconds.
+ *
+ * The host re-reports its remaining wait on every touch of the wait, which can
+ * be far more often than a countdown needs; one update per second keeps the
+ * wire quiet without the phone ever showing a stale second.
+ */
+export const QUESTION_WAIT_BROADCAST_MIN_INTERVAL_MS = 1000
 
 export interface OpenQuestionInput {
   readonly sessionId: string
@@ -153,6 +187,15 @@ export interface OpenQuestionInput {
   readonly signal?: AbortSignal
   /** Called once when the host's deadline released the model but the question stayed answerable. */
   readonly onContinued?: (question: ClaimedQuestionView) => void
+  /**
+   * Called when a later wait frame moved the host's deadline, so a phone that
+   * already holds the card can update it in place.
+   *
+   * The first frame is not reported here: it is what {@link ClaimedQuestion.deadline}
+   * hands the hub for the question's own first broadcast, so reporting it would
+   * publish the same deadline twice.
+   */
+  readonly onDeadline?: (question: ClaimedQuestionView) => void
   /**
    * Called when the claim leaves this bridge without the phone answering it — the
    * host's own UI answered first, or the last paired client went away. The phone
@@ -176,6 +219,10 @@ interface Claim {
   readonly onContinued: ((question: ClaimedQuestionView) => void) | undefined
   /** Tells the phone its card is over; set from the input's `onSettled`. */
   readonly notifySettled: () => void
+  /** Epoch milliseconds of the host's deadline, once a wait frame reported one. */
+  expiresAt: number | undefined
+  /** End the wait subscription and its timer. Idempotent. */
+  readonly stopWait: () => void
 }
 
 export interface QuestionClaimsOptions {
@@ -185,11 +232,44 @@ export interface QuestionClaimsOptions {
   readonly log: (message: string) => void
   /** Id source, injectable so a test can answer the exact id it was given. */
   readonly random?: (byteLength: number) => string
+  /**
+   * Clock the deadline bookkeeping reads, injectable so a suite can move the
+   * remaining wait instead of sleeping through it.
+   */
+  readonly now?: () => number
 }
 
 /** @returns whether a failure is the host's own foreground deadline. */
 function isTimedOut(reason: unknown): boolean {
   return (reason as { code?: unknown } | null | undefined)?.code === QUESTION_TIMED_OUT_CODE
+}
+
+/**
+ * The publishable view of one claim.
+ *
+ * The deadline key is spread in rather than set to undefined: a blocking ask has
+ * no expiry at all, and the phone must see no such field instead of a null one.
+ * @param record - the live claim.
+ * @returns the claim's fields as the hub publishes them.
+ */
+function viewOf(record: Claim): ClaimedQuestionView {
+  return {
+    sessionId: record.sessionId,
+    callId: record.callId,
+    questions: record.questions,
+    ...(record.expiresAt === undefined ? {} : { expiresAt: record.expiresAt }),
+  }
+}
+
+/**
+ * Read the remaining wait out of one `attachWait` frame.
+ * @param frame - the frame as the gateway delivered it.
+ * @returns the remaining milliseconds, or undefined when the frame is not usable.
+ */
+function remainingOf(frame: unknown): number | undefined {
+  const remaining = (frame as { remainingMs?: unknown } | null | undefined)?.remainingMs
+  if (typeof remaining !== 'number' || !Number.isFinite(remaining) || remaining < 0) return undefined
+  return remaining
 }
 
 /**
@@ -232,6 +312,7 @@ export class QuestionClaims {
   readonly #peer: GatewayPeer
   readonly #log: (message: string) => void
   readonly #random: (byteLength: number) => string
+  readonly #now: () => number
   readonly #claims = new Map<string, Claim>()
 
   constructor(options: QuestionClaimsOptions) {
@@ -239,6 +320,7 @@ export class QuestionClaims {
     this.#peer = options.peer
     this.#log = options.log
     this.#random = options.random ?? randomBase64Url
+    this.#now = options.now ?? Date.now
   }
 
   /** @returns how many questions this bridge currently holds. */
@@ -290,15 +372,38 @@ export class QuestionClaims {
       }
       return nextStarted
     }
+    // The host parks its own deadline timer while a waiter is attached, so this
+    // subscription must let go at the instant the deadline it reported has
+    // passed: only then does the host raise ASK_TIMED_OUT, which is what turns
+    // the claim into today's `continued` one. Every settling path stops it.
+    const wait = new AbortController()
+    let waitTimer: NodeJS.Timeout | undefined
+    let stopped = false
+    // The resolver is installed by the executor below; a claim that closes before
+    // the first frame needs calling it early, and that early call must be a no-op.
+    const deferred: { resolve?: (deadline: number | undefined) => void } = {}
+    const deadline = new Promise<number | undefined>((resolve) => { deferred.resolve = resolve })
+    const resolveDeadline = (value: number | undefined): void => { deferred.resolve?.(value) }
+    const stopWait = (): void => {
+      if (stopped) return
+      stopped = true
+      if (waitTimer !== undefined) {
+        clearTimeout(waitTimer)
+        waitTimer = undefined
+      }
+      wait.abort()
+      // A claim that closes before the host said anything must not leave the hub
+      // awaiting a first frame that will never come.
+      resolveDeadline(undefined)
+    }
     const record: Claim = {
       sessionId: input.sessionId,
       callId: input.callId,
       hosted: input.hosted,
       questions: projectQuestions(input.questions),
       state: 'open',
-      notifySettled: (): void => {
-        input.onSettled?.({ sessionId: input.sessionId, callId: input.callId, questions: projectQuestions(input.questions) })
-      },
+      expiresAt: undefined,
+      notifySettled: (): void => { input.onSettled?.(viewOf(record)) },
       settle,
       fail,
       delegate: (): void => {
@@ -306,6 +411,72 @@ export class QuestionClaims {
       },
       detach: (): void => { signal?.removeEventListener('abort', onAbort) },
       onContinued: input.onContinued,
+      stopWait,
+    }
+    /** Arm the timer that lets go of the wait when the host's own deadline is due. */
+    const armDeadline = (expiresAt: number): void => {
+      if (waitTimer !== undefined) clearTimeout(waitTimer)
+      waitTimer = setTimeout(() => { stopWait() }, Math.max(0, expiresAt - this.#now()))
+      // A question waiting on a phone must never keep the host process alive.
+      waitTimer.unref?.()
+    }
+    /**
+     * Follow the host's own remaining wait and report it when it moves.
+     *
+     * A failure here is not a verdict on the question: the phone can answer it
+     * without ever knowing the deadline, so every error only ends the
+     * subscription instead of failing the claim.
+     */
+    const trackWait = async (): Promise<void> => {
+      if (stopped) return
+      let frames = 0
+      let lastBroadcast = 0
+      try {
+        const stream = await this.#gateway.stream({
+          namespace: 'userQuestions',
+          method: 'attachWait',
+          args: wireArgs('userQuestions', 'attachWait', { agentId: input.sessionId, callId: input.callId }),
+          peer: this.#peer,
+          signal: wait.signal,
+        })
+        const iterator = stream[Symbol.asyncIterator]()
+        try {
+          for (;;) {
+            const next = await iterator.next()
+            if (next.done === true) return
+            const remaining = remainingOf(next.value)
+            if (remaining === undefined) continue
+            const at = this.#now()
+            const expiresAt = at + remaining
+            record.expiresAt = expiresAt
+            armDeadline(expiresAt)
+            // The first frame IS the deadline: the hub is already awaiting it for
+            // the question's own broadcast, so only later frames move a card.
+            if (frames === 0) {
+              frames = 1
+              lastBroadcast = at
+              resolveDeadline(expiresAt)
+              continue
+            }
+            if (at - lastBroadcast < QUESTION_WAIT_BROADCAST_MIN_INTERVAL_MS) continue
+            lastBroadcast = at
+            input.onDeadline?.(viewOf(record))
+          }
+        } finally {
+          await iterator.return?.()
+        }
+      } catch (error) {
+        // Releasing the wait on purpose — its deadline arrived, the claim settled —
+        // aborts the stream, and the gateway reports an aborted Remote stream as a
+        // failed read of its own (`gateway/cancelled`). That is the normal path,
+        // not a fault, so only an end nobody asked for is logged.
+        if (!stopped) this.#log(`userQuestions/attachWait failed: ${failureText(error)}`)
+      } finally {
+        // No frame, no deadline: the hub publishes the question without one
+        // instead of waiting on a wait the host never reported. A no-op once a
+        // frame already settled it.
+        resolveDeadline(undefined)
+      }
     }
     this.#claims.set(input.callId, record)
     // The rest of the chain is NOT started here. A connected phone takes the
@@ -314,7 +485,10 @@ export class QuestionClaims {
     // A phone that is absent, or a claim that is withdrawn, still delegates.
     if (signal?.aborted === true) onAbort()
     else signal?.addEventListener('abort', onAbort, { once: true })
-    return { sessionId: record.sessionId, callId: record.callId, questions: record.questions, answer }
+    if (input.hosted) void trackWait()
+    // A blocking ask carries no host deadline at all: nothing to follow, nothing to publish.
+    else resolveDeadline(undefined)
+    return { ...viewOf(record), answer, deadline }
   }
 
   /**
@@ -335,6 +509,7 @@ export class QuestionClaims {
     if (record.state === 'open') {
       this.#claims.delete(callId)
       record.detach()
+      record.stopWait()
       record.settle({ answers: answer.answers })
       return { ok: true }
     }
@@ -354,11 +529,7 @@ export class QuestionClaims {
    * question sits on the host with an answerable card nowhere.
    */
   openClaims(): readonly ClaimedQuestionView[] {
-    return [...this.#claims.values()].map((record) => ({
-      sessionId: record.sessionId,
-      callId: record.callId,
-      questions: record.questions,
-    }))
+    return [...this.#claims.values()].map(viewOf)
   }
 
   /**
@@ -372,6 +543,7 @@ export class QuestionClaims {
       if (record === undefined) continue
       this.#claims.delete(callId)
       record.detach()
+      record.stopWait()
       record.notifySettled()
       if (record.state !== 'open') continue
       record.delegate()
@@ -408,7 +580,10 @@ export class QuestionClaims {
       if (accepted !== true) {
         return { ok: false, code: CODE_QUESTION_UNKNOWN, msg: 'the host does not hold this question as answerable yet' }
       }
+      const record = this.#claims.get(callId)
       this.#claims.delete(callId)
+      // The late answer is the end of this ask: nothing is left to count down.
+      record?.stopWait()
       return { ok: true }
     } catch (error) {
       this.#log(`userQuestions/answer failed: ${failureText(error)}`)
@@ -427,6 +602,7 @@ export class QuestionClaims {
     const record = this.#claims.get(callId)
     if (record === undefined || record.state !== 'open') return
     record.detach()
+    record.stopWait()
     record.fail(reason)
     // Only a host deadline keeps a claim answerable, and only for an id the host
     // itself assigned: a minted one has no host question behind it, so nothing
@@ -436,7 +612,7 @@ export class QuestionClaims {
       return
     }
     record.state = 'continued'
-    record.onContinued?.({ sessionId: record.sessionId, callId: record.callId, questions: record.questions })
+    record.onContinued?.(viewOf(record))
   }
 }
 

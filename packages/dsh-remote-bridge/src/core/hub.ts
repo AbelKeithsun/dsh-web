@@ -44,14 +44,22 @@ export function approvalSummary(request: ApprovalRequestLike): string {
 /**
  * The `question.request` payload for one claim.
  *
- * No `expiresAt`: the host's foreground deadline is not part of the request the
- * waterfall carries, and a bridge-invented deadline would be a timeout of the
- * bridge's own — the exact thing this channel must not have.
+ * `expiresAt` appears only once the claim learned the host's own deadline from
+ * its wait subscription, and it is the host's deadline unchanged: the bridge
+ * invents none, because a bridge-invented deadline would be a timeout of the
+ * bridge's own — the exact thing this channel must not have. A blocking ask
+ * therefore publishes no such key at all, rather than an empty or null one.
  * @param state - whether the foreground ask still holds the question.
  * @param question - the claim being published.
  */
 function questionPayload(state: QuestionState, question: ClaimedQuestionView): QuestionRequestPayload {
-  return { sessionId: question.sessionId, callId: question.callId, state, questions: question.questions }
+  return {
+    sessionId: question.sessionId,
+    callId: question.callId,
+    state,
+    questions: question.questions,
+    ...(question.expiresAt === undefined ? {} : { expiresAt: question.expiresAt }),
+  }
 }
 
 /** The bridge's live connections plus the answerer it composes onto the approval chain. */
@@ -184,7 +192,9 @@ export class BridgeHub {
    * when the ask is timed, and minted here when it is blocking and the host
    * assigned none — either way the phone answers the id it was shown. A claim
    * nobody received is withdrawn at once instead of holding the agent until the
-   * host's deadline.
+   * host's deadline. For a timed ask the host's own remaining wait travels with
+   * the first frame as `expiresAt`, and every later move of that deadline is
+   * re-published under the same call id.
    * @param request - the pending question batch.
    * @param next - the rest of the answerer chain.
    * @returns the phone's answer, the host's own deadline outcome, or whatever the next answerer says.
@@ -215,9 +225,25 @@ export class BridgeHub {
         // phone is told which state it is in instead of losing the question.
         this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('continued', question))
       },
+      onDeadline: (question): void => {
+        // The host moved its deadline. Re-publishing the open state under the same
+        // call id updates the card the phone already holds instead of opening a
+        // second one.
+        this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('open', question))
+      },
     })
     if (claim === undefined) return await next()
-    const delivered = this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('open', claim))
+    // The host's own first wait frame is folded into this same frame: a phone is
+    // handed the question and how long it has together, rather than a card that a
+    // second update then races. A claim with no frame publishes no deadline,
+    // which is exactly the payload from before this channel existed.
+    const expiresAt = await claim.deadline
+    // The host's own lifetime can end while the first wait frame is still being
+    // awaited — its signal aborts, so the claim is expired or already continued.
+    // Publishing now would hand the phone a card nobody can retract, so that case
+    // goes straight to the claim's own outcome: the host's reason, or its answer.
+    if (this.#options.questions.stateOf(callId) !== 'open') return await claim.answer
+    const delivered = this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('open', expiresAt === undefined ? claim : { ...claim, expiresAt }))
     // A client that cannot receive this is not going to receive it later: the claim
     // must not be left holding the host's ask with no card anywhere. A client that
     // *can* receive it but was reconnecting is a different case — it is handed the

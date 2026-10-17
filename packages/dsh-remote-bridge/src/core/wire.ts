@@ -120,6 +120,7 @@ export const WIRE_TABLE: readonly WireRow[] = [
   { namespace: 'session', method: 'modelCatalog', wire: 'none' },
   { namespace: 'session', method: 'selectModel', wire: 'request' },
   { namespace: 'userQuestions', method: 'answer', wire: { names: ['agentId', 'callId', 'answer'] } },
+  { namespace: 'userQuestions', method: 'attachWait', wire: { names: ['agentId', 'callId'] } },
   { namespace: 'pluginInventory', method: 'list', wire: 'none' },
   { namespace: 'pluginManager', method: 'listPlugins', wire: 'none' },
 ]

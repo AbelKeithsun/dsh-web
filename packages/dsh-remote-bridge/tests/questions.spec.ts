@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { requestFrame, answerOf, makeBareHub, makeConnection, makeHub, RecordingTransport } from './support/harness.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ControllableStream, requestFrame, answerOf, makeBareHub, makeConnection, makeHub, RecordingTransport, settle, type FakeGateway } from './support/harness.ts'
 import type { QuestionAnswer, UserQuestionRequestLike } from '../src/core/questions.ts'
 
 /** The host's own foreground deadline, in the shape `askTimed` raises it. */
@@ -41,6 +41,20 @@ async function declareQuestions(connection: { handleText(text: string): Promise<
   await connection.handleText(requestFrame(id, 'hello', { proto: 1, cap: ['questions.v1'] }))
 }
 
+/**
+ * Route one hub's wait subscriptions to a stream the suite drives.
+ *
+ * The stream takes the request's cancellation signal exactly as the host does, so
+ * aborting the subscription is observable as an ended stream.
+ * @param gateway - the hub's gateway double.
+ * @param stream - the stream the suite pushes wait frames into.
+ */
+function followWaitStream(gateway: FakeGateway, stream: ControllableStream): void {
+  gateway.follow = (call) => (
+    call.method === 'attachWait' ? stream.attach(call.signal).iterable() : new ControllableStream().iterable()
+  )
+}
+
 /** @returns the payload of every `question.request` frame the carrier took. */
 function questionPayloads(transport: RecordingTransport): Record<string, unknown>[] {
   return transport.ofType('ev')
@@ -49,6 +63,8 @@ function questionPayloads(transport: RecordingTransport): Record<string, unknown
 }
 
 describe('user question bridge', () => {
+  afterEach(() => { vi.useRealTimers() })
+
   it('operator runs with no paired device and the question is delegated untouched', async () => {
     // Given a hub whose only connection never paired
     const harness = makeHub({ paired: false })
@@ -72,6 +88,9 @@ describe('user question bridge', () => {
     await declareQuestions(harness.connection)
     // When the host asks
     const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    // The publication waits for the host's own wait subscription, which this
+    // host answers with no frame: the payload is the one from before that channel.
+    await settle()
     // Then the event carries the frozen payload, and the host's ask is still open
     expect(questionPayloads(harness.transport)).toEqual([
       {
@@ -108,6 +127,7 @@ describe('user question bridge', () => {
     const controller = new AbortController()
     const timeout = hostTimeout()
     const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
+    await settle()
     // When the host's deadline elapses
     controller.abort(timeout)
     // Then the host's own reason crosses back into its ask unchanged
@@ -282,6 +302,7 @@ describe('user question bridge', () => {
     await legacyConnection.handleText(requestFrame(1, 'hello', { proto: 1 }))
     // When the host asks
     const pending = bare.hub.question(hostRequest(), desktopWaiting)
+    await settle()
     // Then exactly the declaring phone was shown the question
     expect(questionPayloads(declared)).toHaveLength(1)
     expect(legacy.ofType('ev')).toEqual([])
@@ -316,7 +337,9 @@ describe('user question bridge', () => {
     // Then the ask crosses back verbatim and nothing stays answerable
     await expect(pending).rejects.toBe(cancelled)
     expect(harness.questions.size).toBe(0)
-    expect(questionPayloads(harness.transport).map(payload => payload.state)).toEqual(['open'])
+    // And no card was published: the host ended the ask before its first wait frame,
+    // so a card reaching the phone is one the bridge could no longer retract
+    expect(questionPayloads(harness.transport)).toEqual([])
   })
 
   it('operator loses the last phone and the claimed question is delegated', async () => {
@@ -341,6 +364,7 @@ describe('user question bridge', () => {
     await declareQuestions(harness.connection)
     // When the host asks
     const pending = harness.hub.question(hostRequest({ wait: undefined }), desktopWaiting)
+    await settle()
     // Then the phone is still shown the question, named by an id in the bridge's own namespace
     const payload = questionPayloads(harness.transport)[0]
     expect(payload).toMatchObject({ sessionId: 's-1', callId: 'bridge:minted-1', state: 'open' })
@@ -446,5 +470,265 @@ describe('user question bridge', () => {
     // Then the host's own answerer takes over
     expect(await pending).toEqual(ANSWER)
     expect(harness.questions.size).toBe(0)
+  })
+
+  it('user a timed question carries the absolute deadline the host wait reported', async () => {
+    // Given a paired phone and a host whose own wait reports four seconds left
+    const harness = makeHub({ questionNow: () => 1_000_000 })
+    await declareQuestions(harness.connection)
+    const waitStream = new ControllableStream()
+    followWaitStream(harness.gateway, waitStream)
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    // When that first frame arrives
+    waitStream.push({ remainingMs: 4000 })
+    await settle()
+    // Then the subscription spoke for the bridge's own peer, carried exactly the
+    // declared arguments, and could be cancelled through the request's signal
+    const waitCall = harness.gateway.streamRequests[0]
+    expect(waitCall?.args).toEqual({ agentId: 's-1', callId: 'c-1' })
+    expect(waitCall?.peer).toBe(harness.ownerPeer)
+    expect(waitCall?.signal).toBeInstanceOf(AbortSignal)
+    // And the one card the phone received carries the host's absolute deadline
+    const payloads = questionPayloads(harness.transport)
+    expect(payloads).toHaveLength(1)
+    expect(payloads[0]).toMatchObject({ sessionId: 's-1', callId: 'c-1', state: 'open', expiresAt: 1_004_000 })
+    // And the question is answerable exactly as before
+    await harness.connection.handleText(requestFrame(30, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+    expect(harness.questions.size).toBe(0)
+  })
+
+  it('user a blocking question carries no deadline and the host is never asked for one', async () => {
+    // Given a blocking ask, which the host gives no wait at all
+    const harness = makeHub({ questionIds: () => 'minted-5' })
+    await declareQuestions(harness.connection)
+    // When the host asks
+    const pending = harness.hub.question(hostRequest({ wait: undefined }), desktopWaiting)
+    await settle()
+    // Then no wait subscription was opened, and the payload has no such key at all
+    expect(harness.gateway.streamRequests).toEqual([])
+    const payload = questionPayloads(harness.transport)[0]
+    expect(payload).toMatchObject({ sessionId: 's-1', callId: 'bridge:minted-5', state: 'open' })
+    expect(payload).not.toHaveProperty('expiresAt')
+    expect(harness.questions.openClaims()).toEqual([{ sessionId: 's-1', callId: 'bridge:minted-5', questions: expect.any(Array) }])
+    // And it stays answerable with the minted handle
+    await harness.connection.handleText(requestFrame(31, 'question.answer', { sessionId: 's-1', callId: 'bridge:minted-5', answers: ANSWER.answers }))
+    expect(answerOf(harness, 31)).toEqual({ ok: true, r: { ok: true } })
+    expect(await pending).toEqual(ANSWER)
+  })
+
+  it('operator the phone answers a timed question and its wait subscription is closed', async () => {
+    // Given a timed question whose deadline the host reported
+    const harness = makeHub({ questionNow: () => 1_000_000 })
+    await declareQuestions(harness.connection)
+    const waitStream = new ControllableStream()
+    followWaitStream(harness.gateway, waitStream)
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    waitStream.push({ remainingMs: 4000 })
+    await settle()
+    const before = questionPayloads(harness.transport).length
+    // When the phone answers it
+    await harness.connection.handleText(requestFrame(32, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+    // Then the subscription was cancelled with the claim
+    expect(waitStream.aborted).toBe(true)
+    // And a frame that arrives afterwards reaches no phone, because nobody reads it
+    waitStream.push({ remainingMs: 100 })
+    await settle()
+    expect(questionPayloads(harness.transport)).toHaveLength(before)
+  })
+
+  it('operator the claim is withdrawn and its wait subscription stops with it', async () => {
+    // Given a timed question whose deadline the host reported
+    const harness = makeHub({ questionNow: () => 1_000_000 })
+    await declareQuestions(harness.connection)
+    const waitStream = new ControllableStream()
+    followWaitStream(harness.gateway, waitStream)
+    const pending = harness.hub.question(hostRequest(), async () => ANSWER)
+    await settle()
+    waitStream.push({ remainingMs: 4000 })
+    await settle()
+    // When the last phone goes away and the claim is handed back
+    harness.hub.detach(harness.connection)
+    expect(await pending).toEqual(ANSWER)
+    // The phone is already gone, so nothing can carry the settled notice to it
+    const afterWithdraw = questionPayloads(harness.transport)
+    expect(afterWithdraw.map(payload => payload.state)).toEqual(['open'])
+    // Then the subscription stopped with the claim
+    expect(waitStream.aborted).toBe(true)
+    // And no later frame is published to anyone
+    waitStream.push({ remainingMs: 200 })
+    await settle()
+    expect(questionPayloads(harness.transport)).toHaveLength(afterWithdraw.length)
+  })
+
+  it('operator the host moves its deadline and the phone is told at most once a second', async () => {
+    // Given a timed question whose deadline the host reported at t = 1_000_000
+    let clock = 1_000_000
+    const harness = makeHub({ questionNow: () => clock })
+    await declareQuestions(harness.connection)
+    const waitStream = new ControllableStream()
+    followWaitStream(harness.gateway, waitStream)
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    waitStream.push({ remainingMs: 4000 })
+    await settle()
+    // When a frame arrives well inside the minimum interval it is dropped
+    clock = 1_000_400
+    waitStream.push({ remainingMs: 3600 })
+    await settle()
+    // Then the card the phone already holds is left untouched
+    expect(questionPayloads(harness.transport)).toHaveLength(1)
+    // And a frame after the interval updates the card the phone already holds
+    clock = 1_001_500
+    waitStream.push({ remainingMs: 2000 })
+    await settle()
+    const payloads = questionPayloads(harness.transport)
+    expect(payloads).toHaveLength(2)
+    expect(payloads[1]).toMatchObject({ sessionId: 's-1', callId: 'c-1', state: 'open', expiresAt: 1_003_500 })
+    // And the claim is still the one the phone answers
+    await harness.connection.handleText(requestFrame(33, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+  })
+
+  it('user a wait subscription that ends without a frame leaves the question published without a deadline', async () => {
+    // Given a host whose wait subscription ends before saying anything
+    const harness = makeHub()
+    await declareQuestions(harness.connection)
+    // When the host asks
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    // Then the question is published exactly as it was before this channel, and answerable
+    const payload = questionPayloads(harness.transport)[0]
+    expect(payload).toMatchObject({ sessionId: 's-1', callId: 'c-1', state: 'open' })
+    expect(payload).not.toHaveProperty('expiresAt')
+    await harness.connection.handleText(requestFrame(34, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+  })
+
+  it('user a wait subscription that fails leaves the question published without a deadline', async () => {
+    // Given a host whose wait service refuses the subscription outright
+    const harness = makeHub()
+    await declareQuestions(harness.connection)
+    harness.gateway.follow = (call) => {
+      if (call.method !== 'attachWait') return new ControllableStream().iterable()
+      return {
+        [Symbol.asyncIterator]: () => ({
+          next: () => Promise.reject(Object.assign(new Error('no wait service'), { code: 'SERVICE_UNAVAILABLE' })),
+        }),
+      }
+    }
+    // When the host asks
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    // Then the failure is only a log line, never a verdict on the question
+    expect(harness.logs.some(entry => entry.includes('userQuestions/attachWait failed'))).toBe(true)
+    const payload = questionPayloads(harness.transport)[0]
+    expect(payload).toMatchObject({ state: 'open' })
+    expect(payload).not.toHaveProperty('expiresAt')
+    // And the phone can still answer it
+    await harness.connection.handleText(requestFrame(35, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+    expect(harness.questions.size).toBe(0)
+  })
+
+  it('operator the host deadline arrives and the bridge lets go so the host can time the ask out', async () => {
+    // Given a timed question whose deadline the host reported as four seconds away
+    vi.useFakeTimers()
+    let clock = 1_000_000
+    const harness = makeHub({ questionNow: () => clock })
+    await declareQuestions(harness.connection)
+    const waitStream = new ControllableStream()
+    followWaitStream(harness.gateway, waitStream)
+    const controller = new AbortController()
+    const timeout = hostTimeout()
+    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
+    await settle()
+    waitStream.push({ remainingMs: 4000 })
+    await settle()
+    expect(questionPayloads(harness.transport)[0]?.expiresAt).toBe(1_004_000)
+    // When that deadline arrives with nobody having answered
+    clock = 1_004_000
+    await vi.advanceTimersByTimeAsync(4000)
+    // Then the bridge released the host's wait, whose own timer only resumes once nobody holds it
+    expect(waitStream.aborted).toBe(true)
+    // And the host's own ASK_TIMED_OUT still turns the claim continued, as it did before
+    controller.abort(timeout)
+    await expect(pending).rejects.toBe(timeout)
+    expect(harness.questions.stateOf('c-1')).toBe('continued')
+    expect(questionPayloads(harness.transport).map(payload => payload.state)).toEqual(['open', 'continued'])
+  })
+
+  it('operator a phone that reconnects is handed the deadline the question already carries', async () => {
+    // Given a timed question whose deadline the host reported
+    const harness = makeHub({ questionNow: () => 1_000_000 })
+    await declareQuestions(harness.connection)
+    const waitStream = new ControllableStream()
+    followWaitStream(harness.gateway, waitStream)
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    waitStream.push({ remainingMs: 4000 })
+    await settle()
+    const before = questionPayloads(harness.transport).length
+    // When that phone declares the channel again after reconnecting
+    await declareQuestions(harness.connection, 9)
+    // Then the replayed card carries the same host deadline, under the same call id
+    const replayed = questionPayloads(harness.transport).slice(before)
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0]).toMatchObject({ sessionId: 's-1', callId: 'c-1', state: 'open', expiresAt: 1_004_000 })
+    // And the host is still waiting, not answered by the replay
+    await harness.connection.handleText(requestFrame(36, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+  })
+
+  it('operator the host abandons the ask before its first wait frame and no card is ever published', async () => {
+    // Given a timed question whose wait subscription has reported nothing yet
+    const harness = makeHub({ questionNow: () => 1_000_000 })
+    await declareQuestions(harness.connection)
+    const waitStream = new ControllableStream()
+    followWaitStream(harness.gateway, waitStream)
+    const controller = new AbortController()
+    const cancelled = Object.assign(new Error('the turn was cancelled'), { code: 'ASK_ABORTED' })
+    const pending = harness.hub.question(hostRequest({ signal: controller.signal }), desktopWaiting)
+    await settle()
+    // When the host's own lifetime ends before any frame arrives
+    controller.abort(cancelled)
+    // Then its reason crosses back unchanged
+    await expect(pending).rejects.toBe(cancelled)
+    // And no card reached the phone, because a claim nobody can retract is worse
+    // than no card at all
+    expect(questionPayloads(harness.transport)).toEqual([])
+    // And the subscription went with the claim
+    expect(waitStream.aborted).toBe(true)
+    expect(harness.questions.size).toBe(0)
+  })
+
+  it('operator the bridge releases the wait itself and that release is not logged as a failure', async () => {
+    // Given a wait subscription whose reads fail once cancelled, which is what the
+    // gateway's own cancellable stream reports for an aborted Remote call
+    const harness = makeHub({ questionNow: () => 1_000_000 })
+    await declareQuestions(harness.connection)
+    harness.gateway.follow = (call) => {
+      const signal = call.signal
+      return {
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise((_resolve, reject) => {
+            signal?.addEventListener('abort', () => {
+              reject(Object.assign(new Error('Remote invocation "userQuestions/attachWait" was aborted'), { code: 'gateway/cancelled' }))
+            }, { once: true })
+          }),
+        }),
+      }
+    }
+    // When the phone answers an ask the host never reported a wait for
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    await harness.connection.handleText(requestFrame(37, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+    await settle()
+    // Then releasing the subscription on purpose was not reported as a fault
+    expect(harness.logs.filter(entry => entry.includes('attachWait'))).toEqual([])
   })
 })
