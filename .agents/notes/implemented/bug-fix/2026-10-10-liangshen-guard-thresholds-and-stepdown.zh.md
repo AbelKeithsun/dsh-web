@@ -2,9 +2,11 @@
 
 Status: implemented
 
+已被[退场记录](../simplification/2026-10-17-liangshen-guard-retirement.zh.md)取代：这些阈值所属的熔断器已移除。
+
 ## Problem
 
-梁神预设的运行时退化熔断器（`packages/dsh-liangshen/presets/liangshen/guard.mjs`）有三处已确认缺陷，均记录在 `docs/liangshen-known-issues.md` 第 1–3 条。
+梁神预设的运行时退化熔断器（`packages/dsh-liangshen/presets/liangshen/guard.mjs`）有三处已确认缺陷，均记录在该包当时维护的已知问题清单第 1–3 条。
 
 **1. 自适应阈值与灵敏度旋钮在出厂路径上完全失效。** `resolveThresholds` 让显式细调值优先于按推理档位的自适应表与灵敏度预设，而插件 Config 把 `guardStallReasoningChars: 8000`、`guardGlobalStallCap: 4`、`guardEchoFailures: 3` 声明为 schema 默认值，`resolveConfig` 又按 `DEFAULT_CONFIG` 兜底，`applyPresetOverrides` 把这三个值无条件写进所声明预设的 `guard` 行，而出厂 `agent.cordis.yml` 本身也带着同样的三个键。任何一层单独存在就足以把取值钉死，四层叠加后 `effort` 与 `sensitivity` 两个输入对熔断器完全无效。出厂配置实测：`effort` 取 max/high/low 全部得到 8000，conservative/balanced/aggressive 也全部得到 8000。于是 `low` 档会话实际跑着比设计严 2.5 倍的阈值——正是抬高误中断率的方向，而熔断器自己写明的原则（「误中断真实长思考比漏报更伤体验」）禁止这一点。
 

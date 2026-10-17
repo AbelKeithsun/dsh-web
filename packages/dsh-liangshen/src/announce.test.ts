@@ -195,19 +195,12 @@ describe('dsh-liangshen preset declaration', () => {
   })
 
   it('operator gets the committed settings applied to the rows they shape', async () => {
-    // Given committed presentation and guard settings, When the operator
-    // activates the plugin, Then the declared rows carry those values.
-    const { host } = await mount({ presentation: 'ptc', guardEnabled: false, guardEchoFailures: 5 })
+    // Given a committed presentation, When the operator activates the plugin,
+    // Then the declared tool-catalog row carries it.
+    const { host } = await mount({ presentation: 'native' })
     const rows = host.declarations[0]!.definition.plugins as readonly { id?: string, config?: Record<string, unknown> }[]
-    expect(rows.find(row => row.id === 'tool-catalog')?.config?.['presentation']).toBe('ptc')
-    // The echo override the operator committed is written; the two overrides
-    // nobody set stay out of the row entirely, so the guard resolves them from
-    // the session's reasoning effort and the sensitivity preset.
-    expect(rows.find(row => row.id === 'guard')?.config).toEqual({
-      enabled: false,
-      sensitivity: 'balanced',
-      echoFailures: 5,
-    })
+    expect(rows.find(row => row.id === 'tool-catalog')?.config?.['presentation']).toBe('native')
+    expect(rows.find(row => row.id === 'guard')).toBeUndefined()
   })
 
   it('operator keeps the roster and the prompt untouched while the master switch is off', async () => {

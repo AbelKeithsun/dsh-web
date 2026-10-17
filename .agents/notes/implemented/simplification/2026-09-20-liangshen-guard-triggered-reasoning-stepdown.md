@@ -4,6 +4,8 @@
 
 Status: implemented
 
+Superseded by [the retirement note](2026-10-17-liangshen-guard-retirement.md): the breaker this note revived has been removed from the preset, the plugin settings, and the documentation.
+
 ## New evidence (published after the earlier note)
 
 The earlier note's third reason for removal was "the persona's reflection-fuse discipline is sufficient to suppress发散 thinking". DeepSeek-V4.1-Flash (released 2026-09-10) disproved it:

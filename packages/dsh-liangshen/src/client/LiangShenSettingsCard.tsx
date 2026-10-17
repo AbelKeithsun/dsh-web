@@ -14,14 +14,11 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { LiangShenMark } from './LiangShenMark.tsx'
-import { BooleanField, ChoiceField, PluginSettingsCard, ValueField } from './PluginSettingsCard.tsx'
-import { CardForm, booleanField, choiceField, numberField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
+import { BooleanField, ChoiceField, PluginSettingsCard } from './PluginSettingsCard.tsx'
+import { CardForm, booleanField, choiceField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 
 /** Wire presentations the tool catalog accepts (mirrors the Host schema). */
 export const PRESENTATION_CHOICES = ['ptc', 'native'] as const
-
-/** Sensitivity presets for the circuit breaker (mirrors the Host schema). */
-export const SENSITIVITY_CHOICES = ['conservative', 'balanced', 'aggressive'] as const
 
 /** The LiangShen fields this card edits (the namespace's full schema). */
 export interface LiangShenSettings {
@@ -33,16 +30,6 @@ export interface LiangShenSettings {
   presentation?: string
   /** Whether the preset appends the dispatcher rules section after the persona. */
   dispatcher?: boolean
-  /** Master switch for the runtime degeneration circuit breaker. */
-  guardEnabled?: boolean
-  /** Sensitivity preset scaling the breaker's adaptive thresholds. */
-  guardSensitivity?: string
-  /** Per-step reasoning-character floor for the breaker's runaway ladder. */
-  guardStallReasoningChars?: number
-  /** Consecutive output-free reasoning steps for the breaker's slow-burn ladder. */
-  guardGlobalStallCap?: number
-  /** Identical-argument tool failures for the breaker's echo ladder. */
-  guardEchoFailures?: number
 }
 
 /** What the LiangShen card renders. */
@@ -51,11 +38,6 @@ export interface LiangShenSettingsCardState extends CardShell {
   announceToAgent: CardFieldState
   presentation: CardFieldState
   dispatcher: CardFieldState
-  guardEnabled: CardFieldState
-  guardSensitivity: CardFieldState
-  guardStallReasoningChars: CardFieldState
-  guardGlobalStallCap: CardFieldState
-  guardEchoFailures: CardFieldState
 }
 
 /** The registration-side face the card's slot entry injects. */
@@ -78,11 +60,6 @@ export class LiangShenSettingsCardController {
       booleanField('announceToAgent'),
       choiceField('presentation', PRESENTATION_CHOICES),
       booleanField('dispatcher'),
-      booleanField('guardEnabled'),
-      choiceField('guardSensitivity', SENSITIVITY_CHOICES),
-      numberField('guardStallReasoningChars', { integer: true, min: 200 }),
-      numberField('guardGlobalStallCap', { integer: true, min: 2 }),
-      numberField('guardEchoFailures', { integer: true, min: 2 }),
     ])
     this.store = this.form.bind(() => this.projection())
   }
@@ -94,11 +71,6 @@ export class LiangShenSettingsCardController {
       announceToAgent: this.form.field('announceToAgent'),
       presentation: this.form.field('presentation'),
       dispatcher: this.form.field('dispatcher'),
-      guardEnabled: this.form.field('guardEnabled'),
-      guardSensitivity: this.form.field('guardSensitivity'),
-      guardStallReasoningChars: this.form.field('guardStallReasoningChars'),
-      guardGlobalStallCap: this.form.field('guardGlobalStallCap'),
-      guardEchoFailures: this.form.field('guardEchoFailures'),
     }
   }
 
@@ -192,60 +164,6 @@ export function LiangShenSettingsCard(props: LiangShenSettingsCardProps) {
         {...state.dispatcher}
         onEdit={(text) => { props.edit('dispatcher', text) }}
         onReset={() => { props.resetField('dispatcher') }}
-      />
-      <BooleanField
-        id="settings-liangshen-guard-enabled"
-        label={t('settings.guardEnabled')}
-        hint={t('settings.guardEnabledHint')}
-        onLabel={t('settings.on')}
-        offLabel={t('settings.off')}
-        {...fieldProps}
-        {...state.guardEnabled}
-        onEdit={(text) => { props.edit('guardEnabled', text) }}
-        onReset={() => { props.resetField('guardEnabled') }}
-      />
-      <ChoiceField
-        id="settings-liangshen-guard-sensitivity"
-        label={t('settings.guardSensitivity')}
-        hint={t('settings.guardSensitivityHint')}
-        choices={SENSITIVITY_CHOICES.map(choice => ({ value: choice, label: t(`sensitivity.${choice}`) }))}
-        {...fieldProps}
-        {...state.guardSensitivity}
-        onEdit={(text) => { props.edit('guardSensitivity', text) }}
-        onReset={() => { props.resetField('guardSensitivity') }}
-      />
-      <ValueField
-        id="settings-liangshen-guard-stall-chars"
-        numeric
-        label={t('settings.guardStallChars')}
-        hint={t('settings.guardStallCharsHint')}
-        placeholder={t('settings.guardAdaptive')}
-        {...fieldProps}
-        {...state.guardStallReasoningChars}
-        onEdit={(text) => { props.edit('guardStallReasoningChars', text) }}
-        onReset={() => { props.resetField('guardStallReasoningChars') }}
-      />
-      <ValueField
-        id="settings-liangshen-guard-global-cap"
-        numeric
-        label={t('settings.guardGlobalCap')}
-        hint={t('settings.guardGlobalCapHint')}
-        placeholder={t('settings.guardAdaptive')}
-        {...fieldProps}
-        {...state.guardGlobalStallCap}
-        onEdit={(text) => { props.edit('guardGlobalStallCap', text) }}
-        onReset={() => { props.resetField('guardGlobalStallCap') }}
-      />
-      <ValueField
-        id="settings-liangshen-guard-echo"
-        numeric
-        label={t('settings.guardEchoFailures')}
-        hint={t('settings.guardEchoFailuresHint')}
-        placeholder={t('settings.guardAdaptive')}
-        {...fieldProps}
-        {...state.guardEchoFailures}
-        onEdit={(text) => { props.edit('guardEchoFailures', text) }}
-        onReset={() => { props.resetField('guardEchoFailures') }}
       />
     </PluginSettingsCard>
   )

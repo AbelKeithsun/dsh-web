@@ -243,45 +243,6 @@ describe('applyPresetOverrides', () => {
     expect(applyPresetOverrides(parsed, {})).toEqual(parsed)
   })
 
-  it('operator leaves every guard key out of the row while the settings are unset', () => {
-    // Given the shipped rows and settings whose guard overrides are unset (the
-    // factory state), When the operator applies the overlay, Then the guard row
-    // carries no fine-tuning key at all, so the guard's own effort-adaptive
-    // thresholds and sensitivity preset are what a session actually runs.
-    const applied = applyPresetOverrides(rows(), {
-      presentation: 'ptc',
-      guardEnabled: true,
-      guardSensitivity: 'balanced',
-      guardStallReasoningChars: undefined,
-      guardGlobalStallCap: undefined,
-      guardEchoFailures: undefined,
-    })
-    expect(configOf(rowOf(applied, 'guard'))).toEqual({ enabled: true, sensitivity: 'balanced' })
-  })
-
-  it('operator writes the settings into the rows that carry them', () => {
-    // Given committed settings, When the operator applies the overlay, Then
-    // the tool-catalog and guard rows carry them and nothing else moves.
-    const applied = applyPresetOverrides(rows(), {
-      presentation: 'ptc',
-      guardEnabled: false,
-      guardSensitivity: 'aggressive',
-      guardStallReasoningChars: 12000,
-      guardGlobalStallCap: 6,
-      guardEchoFailures: 2,
-    })
-    expect(configOf(rowOf(applied, 'tool-catalog'))['presentation']).toBe('ptc')
-    expect(configOf(rowOf(applied, 'guard'))).toEqual({
-      enabled: false,
-      sensitivity: 'aggressive',
-      stallReasoningChars: 12000,
-      globalStallCap: 6,
-      echoFailures: 2,
-    })
-    expect(configOf(rowOf(applied, 'tool-catalog'))['descriptionMaxLength']).toBe(200)
-    expect(rowOf(applied, 'minimal-prompt')).toEqual(rowOf(rows(), 'minimal-prompt'))
-  })
-
   it('operator leaves the dispatcher key out of the row while the setting is unset', () => {
     // Given the shipped rows and no dispatcher choice, When the operator
     // applies the overlay, Then the minimal-prompt row keeps exactly the keys
@@ -303,7 +264,7 @@ describe('applyPresetOverrides', () => {
     expect(prompt['keepPlanPolicy']).toBe(true)
     expect(prompt['instructionSource']).toBe('host')
     expect(configOf(rowOf(applied, 'tool-catalog'))['presentation']).toBe('native')
-    expect(rowOf(applied, 'guard')).toEqual(rowOf(rows(), 'guard'))
+    expect(rowOf(applied, 'working-context')).toEqual(rowOf(rows(), 'working-context'))
   })
 
   it('operator turns the dispatcher switch back off through the same key', () => {

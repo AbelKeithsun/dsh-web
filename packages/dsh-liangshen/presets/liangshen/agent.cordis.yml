@@ -183,27 +183,6 @@
 - id: working-context
   name: ./working-context.mjs
 
-# The runtime degeneration circuit breaker: folds a stall (consecutive zero-
-# output long-reasoning steps) or echo (identical-argument tool failures)
-# signal from the durable session event stream and fires once per episode,
-# injecting a breaker message at pre-step. A STALL also steps the reasoning
-# effort one notch down (max -> high, never below the sweet spot) for the next
-# few requests; an echo only gets the message. With no signal it never rewrites
-# a request, so the route's explicit effort and the prefix cache stay
-# untouched. This is the outside force the persona's reflection fuse cannot
-# be: see DSH discussion #5976 and the Agent Note that constrains dynamic
-# reasoning effort to this triggered-only form.
-#
-# The character floor and the two caps are deliberately NOT set here: absent,
-# the guard resolves them per request from the session's reasoning effort
-# (8000 at max / 12000 at high / 20000 at low) and scales them by the
-# sensitivity preset. Setting one here would pin it for every effort level.
-- id: guard
-  name: ./guard.mjs
-  config:
-    enabled: true
-    sensitivity: 'balanced'
-
 # The paging activation handle the catalog points at: with `pagedToolPatterns`
 # non-empty this row is what lets `tool_activate({ namespace })` bring one
 # paged namespace back onto the wire (and the generated SDK) for the session.

@@ -4,6 +4,8 @@
 
 Status: implemented
 
+已被[退场记录](2026-10-17-liangshen-guard-retirement.zh.md)取代：本记录恢复的熔断器已从预设、插件设置与文档中移除。
+
 ## 新证据（原 note 之后出现）
 
 原 note 删除动态推理努力度的第三条理由是「persona 熔断纪律已足以压制发散思维」。该理由被 2026-09-10 V4.1-Flash 发布后的新证据推翻：

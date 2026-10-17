@@ -2,9 +2,11 @@
 
 Status: implemented
 
+Superseded by [the retirement note](../simplification/2026-10-17-liangshen-guard-retirement.md): the breaker these thresholds belonged to has been removed.
+
 ## Problem
 
-Three confirmed defects in the LiangShen preset's runtime degeneration circuit breaker (`packages/dsh-liangshen/presets/liangshen/guard.mjs`), all recorded in `docs/liangshen-known-issues.md` items 1-3.
+Three confirmed defects in the LiangShen preset's runtime degeneration circuit breaker (`packages/dsh-liangshen/presets/liangshen/guard.mjs`), all recorded in the package's then-maintained known-issues list.
 
 **1. The adaptive thresholds and the sensitivity dial were dead on the factory path.** `resolveThresholds` gives an explicit fine-tuning value priority over both the effort-adaptive table and the sensitivity preset, while the plugin's Config declared `guardStallReasoningChars: 8000`, `guardGlobalStallCap: 4` and `guardEchoFailures: 3` as schema defaults, `resolveConfig` resolved them against `DEFAULT_CONFIG`, `applyPresetOverrides` wrote them into the declared preset's `guard` row unconditionally, and the shipped `agent.cordis.yml` carried the same three keys. Each layer alone was enough to pin the values; together they made the `effort` and `sensitivity` inputs to the breaker inert. Measured on the factory configuration: `effort` of max/high/low all resolved to 8000, and conservative/balanced/aggressive all resolved to 8000. A `low`-effort session therefore ran a floor 2.5x stricter than designed — the direction that raises the false-interruption rate, which the breaker's own stated principle ("a false interruption of real long thinking hurts more than a missed episode") forbids.
 

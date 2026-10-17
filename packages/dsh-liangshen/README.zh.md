@@ -12,7 +12,7 @@
 
 <p align="center">
   <strong>DeepSeek Harness（DSH）官方 Web GUI 与桌面客户端极简 Agent 预设与高效代码工具传输引擎</strong><br>
-  <em>极简 Persona 系统提示词 · run_code 程序化工具传输 · MCP 工具温和分页 · 运行时退化熔断 · 关键事实登记簿</em>
+  <em>极简 Persona 系统提示词 · run_code 程序化工具传输 · MCP 工具温和分页 · 关键事实登记簿</em>
 </p>
 
 把梁神模式做成 DSH 全家桶里的一键安装插件：Host 半区在激活时把内置 preset 直接声明给 harness 的 agent-preset registry（声明即启用），新建会话即可在预设选择器中选择「梁神模式」，浏览器半区还在新建会话页的模型选择器旁提供一台老虎机拨杆来开关该模式。该 preset 让系统提示词保持极简 persona——外加本模式的固定工作纪律与会话工作区目录——AGENTS.md 类工作区指令交由 harness 以自己的 user 角色消息送达；工具面则从第一条用户消息起作为持久 user 消息注入在用户消息之后——形状与 harness 注入 skill 目录一致，且只宣告该次请求实际开放的工具。wire 在整个会话中保持由 `presentation` 选定的同一种呈现（出厂默认 `presentation: 'ptc'`）：wire 收拢为唯一的 `run_code` 传输工具，其余工具经生成的 SDK 在程序内调用；未挂载 code runtime 的部署回退为原生呈现并一次性告警，而不是宣告一个该请求无法承载的传输工具。被分页扣留的匹配工具（默认 `mcp__*`）在激活前不可达：它们以命名空间摘要出现在目录里，`ptc` 下同时不出现在生成的 SDK 中——分页是注册表级限制，不只是 wire 过滤。`tool_activate` 把一个命名空间挂回整个可达面。全部通过官方 NPM SDK 实现，不修改 DSH 源码。
@@ -33,8 +33,7 @@ DeepSeek V4.1 Flash 的后训练直接对齐其原生 DSML 工具调用面，官
 6. 最小版 working-context 行——plan-mode 状态、已激活的分页命名空间、进行中的 todo——只在其来源可读时注入到最新消息尾部，让当前状态落在模型的局部注意力窗口内；运行时上下文（sandbox 与 approval 快照）与 skill 目录按 Standard 模式正常注入；
 7. 目录把已激活分页家族的工具归在 `namespace `<名称>` (activated):` 标题之下，而不是把一个服务端的工具散落在字母序清单里；未被分页的工具仍保持扁平条目；
 8. `maxResidentTokens`（默认 8000）估算常驻 wire 面并在超过时告警一次，列出最重的工具并把 `pagedToolPatterns` 指为处置手段。该阈值按 V4.1 的 KV 压缩重新校准（其 KV cache 为 V4-Flash 的 1/4，同样的 schema 负载只占 1/4 的稀疏索引槽位，阈值由 6000 上调至 8000），仍校准在出厂清单之上，用于发现真实增长而非出厂配置本身。该守卫从不截断：静默丢掉会话需要的工具，等于用可度量的上下文成本换取不可度量的能力损失。
-9. 运行时退化熔断器（`guard`）每步从会话事件流折叠信号，在两类退化形态下每个 episode 触发一次——停摆（连续零产出的长思考回合）或空转（同一工具以相同参数连续失败）——注入熔断消息；第三类「呈现误用」信号同样每 episode 一次：同一 shell 类工具（bash / pwsh / win_bash）连续四次成功调用且期间没有任何 `run_code` 程序时，注入一次打包提示（「把这些步骤打包进一个程序，只把结论带进上下文」）；请求不携带该传输工具时该信号整体抑制；并且仅在停摆信号下——其成因是推理预算过大——在接下来几个请求内把推理档位临时下调一档（max → high，high 档保持不变，因为它已处于模型实测的推理甜区）；空转信号只注入消息，因为它的成因是调用本身失效而非预算过大；无信号时它从不改写任何请求，路由的显式档位与前缀缓存都不受影响。这是 persona 反思熔断无法充当的外力（DSH discussion #5976）；
-10. 关键事实登记簿（`fact_register`）让模型把用户硬性约束、已确认的架构决策、失败过的路径登记为一行短事实；登记簿从持久事件流折叠，随 `[Working Context: ...]` 行投射——每步都落在保证命中的局部注意力窗口内——以此对抗 V4.1 的长会话遗忘。
+9. 关键事实登记簿（`fact_register`）让模型把用户硬性约束、已确认的架构决策、失败过的路径登记为一行短事实；登记簿从持久事件流折叠，随 `[Working Context: ...]` 行投射——每步都落在保证命中的局部注意力窗口内——以此对抗 V4.1 的长会话遗忘。
 
 ## 安全模型
 
@@ -119,11 +118,6 @@ dsh plugin --profile web remove @linxin666/dsh-liangshen
 | `announceToAgent` | `false` | 按需开启：开启后向 agent 系统提示注入本插件公告。默认关闭，保持系统提示词干净。 |
 | `presentation` | `ptc` | 写入本插件所声明 preset 之 `tool-catalog` 行的 wire 呈现：`ptc`（默认）把 wire 收拢为 `run_code`，其余工具经生成的 SDK 调用；`native` 保持组装出的原生清单。Host 提交改动后立即重新声明 preset，此后新建的会话即采用新值；已开始的会话保持其已声明的组合。已删除的 `both` 取值在注册时被拒绝——旧 profile 请迁移为 `ptc` 或 `native`。 |
 | `dispatcher` | `true` | 身份开关：开启时（出厂默认）所声明的 preset 在 persona 之后追加调度者规则段——复杂度分诊（L0/L1 直接执行，L2 走完整流程）、拒绝 Agent Teams 的 R0.5 兼容性闸门、L2 任务先澄清访谈再规划、派发子代理并逐层审查与验收，以及落在 `todo_write` 的任务跟踪——其后是本地英文补充：访谈类新增内容，加上参考文本没有的那一条规则——看板卡片不替代派发。关闭后回到仅含工作纪律的极简 persona。它与 `presentation` 正交：`presentation` 决定工具面，`dispatcher` 决定身份与流程纪律。 |
-| `guardEnabled` | `true` | 运行时退化熔断器总开关：检测连续零产出长思考与同参重复失败，触发时注入熔断提示并临时下调推理档位；关闭后不干预任何请求。 |
-| `guardSensitivity` | `balanced` | 熔断灵敏度预设：整体缩放阈值——`conservative`（更少打断，×1.5）、`balanced`（出厂校准值）、`aggressive`（更早触发，×0.5）。 |
-| `guardStallReasoningChars` | （未设置） | 单步暴走梯字符阈值的**覆写值**：不设置时阈值随推理档位自适应（max 档 8000 / high 档 12000 / low 档 20000，按 V4.1 官方 384K 最大输出校准），并再按 `guardSensitivity` 缩放；设置本字段则以本值为准、覆盖所有档位的自适应表。 |
-| `guardGlobalStallCap` | （未设置） | 熔断器慢烧梯连续步数的**覆写值**：不设置时随灵敏度预设缩放（balanced 为 4），设置本字段则以本值为准。 |
-| `guardEchoFailures` | （未设置） | 熔断器空转梯的**覆写值**：同一工具以相同参数连续失败多少次触发；不设置时该次数随灵敏度预设缩放（balanced 为 3）。以上熔断字段与 `presentation` 一样写入所声明的 preset 生效。 |
 
 各字段都可在 Web 设置界面（插件配置）或 profile patch（`dsh plugin` / `cordis.patch.yml`）中编辑。0.1.7 的设置契约下，插件自身的 Config 就是它的设置页：Host 为每个 profile entry 生成一张表单（entry id 为 `liangshen`，聚合安装下为生成的 `web-ui-liangshen` 行），每个字段都声明为 `volatile()`，因此写入被提交进运行中的插件实例，而不是重挂该行。塑造 preset 的 presentation 字段再经声明抵达会话：插件把已提交的取值应用到 `presets/liangshen/agent.cordis.yml` 的对应行并重新声明 preset，因此真正被会话运行的是设置界面的取值，而不是包内文件。组合里没有的行或键绝不会被凭空写入——覆写只会收窄出厂配置。改动对之后新建的会话生效；已开始的会话保持其已声明的组合，因为 registry 拒绝重组已开始的会话。
 

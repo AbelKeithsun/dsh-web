@@ -491,24 +491,13 @@ export function readPresetDefinition(id: string, dir: string): PresetDefinition 
  * The settings surface edits the PLUGIN's own Config, while the values that
  * shape a session live in the declared preset's rows; applying them here is what
  * connects the two. Every field is optional, and an absent OR `undefined` value
- * writes nothing at all — the key stays out of the row and the guard's own
- * adaptive resolution decides the effective threshold.
+ * writes nothing at all — the key stays out of the row.
  */
 export interface PresetOverrides {
   /** The `tool-catalog` row's `presentation` value. */
   presentation?: string
   /** The `minimal-prompt` row's `dispatcher` switch. */
   dispatcher?: boolean
-  /** The `guard` row's `enabled` switch. */
-  guardEnabled?: boolean
-  /** The `guard` row's sensitivity preset. */
-  guardSensitivity?: string
-  /** The `guard` row's per-step reasoning-character floor override. */
-  guardStallReasoningChars?: number | undefined
-  /** The `guard` row's slow-burn step cap override. */
-  guardGlobalStallCap?: number | undefined
-  /** The `guard` row's identical-argument failure count override. */
-  guardEchoFailures?: number | undefined
 }
 
 /** One settings overlay entry: the row it targets and the keys it writes. */
@@ -519,13 +508,6 @@ function overrideTargets(overrides: PresetOverrides): OverrideTarget[] {
   return [
     ['tool-catalog', { ...overrides.presentation === undefined ? {} : { presentation: overrides.presentation } }],
     ['minimal-prompt', { ...overrides.dispatcher === undefined ? {} : { dispatcher: overrides.dispatcher } }],
-    ['guard', {
-      ...overrides.guardEnabled === undefined ? {} : { enabled: overrides.guardEnabled },
-      ...overrides.guardSensitivity === undefined ? {} : { sensitivity: overrides.guardSensitivity },
-      ...overrides.guardStallReasoningChars === undefined ? {} : { stallReasoningChars: overrides.guardStallReasoningChars },
-      ...overrides.guardGlobalStallCap === undefined ? {} : { globalStallCap: overrides.guardGlobalStallCap },
-      ...overrides.guardEchoFailures === undefined ? {} : { echoFailures: overrides.guardEchoFailures },
-    }],
   ]
 }
 
@@ -535,9 +517,8 @@ function overrideTargets(overrides: PresetOverrides): OverrideTarget[] {
  * Rows are addressed by their `id`, and only a row the composition actually
  * carries is touched: the overlay narrows the shipped configuration, it never
  * invents a mount the preset did not have. A field the settings surface left
- * unset is written as no key at all rather than as a value, which is what keeps
- * the guard's effort-adaptive thresholds the shipped behavior: the overlay only
- * ever adds an override on top of them.
+ * unset is written as no key at all rather than as a value, so the row keeps the
+ * value the composition declares.
  * @param rows - the parsed composition rows.
  * @param overrides - the operator's settings-surface choices.
  * @returns a new row list with the overlay applied.

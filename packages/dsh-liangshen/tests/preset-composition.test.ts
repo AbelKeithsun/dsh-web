@@ -120,10 +120,12 @@ describe('liangshen preset composition', () => {
     expect(row('tool-catalog')).not.toContain('anchorTools')
   })
 
-  it('mounts working-context, tool-activate, and the guard', () => {
+  it('mounts working-context and tool-activate, and no retired guard row', () => {
     expect(row('tool-activate')).toContain('name: ./tool-activate.mjs')
     expect(row('working-context')).toContain('name: ./working-context.mjs')
-    expect(row('guard')).toContain('name: ./guard.mjs')
+    // The runtime degeneration circuit breaker is retired: the composition
+    // carries no guard row, so no session mounts its pre-step channel.
+    expect(row('guard')).toBe('')
   })
 
   it('does not mount reasoning-effort plugin', () => {

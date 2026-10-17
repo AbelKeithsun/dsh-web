@@ -16257,7 +16257,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			});
 		}
 		/** A staged value field. `numeric` only hints the keypad: which drafts a field accepts is decided by its spec. */
-		function ValueField$2(props) {
+		function ValueField$1(props) {
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: settings_card_module_css_default$3.field,
 				children: [
@@ -17272,7 +17272,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 										props.resetField("preventIdleSleep");
 									}
 								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$2, {
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
 									id: "settings-task-board-session-poll",
 									label: t("settings.sessionPollSeconds"),
 									hint: t("settings.sessionPollSecondsHint"),
@@ -17304,7 +17304,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 										props.resetField("maxSubtaskDepth");
 									}
 								}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$2, {
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
 									id: "settings-task-board-run-launch-width",
 									label: t("settings.runLaunchWidth"),
 									hint: t("settings.runLaunchWidthHint"),
@@ -25995,7 +25995,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			});
 		}
 		/** A staged value field. `numeric` only hints the keypad: which drafts a field accepts is decided by its spec. */
-		function ValueField$1(props) {
+		function ValueField(props) {
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: settings_card_module_css_default$1.field,
 				children: [
@@ -26264,7 +26264,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		//#endregion
 		//#region ../dsh-remote-web-ui/src/client/settings-form.ts
 		/** A whole- or decimal-number field. An empty draft clears the field; any other draft that is not a finite number within the constraints blocks the save. */
-		function numberField$1(field, constraints = {}) {
+		function numberField(field, constraints = {}) {
 			const { integer = false, min } = constraints;
 			return {
 				field,
@@ -26617,10 +26617,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			constructor(scope) {
 				this.form = new CardForm$1(scope, [
 					booleanField$1("enabled"),
-					numberField$1("tokenTtlMs"),
-					numberField$1("offlineAfterMs"),
-					numberField$1("maxDevices"),
-					numberField$1("idleExpireMs"),
+					numberField("tokenTtlMs"),
+					numberField("offlineAfterMs"),
+					numberField("maxDevices"),
+					numberField("idleExpireMs"),
 					textField("cookieName"),
 					booleanField$1("requirePairingForLan"),
 					textField("publicBaseUrl"),
@@ -26707,7 +26707,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							props.resetField("enabled");
 						}
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
 						id: "settings-remote-token-ttl",
 						label: t("settings.tokenTtlMs"),
 						hint: t("settings.tokenTtlMsHint"),
@@ -26721,7 +26721,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							props.resetField("tokenTtlMs");
 						}
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
 						id: "settings-remote-offline",
 						label: t("settings.offlineAfterMs"),
 						hint: t("settings.offlineAfterMsHint"),
@@ -26735,7 +26735,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							props.resetField("offlineAfterMs");
 						}
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
 						id: "settings-remote-max-devices",
 						label: t("settings.maxDevices"),
 						hint: t("settings.maxDevicesHint"),
@@ -26749,7 +26749,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							props.resetField("maxDevices");
 						}
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
 						id: "settings-remote-idle-expire",
 						label: t("settings.idleExpireMs"),
 						hint: t("settings.idleExpireMsHint"),
@@ -26763,7 +26763,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							props.resetField("idleExpireMs");
 						}
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
 						id: "settings-remote-cookie",
 						label: t("settings.cookieName"),
 						hint: t("settings.cookieNameHint"),
@@ -26792,7 +26792,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							props.resetField("requirePairingForLan");
 						}
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
 						id: "settings-remote-public-base",
 						label: t("settings.publicBaseUrl"),
 						hint: t("settings.publicBaseUrlHint"),
@@ -26822,7 +26822,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 							props.resetField("autoTunnel");
 						}
 					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField$1, {
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
 						id: "settings-remote-tunnel-token",
 						label: t("settings.tunnelToken"),
 						hint: t("settings.tunnelTokenHint"),
@@ -47466,51 +47466,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				}) : null]
 			});
 		}
-		/** A staged value field. `numeric` only hints the keypad: which drafts a field accepts is decided by its spec. */
-		function ValueField(props) {
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: settings_card_module_css_default.field,
-				children: [
-					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-						className: settings_card_module_css_default.head,
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
-							className: settings_card_module_css_default.label,
-							htmlFor: props.id,
-							children: props.label
-						}), props.overridden ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-							className: settings_card_module_css_default.badges,
-							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-								className: settings_card_module_css_default.badge,
-								children: props.overriddenLabel
-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								className: settings_card_module_css_default.reset,
-								disabled: props.disabled,
-								onClick: props.onReset,
-								children: props.resetLabel
-							})]
-						}) : null]
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-						id: props.id,
-						className: props.invalid ? settings_card_module_css_default.inputInvalid : settings_card_module_css_default.input,
-						type: "text",
-						...props.numeric === true ? { inputMode: "numeric" } : {},
-						...props.invalid ? { "aria-invalid": true } : {},
-						value: props.text,
-						placeholder: props.placeholder ?? "",
-						disabled: props.disabled,
-						onChange: (event) => {
-							props.onEdit(event.target.value);
-						}
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-						className: props.invalid ? settings_card_module_css_default.invalid : settings_card_module_css_default.hint,
-						children: props.invalid ? props.invalidLabel : props.hint
-					})
-				]
-			});
-		}
 		const NON_SKIN_BODY_MARKERS = /* @__PURE__ */ new Set(["dshSkinCenter", "dshSidebarCollapsed"]);
 		function isSkinActive() {
 			return Object.keys(document.body.dataset).some((key) => key.startsWith("dsh") && !NON_SKIN_BODY_MARKERS.has(key));
@@ -47778,26 +47733,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		}
 		//#endregion
 		//#region ../dsh-liangshen/src/client/settings-form.ts
-		/** A whole- or decimal-number field. An empty draft clears the field; any other draft that is not a finite number within the constraints blocks the save. */
-		function numberField(field, constraints = {}) {
-			const { integer = false, min } = constraints;
-			return {
-				field,
-				format: (value) => typeof value === "number" ? String(value) : "",
-				parse: (text) => {
-					const trimmed = text.trim();
-					if (trimmed === "") return { kind: "clear" };
-					const parsed = Number(trimmed);
-					if (!Number.isFinite(parsed)) return void 0;
-					if (integer && !Number.isInteger(parsed)) return void 0;
-					if (min !== void 0 && parsed < min) return void 0;
-					return {
-						kind: "set",
-						value: parsed
-					};
-				}
-			};
-		}
 		/** A boolean field, edited through true/false draft text. */
 		function booleanField(field) {
 			return {
@@ -48109,12 +48044,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		//#region ../dsh-liangshen/src/client/LiangShenSettingsCard.tsx
 		/** Wire presentations the tool catalog accepts (mirrors the Host schema). */
 		const PRESENTATION_CHOICES = ["ptc", "native"];
-		/** Sensitivity presets for the circuit breaker (mirrors the Host schema). */
-		const SENSITIVITY_CHOICES = [
-			"conservative",
-			"balanced",
-			"aggressive"
-		];
 		/** Bridges the `liangshen` settings form onto the card's staged form. */
 		var LiangShenSettingsCardController = class {
 			form;
@@ -48125,21 +48054,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					booleanField("enabled"),
 					booleanField("announceToAgent"),
 					choiceField("presentation", PRESENTATION_CHOICES),
-					booleanField("dispatcher"),
-					booleanField("guardEnabled"),
-					choiceField("guardSensitivity", SENSITIVITY_CHOICES),
-					numberField("guardStallReasoningChars", {
-						integer: true,
-						min: 200
-					}),
-					numberField("guardGlobalStallCap", {
-						integer: true,
-						min: 2
-					}),
-					numberField("guardEchoFailures", {
-						integer: true,
-						min: 2
-					})
+					booleanField("dispatcher")
 				]);
 				this.store = this.form.bind(() => this.projection());
 			}
@@ -48149,12 +48064,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					enabled: this.form.field("enabled"),
 					announceToAgent: this.form.field("announceToAgent"),
 					presentation: this.form.field("presentation"),
-					dispatcher: this.form.field("dispatcher"),
-					guardEnabled: this.form.field("guardEnabled"),
-					guardSensitivity: this.form.field("guardSensitivity"),
-					guardStallReasoningChars: this.form.field("guardStallReasoningChars"),
-					guardGlobalStallCap: this.form.field("guardGlobalStallCap"),
-					guardEchoFailures: this.form.field("guardEchoFailures")
+					dispatcher: this.form.field("dispatcher")
 				};
 			}
 			/**
@@ -48260,83 +48170,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 						onReset: () => {
 							props.resetField("dispatcher");
 						}
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(BooleanField, {
-						id: "settings-liangshen-guard-enabled",
-						label: t("settings.guardEnabled"),
-						hint: t("settings.guardEnabledHint"),
-						onLabel: t("settings.on"),
-						offLabel: t("settings.off"),
-						...fieldProps,
-						...state.guardEnabled,
-						onEdit: (text) => {
-							props.edit("guardEnabled", text);
-						},
-						onReset: () => {
-							props.resetField("guardEnabled");
-						}
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ChoiceField, {
-						id: "settings-liangshen-guard-sensitivity",
-						label: t("settings.guardSensitivity"),
-						hint: t("settings.guardSensitivityHint"),
-						choices: SENSITIVITY_CHOICES.map((choice) => ({
-							value: choice,
-							label: t(`sensitivity.${choice}`)
-						})),
-						...fieldProps,
-						...state.guardSensitivity,
-						onEdit: (text) => {
-							props.edit("guardSensitivity", text);
-						},
-						onReset: () => {
-							props.resetField("guardSensitivity");
-						}
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
-						id: "settings-liangshen-guard-stall-chars",
-						numeric: true,
-						label: t("settings.guardStallChars"),
-						hint: t("settings.guardStallCharsHint"),
-						placeholder: t("settings.guardAdaptive"),
-						...fieldProps,
-						...state.guardStallReasoningChars,
-						onEdit: (text) => {
-							props.edit("guardStallReasoningChars", text);
-						},
-						onReset: () => {
-							props.resetField("guardStallReasoningChars");
-						}
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
-						id: "settings-liangshen-guard-global-cap",
-						numeric: true,
-						label: t("settings.guardGlobalCap"),
-						hint: t("settings.guardGlobalCapHint"),
-						placeholder: t("settings.guardAdaptive"),
-						...fieldProps,
-						...state.guardGlobalStallCap,
-						onEdit: (text) => {
-							props.edit("guardGlobalStallCap", text);
-						},
-						onReset: () => {
-							props.resetField("guardGlobalStallCap");
-						}
-					}),
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(ValueField, {
-						id: "settings-liangshen-guard-echo",
-						numeric: true,
-						label: t("settings.guardEchoFailures"),
-						hint: t("settings.guardEchoFailuresHint"),
-						placeholder: t("settings.guardAdaptive"),
-						...fieldProps,
-						...state.guardEchoFailures,
-						onEdit: (text) => {
-							props.edit("guardEchoFailures", text);
-						},
-						onReset: () => {
-							props.resetField("guardEchoFailures");
-						}
 					})
 				]
 			});
@@ -48391,21 +48224,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"settings.saveFailed": "部署未接受这些值，已保留供你修改。",
 			"settings.invalidValue": "该取值不被接受",
 			"presentation.ptc": "ptc（仅 run_code）",
-			"presentation.native": "native（原生工具清单）",
-			"settings.guardEnabled": "启用退化熔断器",
-			"settings.guardEnabledHint": "运行时检测思考退化（连续零产出长思考 / 同参重复失败），触发时注入熔断提示；仅停摆信号额外临时下调推理档位（max→high，不下探到甜区以下）。关闭后不干预任何请求。",
-			"settings.guardStallChars": "单步暴走字符阈值",
-			"settings.guardStallCharsHint": "留空即按推理档位自适应：max 档 8000 / high 档 12000 / low 档 20000 字符（按 V4.1 官方 384K 最大输出校准，约 2-4K 思考 token），再按灵敏度预设缩放。填写本字段则以该固定值覆盖所有档位。",
-			"settings.guardGlobalCap": "慢烧连续步数",
-			"settings.guardGlobalCapHint": "留空即按灵敏度预设缩放（均衡档为 4）；provider 不持久化推理文本的会话也以此为兜底步骤计数。填写本字段则以该固定值覆盖。步数越小越敏感，真实长调查建议调大。",
-			"settings.guardSensitivity": "熔断灵敏度",
-			"settings.guardSensitivityHint": "整体缩放熔断阈值：保守（更少打断，阈值×1.5）、均衡（出厂校准值）、激进（更早触发，阈值×0.5）。仅在对应细调字段留空时生效——阈值随推理档位自适应：max 档 8000 / high 档 12000 / low 档 20000 字符。",
-			"sensitivity.conservative": "保守（少打断）",
-			"sensitivity.balanced": "均衡（默认）",
-			"sensitivity.aggressive": "激进（早触发）",
-			"settings.guardEchoFailures": "同参连续失败次数",
-			"settings.guardEchoFailuresHint": "留空即按灵敏度预设缩放（均衡档为 3）；填写本字段则以该固定值覆盖。空转信号只注入熔断消息，不下调推理档位。",
-			"settings.guardAdaptive": "自适应"
+			"presentation.native": "native（原生工具清单）"
 		};
 		/** English counterpart; the key set mirrors {@link zh} exactly. */
 		const en$3 = {
@@ -48450,21 +48269,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"settings.saveFailed": "The deployment did not accept these values; they were left for you to correct.",
 			"settings.invalidValue": "The value is not accepted",
 			"presentation.ptc": "ptc (run_code only)",
-			"presentation.native": "native (native tool roster)",
-			"settings.guardEnabled": "Degeneration circuit breaker",
-			"settings.guardEnabledHint": "Detects reasoning degeneration at runtime (consecutive zero-output long reasoning / repeated identical-argument failures) and injects a breaker message; only a stall also steps the reasoning effort down (max to high, never below the sweet spot). Disabled means requests are never touched.",
-			"settings.guardStallChars": "Runaway reasoning character floor",
-			"settings.guardStallCharsHint": "Leave empty to adapt to the reasoning effort: 8000 at max / 12000 at high / 20000 at low characters (calibrated against V4.1's official 384K max output, roughly 2-4K thinking tokens), then scaled by the sensitivity preset. Setting a value pins it for every effort level.",
-			"settings.guardGlobalCap": "Slow-burn step count",
-			"settings.guardGlobalCapHint": "Leave empty to scale with the sensitivity preset (4 at balanced); it is also the fallback step count for a session whose provider persists no reasoning text. Setting a value pins it. Lower is more sensitive — raise it for genuinely long investigations.",
-			"settings.guardSensitivity": "Breaker sensitivity",
-			"settings.guardSensitivityHint": "Scales every breaker threshold: conservative (fewer interruptions, x1.5), balanced (the calibrated defaults), aggressive (fires earlier, x0.5). It applies only where the matching fine-tuning field is left empty — thresholds adapt to the reasoning effort: 8000 at max / 12000 at high / 20000 at low.",
-			"sensitivity.conservative": "Conservative (fewer interruptions)",
-			"sensitivity.balanced": "Balanced (default)",
-			"sensitivity.aggressive": "Aggressive (fires earlier)",
-			"settings.guardEchoFailures": "Identical-argument failures",
-			"settings.guardEchoFailuresHint": "Leave empty to scale with the sensitivity preset (3 at balanced); setting a value pins it. An echo only injects the breaker message — it never steps the reasoning effort down.",
-			"settings.guardAdaptive": "Adaptive"
+			"presentation.native": "native (native tool roster)"
 		};
 		//#endregion
 		//#region ../dsh-liangshen/src/client/plugin-card-seat.ts

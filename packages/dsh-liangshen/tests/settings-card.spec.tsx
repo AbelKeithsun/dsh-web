@@ -190,46 +190,6 @@ describe('LiangShenSettingsCard', () => {
     }
   })
 
-  it('operator sees the three guard overrides offered as empty, adaptive fields', () => {
-    // Given the card rendered with every guard field unset, When the operator
-    // reads the three numeric controls, Then each renders empty with the
-    // "adaptive" placeholder rather than a factory number: leaving them empty is
-    // what keeps the guard's effort-adaptive thresholds in charge.
-    renderCard(baseState())
-    for (const id of [
-      'settings-liangshen-guard-stall-chars',
-      'settings-liangshen-guard-global-cap',
-      'settings-liangshen-guard-echo',
-    ]) {
-      const input = document.getElementById(id)
-      expect(input?.tagName, id).toBe('INPUT')
-      expect((input as HTMLInputElement).value, id).toBe('')
-      expect((input as HTMLInputElement).placeholder, id).toBe('settings.guardAdaptive')
-    }
-  })
-
-  it('operator can clear a guard override back to the adaptive default', () => {
-    // Given a guard override the user layer already stores, When the operator
-    // resets that field, Then the card stages a clear so saving drops the key
-    // and the guard's adaptive resolution applies again.
-    const resetField = vi.fn()
-    const state = baseState({ guardStallReasoningChars: { text: '5000', overridden: true, invalid: false } })
-    const props = {
-      t: (key: string) => key,
-      useLiangShenSettingsCard: (select: (snapshot: LiangShenSettingsCardState) => LiangShenSettingsCardState) => select(state),
-      edit: vi.fn(),
-      resetField,
-      save: vi.fn(),
-      discard: vi.fn(),
-    } as unknown as LiangShenSettingsCardProps
-    render(<LiangShenSettingsCard {...props} />)
-    fireEvent.click(screen.getByRole('button', { expanded: false }))
-    // Then the reset control for that one field writes the clear.
-    const field = document.getElementById('settings-liangshen-guard-stall-chars')!.closest('div')!
-    fireEvent.click(Array.from(field.querySelectorAll('button')).find((button) => button.textContent === 'settings.reset')!)
-    expect(resetField).toHaveBeenCalledWith('guardStallReasoningChars')
-  })
-
   it('operator can turn the dispatcher identity on from the card', () => {
     // Given the card rendered with the dispatcher field left at its inherit
     // state, When the operator picks On in that field, Then the card stages the

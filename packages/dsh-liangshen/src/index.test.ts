@@ -86,32 +86,6 @@ describe('resolveConfig', () => {
     expect(resolveConfig(Config({}))).toEqual(DEFAULT_CONFIG)
   })
 
-  it('operator gets the guard fine-tuning fields UNSET by default', () => {
-    // Given the shipped schema and the reader, When the operator reads the
-    // effective guard settings, Then the three fine-tuning overrides resolve to
-    // undefined rather than to a factory constant. That is what lets the
-    // guard's effort-adaptive table and the sensitivity preset be the shipped
-    // behavior: a default here would be written into the declared preset's
-    // guard row on every activation and mask both.
-    const values = resolveConfig(Config({}))
-    expect(values.guardStallReasoningChars).toBeUndefined()
-    expect(values.guardGlobalStallCap).toBeUndefined()
-    expect(values.guardEchoFailures).toBeUndefined()
-    // The two fields that are NOT overrides keep their real defaults.
-    expect(values.guardEnabled).toBe(true)
-    expect(values.guardSensitivity).toBe('balanced')
-    expect(DEFAULT_CONFIG.guardStallReasoningChars).toBeUndefined()
-  })
-
-  it('operator who clears a guard field gets undefined, not the previous value', () => {
-    // Given a volatile reference the Host clears, When the operator reads the
-    // effective settings, Then the field reads as unset so the overlay leaves
-    // the guard row's key out and the adaptive table applies again.
-    const cleared = { get: () => undefined }
-    expect(resolveConfig({ guardStallReasoningChars: cleared }).guardStallReasoningChars).toBeUndefined()
-    expect(resolveConfig({ guardStallReasoningChars: undefined }).guardStallReasoningChars).toBeUndefined()
-  })
-
   it('operator sees a committed volatile write through the held reference', () => {
     // Given a volatile field the Host hands over as a stable reference, When
     // the operator commits a write and reads again, Then the read moves with it.
@@ -131,21 +105,11 @@ describe('resolveConfig', () => {
       announceToAgent: true,
       presentation: 'ptc',
       dispatcher: true,
-      guardEnabled: false,
-      guardSensitivity: 'aggressive',
-      guardStallReasoningChars: 12000,
-      guardGlobalStallCap: 6,
-      guardEchoFailures: 2,
     })).toEqual({
       enabled: false,
       announceToAgent: true,
       presentation: 'ptc',
       dispatcher: true,
-      guardEnabled: false,
-      guardSensitivity: 'aggressive',
-      guardStallReasoningChars: 12000,
-      guardGlobalStallCap: 6,
-      guardEchoFailures: 2,
     })
   })
 

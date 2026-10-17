@@ -48,20 +48,6 @@ export const zh = {
   'settings.invalidValue': '该取值不被接受',
   'presentation.ptc': 'ptc（仅 run_code）',
   'presentation.native': 'native（原生工具清单）',
-  'settings.guardEnabled': '启用退化熔断器',
-  'settings.guardEnabledHint': '运行时检测思考退化（连续零产出长思考 / 同参重复失败），触发时注入熔断提示；仅停摆信号额外临时下调推理档位（max→high，不下探到甜区以下）。关闭后不干预任何请求。',
-  'settings.guardStallChars': '单步暴走字符阈值',
-  'settings.guardStallCharsHint': '留空即按推理档位自适应：max 档 8000 / high 档 12000 / low 档 20000 字符（按 V4.1 官方 384K 最大输出校准，约 2-4K 思考 token），再按灵敏度预设缩放。填写本字段则以该固定值覆盖所有档位。',
-  'settings.guardGlobalCap': '慢烧连续步数',
-  'settings.guardGlobalCapHint': '留空即按灵敏度预设缩放（均衡档为 4）；provider 不持久化推理文本的会话也以此为兜底步骤计数。填写本字段则以该固定值覆盖。步数越小越敏感，真实长调查建议调大。',
-  'settings.guardSensitivity': '熔断灵敏度',
-  'settings.guardSensitivityHint': '整体缩放熔断阈值：保守（更少打断，阈值×1.5）、均衡（出厂校准值）、激进（更早触发，阈值×0.5）。仅在对应细调字段留空时生效——阈值随推理档位自适应：max 档 8000 / high 档 12000 / low 档 20000 字符。',
-  'sensitivity.conservative': '保守（少打断）',
-  'sensitivity.balanced': '均衡（默认）',
-  'sensitivity.aggressive': '激进（早触发）',
-  'settings.guardEchoFailures': '同参连续失败次数',
-  'settings.guardEchoFailuresHint': '留空即按灵敏度预设缩放（均衡档为 3）；填写本字段则以该固定值覆盖。空转信号只注入熔断消息，不下调推理档位。',
-  'settings.guardAdaptive': '自适应',
 }
 
 /** English counterpart; the key set mirrors {@link zh} exactly. */
@@ -108,20 +94,6 @@ export const en: Record<keyof typeof zh, string> = {
   'settings.invalidValue': 'The value is not accepted',
   'presentation.ptc': 'ptc (run_code only)',
   'presentation.native': 'native (native tool roster)',
-  'settings.guardEnabled': 'Degeneration circuit breaker',
-  'settings.guardEnabledHint': 'Detects reasoning degeneration at runtime (consecutive zero-output long reasoning / repeated identical-argument failures) and injects a breaker message; only a stall also steps the reasoning effort down (max to high, never below the sweet spot). Disabled means requests are never touched.',
-  'settings.guardStallChars': 'Runaway reasoning character floor',
-  'settings.guardStallCharsHint': 'Leave empty to adapt to the reasoning effort: 8000 at max / 12000 at high / 20000 at low characters (calibrated against V4.1\'s official 384K max output, roughly 2-4K thinking tokens), then scaled by the sensitivity preset. Setting a value pins it for every effort level.',
-  'settings.guardGlobalCap': 'Slow-burn step count',
-  'settings.guardGlobalCapHint': 'Leave empty to scale with the sensitivity preset (4 at balanced); it is also the fallback step count for a session whose provider persists no reasoning text. Setting a value pins it. Lower is more sensitive — raise it for genuinely long investigations.',
-  'settings.guardSensitivity': 'Breaker sensitivity',
-  'settings.guardSensitivityHint': 'Scales every breaker threshold: conservative (fewer interruptions, x1.5), balanced (the calibrated defaults), aggressive (fires earlier, x0.5). It applies only where the matching fine-tuning field is left empty — thresholds adapt to the reasoning effort: 8000 at max / 12000 at high / 20000 at low.',
-  'sensitivity.conservative': 'Conservative (fewer interruptions)',
-  'sensitivity.balanced': 'Balanced (default)',
-  'sensitivity.aggressive': 'Aggressive (fires earlier)',
-  'settings.guardEchoFailures': 'Identical-argument failures',
-  'settings.guardEchoFailuresHint': 'Leave empty to scale with the sensitivity preset (3 at balanced); setting a value pins it. An echo only injects the breaker message — it never steps the reasoning effort down.',
-  'settings.guardAdaptive': 'Adaptive',
 }
 
 /** Every key in the locale catalog. */
