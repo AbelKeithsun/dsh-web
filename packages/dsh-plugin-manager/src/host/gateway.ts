@@ -604,7 +604,10 @@ export async function detectOfficialChannels(
  */
 export interface NativePluginManager {
   /**
-   * Install or update one package spec through the official manager.
+   * Install one package spec through the official manager. Since 0.2.1-rc.2 it
+   * refuses a package the profile already carries while the host mounts the `hmr`
+   * service (`already-installed`), which is every profile host, so an in-place
+   * update cannot be one call there.
    * @param spec - package spec (e.g. `@scope/pkg@1.2.3`).
    * @param options - activation choice and the request id the run is tracked under.
    * @returns the manager's own verdict ({@link NativeManagerOutcome}); the caller
@@ -670,6 +673,23 @@ export function nativeManagerFailure(outcome: unknown): string | undefined {
   }
   const code = failure?.code
   return typeof code === 'string' && code !== '' ? `官方插件管理器拒绝执行（${code}）` : '官方插件管理器报告失败'
+}
+
+/**
+ * The official manager's own refusal code for one run, or undefined when its
+ * verdict is not a failure. {@link nativeManagerFailure} renders the code for the
+ * person; this is the same verdict read for a decision, which is how the update
+ * path recognises the `already-installed` refusal it has to answer with a
+ * two-phase replacement.
+ * @param outcome - the resolved value of `installBundle` / `removeBundle`.
+ * @returns the manager's failure code, or undefined for a run that did not fail.
+ */
+export function nativeManagerRefusalCode(outcome: unknown): string | undefined {
+  if (typeof outcome !== 'object' || outcome === null) return undefined
+  const verdict = outcome as NativeManagerOutcome
+  if (verdict.application !== 'failed') return undefined
+  const code = verdict.error?.code
+  return typeof code === 'string' && code !== '' ? code : undefined
 }
 
 /** One layer snapshot plus the profile patch text and dependency list. */
@@ -1087,6 +1107,13 @@ export class CliGateway {
    * run (pnpm exited non-zero, an incompatible version, a cancellation) resolves
    * with `application: 'failed'`, and only that verdict carries the reason — the
    * profile re-read can only show that the version did not move.
+   *
+   * An `already-installed` refusal is answered by {@link replaceInstalled}: the
+   * manager refuses to install a dependency the profile already carries while the
+   * host mounts `hmr` (0.2.1-rc.2, and dsh-base mounts that service on every
+   * profile host), so an in-place update there is only expressible as its two
+   * phases. The single call stays first so the day the manager accepts an
+   * in-place update this path needs no change.
    * @param job - the update job being settled.
    * @param native - the official manager.
    */
@@ -1099,8 +1126,12 @@ export class CliGateway {
       return
     }
     const before = await this.capture()
-    const verdict = await native.installBundle(job.spec, { enabled: true, requestId: job.id })
-    const refusal = nativeManagerFailure(verdict)
+    const carried = await readProfileManifest(this.facts.packageJsonPath)
+    const first = await native.installBundle(job.spec, { enabled: true, requestId: job.id })
+    let refusal = nativeManagerFailure(first)
+    if (refusal !== undefined && nativeManagerRefusalCode(first) === 'already-installed') {
+      refusal = await this.replaceInstalled(job, native, targetId, carried.dependencies[targetId])
+    }
     if (refusal !== undefined) {
       job.phase = 'error'
       job.error = `plugin-manager: 官方插件管理器更新失败：${refusal}`
@@ -1127,6 +1158,39 @@ export class CliGateway {
       to: change.to,
     }))
     job.phase = 'done'
+  }
+
+  /**
+   * Replace an installed bundle with the update job's target spec through the
+   * official manager, the only writer an application-owned profile accepts.
+   * Removing first is what makes the install possible: the manager's
+   * `already-installed` guard reads the profile, so the same name is a fresh
+   * dependency once the old one is gone.
+   *
+   * A failed second phase reinstalls the spec the profile carried before the run,
+   * so an update that cannot land leaves a working plugin behind instead of an
+   * empty slot; the report says which of the two happened.
+   * @param job - the update job whose spec is installed.
+   * @param native - the official manager.
+   * @param targetId - the installed bundle being replaced.
+   * @param previousSpec - the dependency spec the profile carried before the run.
+   * @returns the failure to report, or undefined once the target spec landed.
+   */
+  private async replaceInstalled(
+    job: GatewayJob,
+    native: NativePluginManager,
+    targetId: string,
+    previousSpec: string | undefined,
+  ): Promise<string | undefined> {
+    if (previousSpec === undefined) return `${targetId} 不在 profile 依赖中，无法替换已安装版本`
+    const removalFailure = nativeManagerFailure(await native.removeBundle(targetId))
+    if (removalFailure !== undefined) return `已安装版本无法移除（${removalFailure}），本次更新未做改动`
+    const refusal = nativeManagerFailure(await native.installBundle(job.spec, { enabled: true, requestId: job.id }))
+    if (refusal === undefined) return undefined
+    const restoreSpec = `${targetId}@${previousSpec}`
+    const restoreFailure = nativeManagerFailure(await native.installBundle(restoreSpec, { enabled: true, requestId: job.id }))
+    if (restoreFailure === undefined) return `${refusal}；已装回 ${restoreSpec}`
+    return `${refusal}；装回 ${restoreSpec} 也失败：${restoreFailure}，请手动重新安装`
   }
 
   /** Start a deterministic legacy aggregate migration. */

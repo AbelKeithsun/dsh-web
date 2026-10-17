@@ -71,6 +71,10 @@ Status: implemented
 的宿主上照常运行。该路由仍位于 loopback 门禁与用户点击之后，与官方插件页调用同一服务时
 的权威相同。
 
+官方管理器后来干脆不再接受原地更新：0.2.1-rc.2 在 `hmr` 挂载时拒绝 profile 已有的依赖，因此第 3 条里那次单独的
+`installBundle` 调用如今只是更新的第一阶段——见
+[两阶段替换](2026-10-17-plugin-manager-native-update-two-phase.zh.md)。
+
 ## Alternatives considered
 
 - **只修 spawn，让 CLI 报出拒绝。** 否决：那样更新按钮会在该功能实际使用的运行时上以英文上游

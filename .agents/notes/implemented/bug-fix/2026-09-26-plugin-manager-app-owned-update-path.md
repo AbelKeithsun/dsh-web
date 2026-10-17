@@ -91,6 +91,9 @@ keep running on a host that mounts no manager. The route stays behind the
 loopback fence and the user's click, the same authority the official Plugins
 page has when it calls the same service.
 
+The official manager later stopped accepting an in-place update at all: 0.2.1-rc.2 refuses an already-carried dependency while `hmr` is mounted, so item 3's single `installBundle` call is now only the first phase of an update — see
+[the two-phase replacement](2026-10-17-plugin-manager-native-update-two-phase.md).
+
 ## Alternatives considered
 
 - **Fix only the spawn and let the CLI report the refusal.** Rejected: the

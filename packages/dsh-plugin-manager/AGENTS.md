@@ -58,6 +58,13 @@ packages/AGENTS.md 的全局/包级规则。
   拒绝写该 profile（`dsh plugin --profile desktop …` 直接报错），更新必须经宿主挂载的
   官方 `pluginManager` 服务（`ctx.get('pluginManager')`，契约观察不 import）；其余运行时
   CLI 仍是唯一写入器，两条路径共用同一任务表、状态轮询与版本核对。
+- **官方管理器拒绝原地更新（`already-installed`）**：0.2.1-rc.2 起 `installBundle` 在 `hmr` 挂载且该包
+  已是 profile 依赖时直接抛 `already-installed`（守卫在 pnpm 之前），而 dsh-base 只在
+  `profileContext` 存在时挂 `hmr` 行——即每个 profile 宿主，官方插件页自己的更新按钮走同一条路。
+  因此应用自有 profile 的更新按两阶段执行：先 `removeBundle` 再 `installBundle`；第二阶段失败时
+  装回运行前 profile 携带的 spec，并在错误里写明是「已装回」还是「需手动重装」。单次
+  `installBundle` 仍排在最前，上游哪天接受原地更新就自动回到单次路径。见
+  [记录](../../.agents/notes/implemented/bug-fix/2026-10-17-plugin-manager-native-update-two-phase.md)。
 - **官方管理器 resolve 不等于成功**：它的 `change()` 包装器把失败折叠进返回值
   （`application: 'failed'` / `'cancelled'`，附 `error.code` / `error.diagnostic`），而不是
   抛错。原生安装/更新/卸载必须先经 `nativeManagerFailure()` 读该判定再重读 profile，
