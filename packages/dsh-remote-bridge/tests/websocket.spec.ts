@@ -1,7 +1,8 @@
 import type { IncomingMessage } from 'node:http'
 import { Duplex, PassThrough } from 'node:stream'
+import { inflateRawSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { OPCODE_BINARY, OPCODE_CLOSE, OPCODE_TEXT } from '../src/core/ws-frames.ts'
+import { OPCODE_BINARY, OPCODE_CLOSE, OPCODE_TEXT, encodeTextFrame } from '../src/core/ws-frames.ts'
 import { WebSocketCarrier, bearerTokenOf, isWebSocketUpgrade, presentedTokenOf, queryTokenOf, serveUpgrade } from '../src/host/websocket.ts'
 import { makeBareHub, nextTurn, requestFrame, settle } from './support/harness.ts'
 
@@ -89,6 +90,48 @@ function serverFrames(bytes: Buffer): ServerFrame[] {
     rest = rest.subarray(offset + length)
   }
   return frames
+}
+
+/** A frame body past the compression threshold: one turn's entries, wide enough to shrink. */
+function largeFrameText(): string {
+  const entries = Array.from({ length: 40 }, (_, index) => ({
+    seq: index + 1,
+    kind: 'assistant/message',
+    text: 'The bridge writes one JSON object per frame and measures it against the same 10 MiB cap in both directions.',
+  }))
+  return JSON.stringify({ t: 'res', id: 2, ok: true, r: { turns: [{ seq: 1, reason: 'stop', entries }] } })
+}
+
+/** Twenty sessions' worth of roster: one listing wide enough to be worth compressing. */
+function rosterItems(): readonly unknown[] {
+  return Array.from({ length: 20 }, (_, index) => ({
+    sessionId: `sess_${index.toString().padStart(2, '0')}`,
+    updatedAt: 1_735_689_600_000 + index,
+    running: index % 3 === 0,
+    cwd: `/Users/zcl/code/iphone_remote_use_dsh/packages/dsh-remote-bridge/tests/session-${index}`,
+    blank: false,
+  }))
+}
+
+/**
+ * Serve one real upgrade over a socket pair, greet the bridge as a paired device,
+ * and list the roster.
+ * @param declaresDeflate - whether the hello declares `frame.deflate.v1`.
+ * @returns every server frame written after the handshake, in order.
+ */
+async function listedAnswer(declaresDeflate: boolean): Promise<ServerFrame[]> {
+  const pair = socketPair()
+  const bare = makeBareHub()
+  bare.gateway.handler = async call => (call.method === 'list' ? { items: rosterItems() } : { accepted: true })
+  serveUpgrade({ socket: pair.socket, secWebSocketKey: WEB_SOCKET_KEY, head: Buffer.alloc(0), hub: bare.hub, auth: { deviceId: 'dev_ws' } })
+  const hello = requestFrame(1, 'hello', { proto: 1, ...(declaresDeflate ? { cap: ['frame.deflate.v1'] } : {}) })
+  pair.inbound.write(Buffer.concat([
+    maskedFrame(OPCODE_TEXT, Buffer.from(hello)),
+    maskedFrame(OPCODE_TEXT, Buffer.from(requestFrame(2, 'session.list'))),
+  ]))
+  await nextTurn()
+  await settle()
+  return serverFrames(pair.serverBytes())
 }
 
 /** A request stub whose handshake fields the test chooses. */
@@ -195,6 +238,34 @@ describe('WebSocket carrier', () => {
     expect(messages).toEqual([])
   })
 
+  it('user without the capability is written the same text frame as before, byte for byte', () => {
+    // Given a carrier whose peer declared nothing, and one frame past the threshold
+    const { carrier, bytes } = openCarrier()
+    const text = largeFrameText()
+    // When the frame is sent
+    carrier.send(text)
+    // Then the bytes after the handshake are exactly the text frame this carrier always wrote
+    const written = bytes()
+    const frames = written.subarray(written.indexOf(HANDSHAKE_END) + HANDSHAKE_END.length)
+    expect(frames).toEqual(encodeTextFrame(text))
+  })
+
+  it('user declaring the capability is written a binary frame that inflates into the same text', () => {
+    // Given a carrier whose peer declared frame.deflate.v1
+    const { carrier, bytes } = openCarrier()
+    carrier.frameDeflate(true)
+    const small = '{"t":"pong","ts":1735689600000}'
+    const text = largeFrameText()
+    // When one frame below the threshold and one past it are sent
+    carrier.send(small)
+    carrier.send(text)
+    // Then the small one stays text and the large one is raw DEFLATE of that same frame
+    const frames = serverFrames(bytes())
+    expect(frames.map(frame => frame.opcode)).toEqual([OPCODE_TEXT, OPCODE_BINARY])
+    expect(frames[0]?.payload.toString('utf8')).toBe(small)
+    expect(inflateRawSync(frames[1]?.payload ?? Buffer.alloc(0)).toString('utf8')).toBe(text)
+  })
+
   it('operator reads the token from the header first and the query second', () => {
     // Given an upgrade carrying both forms, one carrying only the query, and one carrying neither
     const both = fakeRequest({ authorization: 'Bearer from-header' }, '/ios/v1?token=from-query')
@@ -236,7 +307,7 @@ describe('WebSocket carrier over a real socket', () => {
       t: 'res',
       id: 1,
       ok: true,
-      r: { proto: 1, minor: 7, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1', 'agents.v1', 'delta.v1', 'session.list.omit-archived.v1', 'session.deep-history.v1'], resume: 'snapshot', auth: 'unpaired' },
+      r: { proto: 1, minor: 8, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1', 'agents.v1', 'delta.v1', 'session.list.omit-archived.v1', 'session.deep-history.v1', 'frame.deflate.v1'], resume: 'snapshot', auth: 'unpaired' },
     })
   })
 
@@ -251,7 +322,44 @@ describe('WebSocket carrier over a real socket', () => {
     await settle()
     // Then the leftover bytes were parsed, not discarded
     const answers = serverFrames(pair.serverBytes()).map(frame => JSON.parse(frame.payload.toString('utf8')) as { id: number; ok: boolean })
-    expect(answers).toEqual([{ t: 'res', id: 2, ok: true, r: { proto: 1, minor: 7, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1', 'agents.v1', 'delta.v1', 'session.list.omit-archived.v1', 'session.deep-history.v1'], resume: 'snapshot', auth: 'unpaired' } }])
+    expect(answers).toEqual([{ t: 'res', id: 2, ok: true, r: { proto: 1, minor: 8, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1', 'agents.v1', 'delta.v1', 'session.list.omit-archived.v1', 'session.deep-history.v1', 'frame.deflate.v1'], resume: 'snapshot', auth: 'unpaired' } }])
+  })
+
+  it('user declaring the capability receives the listing as one binary frame whose inflate is the text answer', async () => {
+    // Given two paired connections listing the same roster, one declaring the capability
+    const declaring = await listedAnswer(true)
+    const plain = await listedAnswer(false)
+    // When both listings are answered
+    const textAnswer = plain[1]?.payload
+    const binaryAnswer = declaring[1]
+    if (textAnswer === undefined || binaryAnswer === undefined) throw new Error('both connections should answer the listing')
+    // Then the declaring one was answered in a binary frame that inflates back into the text frame
+    expect(declaring[0]?.opcode).toBe(OPCODE_TEXT)
+    expect(binaryAnswer.opcode).toBe(OPCODE_BINARY)
+    expect(inflateRawSync(binaryAnswer.payload).equals(textAnswer)).toBe(true)
+    // And the compressed frame is what saved the bytes
+    expect(binaryAnswer.payload.length).toBeLessThan(textAnswer.length)
+  })
+
+  it('user who declared nothing is answered the listing as text frames only', async () => {
+    // Given a paired connection that declared no capability
+    const frames = await listedAnswer(false)
+    // When the listing is answered
+    const answer = JSON.parse(frames[1]?.payload.toString('utf8') ?? '') as { r?: { sessions?: unknown[] } }
+    // Then every frame is text, and the roster crossed whole
+    expect(frames.map(frame => frame.opcode)).toEqual([OPCODE_TEXT, OPCODE_TEXT])
+    expect(answer.r?.sessions).toHaveLength(rosterItems().length)
+  })
+
+  it('operator accepts a socket and Nagle is switched off on it', () => {
+    // Given an accepted duplex that reports its Nagle switch
+    const pair = socketPair()
+    const calls: boolean[] = []
+    ;(pair.socket as unknown as { setNoDelay: (noDelay: boolean) => void }).setNoDelay = value => { calls.push(value) }
+    // When the upgrade is handed over
+    serveUpgrade({ socket: pair.socket, secWebSocketKey: WEB_SOCKET_KEY, head: Buffer.alloc(0), hub: makeBareHub().hub })
+    // Then each frame is written out as it is handed over
+    expect(calls).toEqual([true])
   })
 
   it('user writes two frames into the socket in one chunk and both are answered in order', async () => {
@@ -284,7 +392,7 @@ describe('WebSocket carrier over a real socket', () => {
     // Then the frame that arrived first is delivered instead of being dropped
     const answers = serverFrames(pair.serverBytes()).map(frame => JSON.parse(frame.payload.toString('utf8')) as unknown)
     expect(answers).toEqual([
-      { t: 'res', id: 3, ok: true, r: { proto: 1, minor: 7, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1', 'agents.v1', 'delta.v1', 'session.list.omit-archived.v1', 'session.deep-history.v1'], resume: 'snapshot', auth: 'unpaired' } },
+      { t: 'res', id: 3, ok: true, r: { proto: 1, minor: 8, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1', 'agents.v1', 'delta.v1', 'session.list.omit-archived.v1', 'session.deep-history.v1', 'frame.deflate.v1'], resume: 'snapshot', auth: 'unpaired' } },
     ])
   })
 })

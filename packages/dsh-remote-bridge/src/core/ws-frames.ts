@@ -115,6 +115,11 @@ export function encodeTextFrame(text: string): Buffer {
   return encodeServerFrame(OPCODE_TEXT, Buffer.from(text, 'utf8'))
 }
 
+/** Encode one binary message: already-encoded payload bytes, never a text frame. */
+export function encodeBinaryFrame(payload: Buffer): Buffer {
+  return encodeServerFrame(OPCODE_BINARY, payload)
+}
+
 /** Encode one close frame with a code and a short reason. */
 export function encodeCloseFrame(code: number, reason: string): Buffer {
   const text = Buffer.from(reason, 'utf8').subarray(0, 123)

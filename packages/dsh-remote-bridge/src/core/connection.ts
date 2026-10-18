@@ -29,6 +29,7 @@ import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
 import {
   CAP_AGENTS,
   CAP_DELTA,
+  CAP_FRAME_DEFLATE,
   CAP_JOBS,
   CAP_QUESTIONS,
   CAP_SESSION_SNAPSHOT_PAGE,
@@ -113,6 +114,14 @@ export const PROMPT_ATTACHMENT_MAX_BYTES = 6 * 1024 * 1024
 export interface BridgeTransport {
   send(text: string): void
   close(code: number, reason: string): void
+  /**
+   * Optional: whether the peer declared `frame.deflate.v1`, reported once the
+   * `hello` that declares it has been recorded. The capability is the client's
+   * declaration and the wire form is the carrier's, so this is the one fact that
+   * has to cross between them. A carrier with no socket to compress — a
+   * recording double, for one — omits the member and keeps writing text.
+   */
+  frameDeflate?(declared: boolean): void
 }
 
 export interface BridgeConnectionOptions {
@@ -651,6 +660,9 @@ export class BridgeConnection {
   #hello(payload: Readonly<Record<string, unknown>>): DispatchOutcome {    const proto = payload.proto
     if (proto !== PROTO) return refusal(CODE_PROTO_UNSUPPORTED, `this bridge speaks protocol ${PROTO}`)
     this.#capabilities = capabilitiesOf(payload.cap)
+    // The frame form is decided where the frame is written, so the carrier is
+    // told the one thing it cannot read for itself: what this peer can inflate.
+    this.#transport.frameDeflate?.(this.#capabilities.has(CAP_FRAME_DEFLATE))
     // The hub replays anything this client can now receive but missed: a phone
     // that connected after a question was raised has no other way to learn of it.
     this.#options.onDeclare?.(this)

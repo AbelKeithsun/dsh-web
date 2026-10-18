@@ -1,5 +1,6 @@
+import { inflateRawSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { EventSequence, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ClientFrame } from '../src/core/envelope.ts'
+import { EventSequence, FRAME_DEFLATE_MIN_BYTES, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, outboundPayloadOf, responseFrame, type ClientFrame } from '../src/core/envelope.ts'
 
 function decoded(text: string): ClientFrame {
   const outcome = decodeClientFrame(text)
@@ -21,6 +22,28 @@ function refusalOf(text: string): { id: number; code: string } {
 function frameOfSize(bytes: number): string {
   const template = JSON.stringify({ t: 'req', id: 9, m: 'session.prompt', p: { text: '' } })
   return JSON.stringify({ t: 'req', id: 9, m: 'session.prompt', p: { text: 'x'.repeat(bytes - template.length) } })
+}
+
+/**
+ * A frame of exactly `bytes` UTF-8 bytes carrying text nothing can make smaller.
+ * The characters are drawn from a fixed xorshift sequence, so the fixture is the
+ * same on every machine while still being the worst case for a compressor.
+ */
+function noisyFrame(bytes: number): string {
+  const head = '{"t":"res","id":1,"ok":true,"r":{"turns":[{"text":"'
+  const tail = '"}]}}'
+  const filler = bytes - head.length - tail.length
+  let state = 0x9e3779b9
+  let text = ''
+  for (let index = 0; index < filler; index += 1) {
+    state ^= state << 13
+    state >>>= 0
+    state ^= state >>> 17
+    state ^= state << 5
+    state >>>= 0
+    text += String.fromCharCode(32 + (state % 95))
+  }
+  return `${head}${text}${tail}`
 }
 
 describe('protocol v1 envelope', () => {
@@ -122,6 +145,51 @@ describe('protocol v1 envelope', () => {
     // Then the refusal is the size rule, and its message names the budget it enforced
     expect({ id: outcome.id, code: outcome.code }).toEqual({ id: 0, code: 'frame-too-large' })
     expect(outcome.msg).toBe(`frame exceeds ${MAX_FRAME_BYTES} bytes`)
+  })
+
+  it('user who declared the capability receives one large frame as raw DEFLATE of the very same text', () => {
+    // Given a frame past the threshold and a peer that declared frame.deflate.v1
+    const text = noisyFrame(4096)
+    // When its wire form is decided
+    const payload = outboundPayloadOf(text, true)
+    // Then it crosses as raw DEFLATE that inflates back into that exact frame
+    if (!payload.binary) throw new Error('a frame past the threshold should compress')
+    expect(inflateRawSync(payload.deflated).toString('utf8')).toBe(text)
+    expect(payload.deflated.length).toBeLessThan(Buffer.byteLength(text, 'utf8'))
+  })
+
+  it('operator writes a frame below the threshold as text even for a declaring peer', () => {
+    // Given one frame one byte short of the threshold and one exactly at it
+    const short = 'x'.repeat(FRAME_DEFLATE_MIN_BYTES - 1)
+    const atThreshold = 'x'.repeat(FRAME_DEFLATE_MIN_BYTES)
+    // When both are decided for a peer that declared the capability
+    const below = outboundPayloadOf(short, true)
+    const above = outboundPayloadOf(atThreshold, true)
+    // Then only the frame that reached the threshold is considered at all
+    expect(below).toEqual({ binary: false, text: short })
+    expect(above.binary).toBe(true)
+  })
+
+  it('user who declared nothing is served the text frame the codec produced', () => {
+    // Given a large frame and a peer that declared no capability
+    const text = noisyFrame(4096)
+    // When its wire form is decided
+    const payload = outboundPayloadOf(text, false)
+    // Then the text crosses unchanged, exactly as the encoder produced it
+    expect(payload).toEqual({ binary: false, text })
+  })
+
+  it('operator compresses content that does not shrink and it crosses as text instead', () => {
+    // Given a compressor that grows its input, and one that leaves it the same size
+    const growing = (source: Buffer): Buffer => Buffer.alloc(source.length + 1)
+    const level = (source: Buffer): Buffer => Buffer.alloc(source.length)
+    const text = noisyFrame(4096)
+    // When each decides the wire form of a frame past the threshold
+    const grown = outboundPayloadOf(text, true, growing)
+    const flat = outboundPayloadOf(text, true, level)
+    // Then neither ever crosses as a binary frame, because neither got smaller
+    expect(grown).toEqual({ binary: false, text })
+    expect(flat).toEqual({ binary: false, text })
   })
 
   it('operator sees one connection sequence counting events from one upward', () => {

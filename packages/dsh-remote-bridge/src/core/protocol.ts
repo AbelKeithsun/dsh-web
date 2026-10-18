@@ -166,6 +166,22 @@ export const CAP_ROSTER_OMITS_ARCHIVED = 'session.list.omit-archived.v1'
 export const CAP_SESSION_DEEP_HISTORY = 'session.deep-history.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to be sent frames
+ * compressed instead of as plain text.
+ *
+ * Declaring it is what allows the host to compress at all: a frame whose JSON
+ * text is at least 1024 UTF-8 bytes crosses as one WebSocket binary frame
+ * carrying raw DEFLATE (RFC 1951) of exactly that text, and a frame that does
+ * not get smaller still crosses as the text frame it always was. A client that
+ * does not declare it — including every client written before this capability
+ * existed — receives byte for byte the text frames protocol v1 always wrote.
+ *
+ * The direction is one way: a client still sends text frames only, and the
+ * 10 MiB frame cap stays measured on the text, before inflation.
+ */
+export const CAP_FRAME_DEFLATE = 'frame.deflate.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.
@@ -236,6 +252,10 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 8 when the outbound frame form became a capability: behind
+ * {@link CAP_FRAME_DEFLATE} a declaring client may be answered in binary
+ * frames carrying raw DEFLATE of the text, so the minor is raised for a change
+ * a client reads off the wire rather than for a name alone.
  * 7 when the two channels met: the agent channel and the durable history
  * channel each raised 5 to 6 on its own branch, so the protocol that carries
  * both is 7. 6 when the agent channel shipped: behind {@link CAP_AGENTS}
@@ -258,7 +278,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 7
+export const MINOR = 8
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -277,6 +297,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_DELTA,
   CAP_ROSTER_OMITS_ARCHIVED,
   CAP_SESSION_DEEP_HISTORY,
+  CAP_FRAME_DEFLATE,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'

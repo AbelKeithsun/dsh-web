@@ -12,7 +12,7 @@
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import type { BridgeTransport, ConnectionAuth } from '../core/connection.ts'
-import { MAX_FRAME_BYTES } from '../core/envelope.ts'
+import { MAX_FRAME_BYTES, outboundPayloadOf } from '../core/envelope.ts'
 import type { BridgeHub } from '../core/hub.ts'
 import {
   CLOSE_PROTOCOL_ERROR,
@@ -24,6 +24,7 @@ import {
   OPCODE_PING,
   OPCODE_PONG,
   OPCODE_TEXT,
+  encodeBinaryFrame,
   encodeCloseFrame,
   encodeServerFrame,
   encodeTextFrame,
@@ -105,6 +106,25 @@ export function refuseUpgrade(socket: Duplex, status: number, reason: string): v
   socket.end(`HTTP/1.1 ${status} ${reason}\r\nconnection: close\r\ncontent-length: 0\r\n\r\n`)
 }
 
+/** The Nagle switch a `net.Socket` carries; the bare duplexes of a suite need not have one. */
+interface DelayableSocket extends Duplex {
+  setNoDelay?: (noDelay: boolean) => void
+}
+
+/**
+ * Ask the kernel to write each frame out as it is handed over.
+ *
+ * Every frame on this route is already one whole application message, and a
+ * phone pays a round trip for each answer, so Nagle's coalescing window only
+ * delays bytes that nothing else is waiting to join. It is set on acceptance
+ * because that is the last moment the socket is still ours alone: once the
+ * upgrade has been answered, a peer's frame can already be on the way.
+ */
+function stopNagleDelay(socket: Duplex): void {
+  const delayable: DelayableSocket = socket
+  if (typeof delayable.setNoDelay === 'function') delayable.setNoDelay(true)
+}
+
 /**
  * One accepted upgrade handed to the bridge.
  */
@@ -134,6 +154,7 @@ export interface UpgradeHandoff {
  */
 export function serveUpgrade(handoff: UpgradeHandoff): WebSocketCarrier {
   const { socket, secWebSocketKey, head, hub, auth } = handoff
+  stopNagleDelay(socket)
   const carrier = new WebSocketCarrier(socket)
   carrier.handshake(secWebSocketKey)
   const connection = hub.attach(carrier, auth)
@@ -162,6 +183,8 @@ export class WebSocketCarrier implements BridgeTransport {
   #closed = false
   #onMessage: ((text: string) => void) | undefined
   #onClose: (() => void) | undefined
+  /** Whether the peer declared it can inflate a compressed frame; see {@link frameDeflate}. */
+  #deflate = false
   /** Messages that arrived before a handler was registered; see {@link deliver}. */
   readonly #pending: string[] = []
 
@@ -219,10 +242,21 @@ export class WebSocketCarrier implements BridgeTransport {
     }
   }
 
-  /** Send one text frame. */
+  /**
+   * Record the peer's `frame.deflate.v1` declaration, as `hello` reported it.
+   *
+   * It defaults to off, so a connection that never declares the capability keeps
+   * the text frame this carrier always wrote, byte for byte.
+   */
+  frameDeflate(declared: boolean): void {
+    this.#deflate = declared
+  }
+
+  /** Send one frame: the text itself, or raw DEFLATE of it as a binary frame. */
   send(text: string): void {
     if (this.#closed) return
-    this.#socket.write(encodeTextFrame(text))
+    const payload = outboundPayloadOf(text, this.#deflate)
+    this.#socket.write(payload.binary ? encodeBinaryFrame(payload.deflated) : encodeTextFrame(payload.text))
   }
 
   /** Send a close frame and end the socket. Idempotent. */

@@ -20,8 +20,16 @@
  * @module dsh-remote-bridge/core/envelope
  */
 
+import { deflateRawSync } from 'node:zlib'
+
 /** Largest single text frame either direction may carry, in UTF-8 bytes: 10 MiB. */
 export const MAX_FRAME_BYTES = 10 * 1024 * 1024
+
+/**
+ * Smallest frame the host compresses, in UTF-8 bytes. Below it the DEFLATE
+ * header alone can outweigh a small object, so such a frame is never even tried.
+ */
+export const FRAME_DEFLATE_MIN_BYTES = 1024
 
 /** Reserved response id for a frame whose own id could not be recovered. */
 export const UNIDENTIFIED_FRAME_ID = 0
@@ -139,6 +147,44 @@ export function decodeClientFrame(text: string): DecodeOutcome {
 /** Encode one outgoing frame. */
 export function encodeFrame(frame: ServerFrame): string {
   return JSON.stringify(frame)
+}
+
+/**
+ * How one encoded frame crosses the wire: as the text the codec produced, or as
+ * raw DEFLATE of exactly that text.
+ */
+export type OutboundPayload =
+  | { readonly binary: false; readonly text: string }
+  | { readonly binary: true; readonly deflated: Buffer }
+
+/**
+ * Decide the wire form of one encoded frame.
+ *
+ * The decision is a byte-level question only, asked after the frame has been
+ * measured against {@link MAX_FRAME_BYTES}: the text is deflated exactly as it
+ * stands, so a peer that inflates gets back the frame the text path would have
+ * written. A frame below {@link FRAME_DEFLATE_MIN_BYTES}, and a frame DEFLATE
+ * does not shrink (zlib's default level), both stay text — a binary frame that
+ * is larger than the text it replaces would pay for itself in neither direction.
+ * @param text - the frame as {@link encodeFrame} produced it.
+ * @param compress - whether the peer declared the capability that permits this.
+ * @param deflate - the compressor: zlib's raw DEFLATE at its default level, unless
+ *   a caller injects one. Real deflate shrinks every frame that reaches the
+ *   threshold, so an injected compressor is the only way to exercise the no-gain
+ *   rule with content that truly cannot be compressed.
+ * @returns the text, or raw DEFLATE of it.
+ */
+export function outboundPayloadOf(
+  text: string,
+  compress: boolean,
+  deflate: (source: Buffer) => Buffer = deflateRawSync,
+): OutboundPayload {
+  if (!compress) return { binary: false, text }
+  const source = Buffer.from(text, 'utf8')
+  if (source.length < FRAME_DEFLATE_MIN_BYTES) return { binary: false, text }
+  const deflated = deflate(source)
+  if (deflated.length >= source.length) return { binary: false, text }
+  return { binary: true, deflated }
 }
 
 /** One successful response frame. */
