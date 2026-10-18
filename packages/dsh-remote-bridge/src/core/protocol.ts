@@ -63,6 +63,30 @@ export const CAP_SESSION_SNAPSHOT_PAGE = 'session.snapshot.page.v1'
 export const CAP_QUESTIONS = 'questions.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to be handed the
+ * approval questions this bridge is already holding for it.
+ *
+ * Unlike every channel capability beside it, this one gates a second delivery
+ * rather than the channel: `approval.request` still reaches every paired
+ * connection the moment a tool asks, exactly as it did before this name
+ * existed, because gating the first broadcast would take approvals away from
+ * every client written before the capability. What the declaration buys is the
+ * replay — after a reconnect, or on a session screen opened late, the client is
+ * handed the questions that are still waiting instead of a card it never saw.
+ * Only a live claim is replayed: a question that was answered, that the bridge
+ * timed out, or that was withdrawn with the last phone is gone from the claim
+ * registry before the replay reads it.
+ *
+ * It is deliberately absent from {@link SERVED_CAPABILITIES}: that list is what
+ * `hello` advertises as served, advertising a capability is a minor-version
+ * addition (see {@link MINOR}), and this channel changes nothing a client can
+ * observe in the handshake — no answer, no field and no method behind it. The
+ * declaration is the whole switch, and the name reaches a client through this
+ * bridge's own protocol documentation.
+ */
+export const CAP_APPROVALS = 'approvals.v1'
+
+/**
  * Capability a client declares in `hello`'s `cap` array to be told where a
  * message came from and that an agent spawned a child session.
  *

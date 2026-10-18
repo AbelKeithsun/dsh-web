@@ -18,9 +18,10 @@
  */
 
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
+import type { PendingPromptView } from './approvals.ts'
 import type { BridgeConnectionOptions, BridgeTransport, ConnectionAuth } from './connection.ts'
 import { BridgeConnection } from './connection.ts'
-import { CAP_QUESTIONS, TOPIC_APPROVAL_REQUEST, TOPIC_QUESTION_REQUEST } from './protocol.ts'
+import { CAP_APPROVALS, CAP_QUESTIONS, TOPIC_APPROVAL_REQUEST, TOPIC_QUESTION_REQUEST } from './protocol.ts'
 import type { ClaimedQuestionView, QuestionAnswer, QuestionRequestPayload, QuestionState, UserQuestionRequestLike } from './questions.ts'
 
 /**
@@ -39,6 +40,26 @@ export interface ApprovalRequestLike {
 /** The summary line a phone shows for one question. */
 export function approvalSummary(request: ApprovalRequestLike): string {
   return request.displayReason?.zh ?? request.displayReason?.en ?? request.toolName
+}
+
+/** The `approval.request` payload one claim is published with. */
+export interface ApprovalRequestPayload {
+  readonly sessionId: string
+  readonly id: string
+  readonly summary: string
+  readonly toolName: string
+}
+
+/**
+ * The `approval.request` payload for one claim.
+ *
+ * The first broadcast and the replay of a still-open claim go through this one
+ * function, so the card a phone was originally shown and the same card handed to
+ * it again after a reconnect cannot drift apart.
+ * @param prompt - the claim being published.
+ */
+function approvalPayload(prompt: PendingPromptView): ApprovalRequestPayload {
+  return { sessionId: prompt.sessionId, id: prompt.id, summary: prompt.summary, toolName: prompt.toolName }
 }
 
 /**
@@ -86,9 +107,16 @@ export class BridgeHub {
   attach(transport: BridgeTransport, auth?: ConnectionAuth): BridgeConnection {
     // The replay hook is wired here rather than by the caller: a phone that
     // reconnects mid-question was not there for the broadcast, and every
-    // construction path has to hand it the live claims.
+    // construction path has to hand it the live claims — the approval ones and
+    // the user-question ones alike.
     const connection = new BridgeConnection(
-      { ...this.#options, onDeclare: (fresh) => { this.replayQuestions(fresh) } },
+      {
+        ...this.#options,
+        onDeclare: (fresh) => {
+          this.replayQuestions(fresh)
+          this.replayApprovals(fresh)
+        },
+      },
       transport,
       auth,
     )
@@ -143,6 +171,29 @@ export class BridgeHub {
   }
 
   /**
+   * Hand one freshly declared connection the approvals it can now answer.
+   *
+   * The same shape as {@link replayQuestions} and for the same reason: the first
+   * `approval.request` of a question was broadcast to the phones that were
+   * connected at that instant, so a phone that reconnected — or a session screen
+   * opened after the fact — holds no card and has no other way to learn the
+   * question exists. Only unsettled questions are in the registry, so one that
+   * was answered, one the bridge timed out and one withdrawn with the last phone
+   * cannot be replayed.
+   *
+   * The replay emits a frame and nothing else: the claim keeps the deadline it
+   * was opened with, so re-handing a question never lengthens how long the agent
+   * waits for it.
+   * @param connection - the connection that just declared its capabilities.
+   */
+  replayApprovals(connection: BridgeConnection): void {
+    if (!connection.paired || !connection.declares(CAP_APPROVALS)) return
+    for (const prompt of this.#options.approvals.openPrompts()) {
+      connection.emit(TOPIC_APPROVAL_REQUEST, approvalPayload(prompt))
+    }
+  }
+
+  /**
    * Publish one event to every paired device that announced a capability.
    * @returns how many connections actually took the frame.
    */
@@ -170,12 +221,7 @@ export class BridgeHub {
       summary: approvalSummary(request),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     })
-    const delivered = this.broadcast(TOPIC_APPROVAL_REQUEST, {
-      sessionId,
-      id: prompt.id,
-      summary: prompt.summary,
-      toolName: request.toolName,
-    })
+    const delivered = this.broadcast(TOPIC_APPROVAL_REQUEST, approvalPayload(prompt))
     // A question nobody could receive is withdrawn immediately instead of
     // waiting out the phone's timeout with the agent blocked on it.
     if (delivered === 0) this.#options.approvals.abandon([prompt.id])

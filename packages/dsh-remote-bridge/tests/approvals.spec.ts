@@ -1,13 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApprovalRegistry } from '../src/core/approvals.ts'
-import { approvalSummary } from '../src/core/hub.ts'
-import { answerOf, makeConnection, makeHub, requestFrame, type RecordingTransport } from './support/harness.ts'
+import { approvalSummary, type ApprovalRequestLike } from '../src/core/hub.ts'
+import { answerOf, makeBareHub, makeConnection, makeHub, RecordingTransport, requestFrame } from './support/harness.ts'
 
 /** The one approval question a hub published, as a phone reads it. */
 function publishedQuestion(transport: RecordingTransport): { sessionId: string; id: string; summary: string; toolName: string } {
   const frame = transport.ofType('ev').find(candidate => candidate.m === 'approval.request')
   if (frame === undefined) throw new Error('no approval question was published')
   return frame.p as { sessionId: string; id: string; summary: string; toolName: string }
+}
+
+/** One pending approval as the host's waterfall carries it. */
+function hostApproval(overrides: Partial<ApprovalRequestLike> = {}): ApprovalRequestLike {
+  return { agent: { id: 's-1' }, toolName: 'bash', displayReason: { en: 'run a command', zh: '运行命令' }, ...overrides }
+}
+
+/** The next answerer when the bridge delegates: the fail-closed default. */
+const unavailable = async (): Promise<'unavailable'> => 'unavailable'
+
+/** Declare the approval capability on one connection. */
+async function declareApprovals(connection: { handleText(text: string): Promise<void> }, id = 1): Promise<void> {
+  await connection.handleText(requestFrame(id, 'hello', { proto: 1, cap: ['approvals.v1'] }))
+}
+
+/** @returns the payload of every `approval.request` frame the carrier took. */
+function approvalPayloads(transport: RecordingTransport): Record<string, unknown>[] {
+  return transport.ofType('ev').filter(frame => frame.m === 'approval.request').map(frame => frame.p as Record<string, unknown>)
 }
 
 describe('approval bridge', () => {
@@ -141,5 +159,137 @@ describe('approval bridge', () => {
     expect(await first).toBe('unavailable')
     expect(await second).toBe('unavailable')
     expect(harness.approvals.size).toBe(0)
+  })
+})
+
+describe('approval replay', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('operator a phone that reconnects is handed the approval it missed', async () => {
+    // Given an approval question waiting, which the phone was shown once
+    const harness = makeHub()
+    const pending = harness.hub.approve(hostApproval(), unavailable)
+    const first = approvalPayloads(harness.transport)
+    expect(first).toHaveLength(1)
+    // When that phone declares the approval capability again after reconnecting
+    await declareApprovals(harness.connection, 9)
+    // Then it is handed the live question again, byte for byte the card it first took
+    const replayed = approvalPayloads(harness.transport).slice(1)
+    expect(replayed).toEqual(first)
+    // And the question is answerable under that same id, settling exactly once
+    await harness.connection.handleText(requestFrame(10, 'approval.resolve', { id: first[0]?.id as string, decision: 'allowed-once' }))
+    expect(await pending).toBe('allowed-once')
+    expect(harness.approvals.size).toBe(0)
+  })
+
+  it('user of a client that declares no approval capability is handed nothing extra', async () => {
+    // Given a paired phone that knows only the user-question channel
+    const harness = makeHub()
+    const pending = harness.hub.approve(hostApproval(), unavailable)
+    expect(approvalPayloads(harness.transport)).toHaveLength(1)
+    // When it declares a capability that is not this bridge's approval one
+    await harness.connection.handleText(requestFrame(9, 'hello', { proto: 1, cap: ['questions.v1'] }))
+    // Then the first broadcast stays the only approval frame it ever took
+    expect(approvalPayloads(harness.transport)).toHaveLength(1)
+    // And the question is still live, so saying "no card" was the declaration and not the question
+    expect(harness.approvals.size).toBe(1)
+    await harness.connection.handleText(requestFrame(10, 'approval.resolve', { id: publishedQuestion(harness.transport).id, decision: 'rejected' }))
+    expect(await pending).toBe('rejected')
+  })
+
+  it('user of a phone that declared the capability before the ask is shown the question exactly once', async () => {
+    // Given a phone that announced the approval channel at handshake time
+    const harness = makeHub()
+    await declareApprovals(harness.connection)
+    // When a tool asks for permission
+    const pending = harness.hub.approve(hostApproval(), unavailable)
+    // Then the first broadcast is the only frame it took, with no replay beside it
+    expect(approvalPayloads(harness.transport)).toHaveLength(1)
+    // And the question is answered by that one card
+    await harness.connection.handleText(requestFrame(9, 'approval.resolve', { id: publishedQuestion(harness.transport).id, decision: 'allowed-once' }))
+    expect(await pending).toBe('allowed-once')
+  })
+
+  it('operator an approval the user already answered is never handed out again', async () => {
+    // Given an approval question that was answered
+    const harness = makeHub()
+    const pending = harness.hub.approve(hostApproval(), unavailable)
+    await harness.connection.handleText(requestFrame(1, 'approval.resolve', { id: publishedQuestion(harness.transport).id, decision: 'allowed-once' }))
+    expect(await pending).toBe('allowed-once')
+    // When the phone declares the channel after reconnecting
+    await declareApprovals(harness.connection, 9)
+    // Then nothing is replayed: the question was released from the claim registry
+    expect(approvalPayloads(harness.transport)).toHaveLength(1)
+    expect(harness.approvals.openPrompts()).toEqual([])
+  })
+
+  it('operator an approval the bridge timed out is never handed out again, and a replay never extends it', async () => {
+    // Given an approval question claimed under the bridge's own timeout
+    vi.useFakeTimers()
+    const harness = makeHub()
+    const pending = harness.hub.approve(hostApproval(), unavailable)
+    // When the phone reconnects near the end and is handed the live question
+    await vi.advanceTimersByTimeAsync(100_000)
+    await declareApprovals(harness.connection, 9)
+    expect(approvalPayloads(harness.transport)).toHaveLength(2)
+    // Then the claim still ends when its own deadline says, not twenty seconds later
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(await pending).toBe('unavailable')
+    // And a phone that reconnects after that is handed nothing at all
+    await declareApprovals(harness.connection, 10)
+    expect(approvalPayloads(harness.transport)).toHaveLength(2)
+  })
+
+  it('operator an approval withdrawn with the last phone is never handed out again', async () => {
+    // Given a claimed question on a hub whose only device is about to go away
+    const harness = makeHub()
+    const pending = harness.hub.approve(hostApproval(), unavailable)
+    expect(approvalPayloads(harness.transport)).toHaveLength(1)
+    // When it closes and the question is withdrawn instead of waiting out the timeout
+    harness.hub.detach(harness.connection)
+    expect(await pending).toBe('unavailable')
+    // Then a phone that comes back to that hub is handed no such question
+    const returning = new RecordingTransport()
+    const fresh = harness.hub.attach(returning, { deviceId: 'dev_returning' })
+    await declareApprovals(fresh)
+    expect(approvalPayloads(returning)).toEqual([])
+  })
+
+  it('operator an unpaired connection that declares the capability is handed no approval', async () => {
+    // Given a paired phone holding one question and an unpaired socket beside it
+    const bare = makeBareHub()
+    const pairedTransport = new RecordingTransport()
+    bare.hub.attach(pairedTransport, { deviceId: 'dev_paired' })
+    const unpairedTransport = new RecordingTransport()
+    const unpaired = bare.hub.attach(unpairedTransport)
+    const pending = bare.hub.approve(hostApproval(), unavailable)
+    expect(approvalPayloads(pairedTransport)).toHaveLength(1)
+    // When the unpaired socket declares the approval capability
+    await declareApprovals(unpaired)
+    // Then the pairing gate still decides: it is handed nothing
+    expect(approvalPayloads(unpairedTransport)).toEqual([])
+    expect(bare.approvals.size).toBe(1)
+    bare.hub.dispose()
+    expect(await pending).toBe('unavailable')
+  })
+
+  it('operator the claim registry names only the questions that can still be answered', async () => {
+    // Given three claimed questions and three ways to release one
+    let minted = 0
+    const registry = new ApprovalRegistry({ random: () => `q-${++minted}` })
+    const controller = new AbortController()
+    registry.open({ sessionId: 's-1', toolName: 'bash', summary: 'one' })
+    registry.open({ sessionId: 's-2', toolName: 'read', summary: 'two', signal: controller.signal })
+    registry.open({ sessionId: 's-3', toolName: 'write', summary: 'three' })
+    // Then all three are offered for a replay while they are unanswered
+    expect(registry.openPrompts().map(prompt => prompt.id)).toEqual(['q-1', 'q-2', 'q-3'])
+    expect(registry.openPrompts()[0]).toEqual({ id: 'q-1', sessionId: 's-1', toolName: 'bash', summary: 'one' })
+    // When one is answered, one loses its asker and one is withdrawn by the bridge
+    registry.resolve('q-1', 'rejected')
+    controller.abort()
+    registry.abandon(['q-3'])
+    // Then no release path leaves a question in the set a replay would read
+    expect(registry.openPrompts()).toEqual([])
+    expect(registry.size).toBe(0)
   })
 })

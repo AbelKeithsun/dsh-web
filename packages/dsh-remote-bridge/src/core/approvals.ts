@@ -39,8 +39,25 @@ export interface ApprovalPrompt {
   readonly answer: Promise<ApprovalAnswer>
 }
 
+/**
+ * One live question as a second delivery publishes it.
+ *
+ * The same four fields the first broadcast carries, so a card a phone was shown
+ * and the same card handed to it again after a reconnect cannot be spelled
+ * differently.
+ */
+export interface PendingPromptView {
+  readonly id: string
+  readonly sessionId: string
+  readonly toolName: string
+  readonly summary: string
+}
+
 /** One live question. */
 interface PendingPrompt {
+  readonly sessionId: string
+  readonly toolName: string
+  readonly summary: string
   readonly settle: (answer: ApprovalAnswer) => void
   readonly timer: NodeJS.Timeout
   readonly detached: () => void
@@ -75,6 +92,20 @@ export class ApprovalRegistry {
   }
 
   /**
+   * Every question still waiting for a phone, in claim order.
+   *
+   * Only a live claim can be named here: {@link #settle} is the single path out
+   * of the pending map, and an answer, the bridge's own timeout, the agent's
+   * cancellation and every withdrawal all pass through it before this reads the
+   * map again. A question this bridge released therefore cannot come back to a
+   * client that reconnects.
+   * @returns the fields a second delivery republishes, oldest claim first.
+   */
+  openPrompts(): readonly PendingPromptView[] {
+    return [...this.#pending].map(([id, entry]) => ({ id, sessionId: entry.sessionId, toolName: entry.toolName, summary: entry.summary }))
+  }
+
+  /**
    * Claim one question.
    * @param input - session identity, tool name, presentation summary, and the agent's own lifetime.
    * @returns the prompt to publish, with its answer promise.
@@ -89,7 +120,7 @@ export class ApprovalRegistry {
     const signal = input.signal
     const detached = signal === undefined ? (): void => undefined : (): void => { signal.removeEventListener('abort', withdraw) }
     signal?.addEventListener('abort', withdraw, { once: true })
-    this.#pending.set(id, { settle, timer, detached })
+    this.#pending.set(id, { sessionId: input.sessionId, toolName: input.toolName, summary: input.summary, settle, timer, detached })
     return { id, sessionId: input.sessionId, toolName: input.toolName, summary: input.summary, answer }
   }
 
