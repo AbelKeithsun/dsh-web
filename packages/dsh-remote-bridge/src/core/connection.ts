@@ -57,6 +57,7 @@ import {
   METHOD_SESSION_ATTACHMENT,
   METHOD_SESSION_CREATE,
   METHOD_SESSION_HISTORY,
+  METHOD_SESSION_HISTORY_DEEP,
   METHOD_SESSION_INTERRUPT,
   METHOD_SESSION_LIST,
   METHOD_SESSION_MODELS,
@@ -88,6 +89,21 @@ export const SNAPSHOT_OPEN_TIMEOUT_MS = 10_000
 export const SNAPSHOT_MAX_MESSAGES = 200
 /** Default byte budget of one `session.history` page: 512 KiB. */
 export const HISTORY_PAGE_BYTES = 512 * 1024
+/**
+ * Window one `session.history.deep` read asks DSH for: at least 50 user or
+ * assistant messages across at least 2 turns, and never more than 500 messages.
+ *
+ * It is the window the harness's own Web client pages history with, and it is
+ * deliberately wider than one answer: a byte budget is the caller's, so the
+ * store is asked for a whole span once and the bridge then cuts that span to
+ * `maxBytes` by entry. Nothing in the answer depends on where the store cut:
+ * the host's `hasMore` is folded into the answer's own `hasMore`, and the
+ * cursor is always the oldest entry the answer carries.
+ */
+export const DEEP_HISTORY_WINDOW = {
+  maxMessages: 500,
+  turnWindow: { minMessages: 50, minTurns: 2 },
+} as const
 /** Highest number of prompt receipts one connection remembers for idempotency. */
 export const PROMPT_RECEIPT_LIMIT = 512
 /** Largest base64 text one prompt attachment may carry: 6 MiB (protocol §10.2). */
@@ -585,6 +601,7 @@ export class BridgeConnection {
       case METHOD_SESSION_TITLES: return this.#sessionTitles(frame.p)
       case METHOD_SESSION_SNAPSHOT: return await this.#sessionSnapshot(frame.p, frame.id)
       case METHOD_SESSION_HISTORY: return await this.#sessionHistory(frame.p, frame.id)
+      case METHOD_SESSION_HISTORY_DEEP: return await this.#sessionHistoryDeep(frame.p, frame.id)
       case METHOD_SESSION_PROMPT: return await this.#sessionPrompt(frame.p)
       case METHOD_SESSION_INTERRUPT: return await this.#sessionInterrupt(frame.p)
       case METHOD_SESSION_ATTACHMENT: return await this.#sessionAttachment(frame.p, frame.id)
@@ -866,6 +883,119 @@ export class BridgeConnection {
         hasMore: page.hasMore,
       },
     }
+  }
+
+  /**
+   * Read one backwards page of a session's DURABLE history.
+   *
+   * `session.history` slices the follow window this connection holds, and that
+   * window is only as wide as the harness was asked to open it (200 messages), so
+   * a client that scrolls past it has no older page to ask for. This method reads
+   * the session store itself: one `session/page` call walked backwards with
+   * `beforeSeq`, with no follow stream and no window involved.
+   *
+   * It is a pure read in the same sense `session.history` is: nothing is
+   * subscribed, remembered, dropped or re-addressed, so the same `before`
+   * answers the same page and reading cannot change what the session is.
+   * @param payload - `{sessionId, before?, maxBytes?}`.
+   * @param id - the request id the page budget is measured against.
+   */
+  async #sessionHistoryDeep(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.history.deep requires sessionId')
+    const before = payload.before === undefined ? undefined : pageNumber(payload.before)
+    if (payload.before !== undefined && before === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'session.history.deep before must be a non-negative integer')
+    }
+    const budget = pageBudgetOf(payload.maxBytes, METHOD_SESSION_HISTORY_DEEP)
+    if (!budget.ok) return budget
+    // The same fence every other history read passes, and it runs before any
+    // store call: a child this connection may not read costs no read at all.
+    const unfollowable = await this.#unfollowable(sessionId)
+    if (unfollowable !== undefined) return refusal(CODE_SESSION_NOT_FOLLOWABLE, unfollowable)
+    const cut = await this.#durableCutOf(sessionId)
+    if (!cut.ok) return cut
+    const store = await this.#storePageOf(sessionId, cut.cut, before)
+    if (!store.ok) return store
+    const projection = turnsOfRecords(store.records)
+    const oldestOf = (turns: readonly SnapshotTurn[]): number | undefined => turns[0]?.entries[0]?.seq
+    const page = pageTurns(projection, before, budget.maxBytes, (turns, nextBefore, hasMore) => {
+      // The measured frame is the ANSWER, not the store read: a store page that
+      // ends short of the session's oldest entry still leaves older entries
+      // behind the answer, and the cursor is the answer's own oldest entry.
+      const more = hasMore || store.hasMore
+      const cursor = more ? nextBefore ?? oldestOf(turns) : undefined
+      return Buffer.byteLength(JSON.stringify(responseFrame(id, {
+        turns,
+        ...(cursor === undefined ? {} : { nextBefore: cursor }),
+        hasMore: more,
+      })), 'utf8')
+    })
+    if (page.turns.length === 0) return { ok: true, r: { turns: [], hasMore: false } }
+    const hasMore = page.hasMore || store.hasMore
+    const nextBefore = page.nextBefore ?? oldestOf(page.turns)
+    return {
+      ok: true,
+      r: {
+        turns: page.turns,
+        ...(hasMore && nextBefore !== undefined ? { nextBefore } : {}),
+        hasMore,
+      },
+    }
+  }
+
+  /**
+   * The inclusive log cut one durable page read names.
+   *
+   * `session/page` takes that cut as `throughSeq` and refuses one the store does
+   * not hold, so a page read has to name a seq the session actually has. The
+   * projection watermark is that seq: the cut every finished projection value has
+   * folded through, read from the non-activating projection service
+   * `session.models` already uses. `-1` is the harness's own name for a log with
+   * no events at all, and the store answers it with an empty page.
+   */
+  async #durableCutOf(sessionId: string): Promise<{ readonly ok: true; readonly cut: number } | CallFailure> {
+    const call = await this.#unary('session', 'projections', { sessionId })
+    if (!call.ok) return call
+    const cut = isRecord(call.value) ? call.value.asOfSeq : undefined
+    if (typeof cut !== 'number' || !Number.isSafeInteger(cut) || cut < -1) {
+      return refusal(CODE_SNAPSHOT_UNAVAILABLE, `session ${sessionId} reported no durable cut to page from`)
+    }
+    return { ok: true, cut }
+  }
+
+  /**
+   * Read one span of a session's durable history, at the address the harness demands.
+   *
+   * A delegated child is addressable only through its durable parent, and the
+   * harness answers `session/agent-busy` when it is asked as an ordinary session.
+   * That refusal is the one signal that distinguishes it from a real failure, so
+   * it is the only one that triggers the roster lookup and the retry — the same
+   * resolution {@link #openSubscription} performs for the follow stream.
+   */
+  async #storePageOf(sessionId: string, cut: number, before: number | undefined): Promise<{ readonly ok: true; readonly records: readonly unknown[]; readonly hasMore: boolean } | CallFailure> {
+    let call = await this.#pageCall(this.#addressOf(sessionId), cut, before)
+    if (!call.ok && call.code === CODE_SUBAGENT_ADDRESS_REQUIRED) {
+      const parent = await this.#parentOf(sessionId)
+      if (parent === undefined) return call
+      this.#lineage.set(sessionId, parent)
+      call = await this.#pageCall(subagentAddress(parent, sessionId), cut, before)
+    }
+    if (!call.ok) return call
+    const value = call.value
+    const records = isRecord(value) && Array.isArray(value.records) ? value.records as readonly unknown[] : undefined
+    if (records === undefined) return refusal(CODE_INTERNAL, 'session/page answered no records')
+    return { ok: true, records, hasMore: isRecord(value) && value.hasMore === true }
+  }
+
+  /** One `session/page` call at one resolved address. */
+  async #pageCall(address: SessionAddress, cut: number, before: number | undefined) {
+    return await this.#unary('session', 'page', {
+      address,
+      throughSeq: cut,
+      ...(before === undefined ? {} : { beforeSeq: before }),
+      ...DEEP_HISTORY_WINDOW,
+    })
   }
 
   /** The projection a baseline is served with: trimmed only for a client that asked for it. */

@@ -591,9 +591,9 @@ describe('protocol v1 composer parity: method set', () => {
       'session.setModel',
     ])
     expect(KNOWN_METHODS.has(METHOD_APPROVAL_RESOLVE)).toBe(true)
-    // The question channel and then the job channel each added exactly one more
-    // method to the frozen set, and the agent channel two; none renamed or
-    // removed one.
-    expect(KNOWN_METHODS.size).toBe(19)
+    // The question channel, the job channel and the deep-history channel each added
+    // exactly one more method to the frozen set, and the agent channel two; none
+    // renamed or removed one.
+    expect(KNOWN_METHODS.size).toBe(20)
   })
 })

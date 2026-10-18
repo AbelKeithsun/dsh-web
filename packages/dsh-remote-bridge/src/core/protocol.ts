@@ -10,6 +10,7 @@ export const METHOD_SESSION_LIST = 'session.list'
 export const METHOD_SESSION_TITLES = 'session.titles'
 export const METHOD_SESSION_SNAPSHOT = 'session.snapshot'
 export const METHOD_SESSION_HISTORY = 'session.history'
+export const METHOD_SESSION_HISTORY_DEEP = 'session.history.deep'
 export const METHOD_SESSION_PROMPT = 'session.prompt'
 export const METHOD_SESSION_INTERRUPT = 'session.interrupt'
 export const METHOD_SESSION_ATTACHMENT = 'session.attachment'
@@ -129,6 +130,18 @@ export const CAP_DELTA = 'delta.v1'
 export const CAP_ROSTER_OMITS_ARCHIVED = 'session.list.omit-archived.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to be told that this
+ * bridge can page a session's durable history down to its oldest entry.
+ *
+ * The capability is an announcement and nothing more. `session.history.deep` is
+ * open to every paired connection, exactly as `session.history` is, because it
+ * is a pure read of the session store that costs no other client anything;
+ * declaring the capability is how a client learns the method exists, and a
+ * client that does not declare it loses only that knowledge.
+ */
+export const CAP_SESSION_DEEP_HISTORY = 'session.deep-history.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.
@@ -146,6 +159,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_SESSION_TITLES,
   METHOD_SESSION_SNAPSHOT,
   METHOD_SESSION_HISTORY,
+  METHOD_SESSION_HISTORY_DEEP,
   METHOD_SESSION_PROMPT,
   METHOD_SESSION_INTERRUPT,
   METHOD_SESSION_ATTACHMENT,
@@ -198,10 +212,15 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
- * 6 when the agent channel shipped: behind {@link CAP_AGENTS} `presets.list`
- * forwards the host's Agent-preset roster and `session.create` hands the host
- * one creation request, both verbatim. 5 when the roster stopped carrying
- * archived sessions: behind
+ * 7 when the two channels met: the agent channel and the durable history
+ * channel each raised 5 to 6 on its own branch, so the protocol that carries
+ * both is 7. 6 when the agent channel shipped: behind {@link CAP_AGENTS}
+ * `presets.list` forwards the host's Agent-preset roster and `session.create`
+ * hands the host one creation request, both verbatim. 6 was also the durable
+ * history channel on its own: behind {@link CAP_SESSION_DEEP_HISTORY} a client
+ * may call {@link METHOD_SESSION_HISTORY_DEEP} and walk a session's store back
+ * to its oldest entry, below the follow window `session.history` slices. 5 when
+ * the roster stopped carrying archived sessions: behind
  * {@link CAP_ROSTER_OMITS_ARCHIVED} `session.list` names no session the host's
  * archive set holds, so a session archived between two listings arrives as a
  * removal and one restored as a change. 4 when byte-level increments shipped:
@@ -215,7 +234,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 6
+export const MINOR = 7
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -233,6 +252,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_AGENTS,
   CAP_DELTA,
   CAP_ROSTER_OMITS_ARCHIVED,
+  CAP_SESSION_DEEP_HISTORY,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'
