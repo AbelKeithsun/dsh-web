@@ -22,7 +22,7 @@
 - **会话面。** `session.list`、`session.titles`、`session.snapshot`、`session.prompt`、`session.interrupt` 分别覆盖带工作区、谱系与归档元数据的名册、一批会话标题、完整基线加实时订阅、带幂等键的排队发言，以及回合取消。
 - **agent 面。** `presets.list` 转发宿主的 Agent 预设名册，`session.create` 转发一次创建请求，手机因此能像桌面一样从预设实例化一个 Agent；这两个身体在桥里都不被解释。
 - **订阅而非轮询。** `session.snapshot` 打开宿主的 follow 流并保持它，基线与其后的每一条增量都走同一条 socket。
-- **审批直达客户端。** 需要授权的工具以 `approval.request` 事件到达，客户端用 `approval.resolve` 作答；无人应答的请求按拒绝处理。
+- **审批直达客户端，重连的手机还能拿回仍悬着的那些。** 需要授权的工具以 `approval.request` 事件到达，客户端用 `approval.resolve` 作答；无人应答的请求按拒绝处理，而声明了 `approvals.v1` 的连接会在握手之后再次收到所有未结算的审批。
 - **配对。** 一次性 bootstrap token 加 P-256 挑战应答产出可吊销的设备令牌；未配对连接只能触达三个方法。
 - **一个配对面板。** 同一插件行声明 `dsh.client` 浏览器半区：侧栏底部一个面板，把当前的一次性配对码同时以二维码与明文呈现给操作者，配 30 秒倒计时与「重新取码」。
 - **中继无需改动。** 协议搭在实例本来就发布的那个 origin 上，中继这一跳照原样转发它，与其他所有请求无异。
@@ -60,7 +60,7 @@
 
 agent 的两个方法什么都不解释。`presets.list` 把宿主 `agentPresets/list` 的身体原样回给客户端——该端点不收请求，所以一行预设就是注册表发布的东西，连它的插件清单一起——`session.create` 把客户端的身体作为该端点唯一的 `request` 参数送出，再把宿主自己的回包原样回给客户端。字段名、默认值与拒绝码都属于宿主：客户端对着宿主自己的 `SessionCreateRequest` 校验创建请求，而不是对着桥里留的一份副本；宿主拒绝时它拿到的是宿主的 `code` 与 `msg`——没有错误码的失败以本桥的 `internal` 穿出，但消息仍是宿主的原文。两个方法只对声明了 `agents.v1` 的客户端存在：没声明时各自回 `unknown-method`，且什么都不发；声明了却从不调用，则宿主一次读取都不会发生。
 
-`hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本桥自己服务九个能力，并在 `hello` 的 `capabilities` 里公告它们：`session.snapshot.trim.v1`、`session.snapshot.page.v1`、`questions.v1`、`subagent.thread.v1`、`jobs.v1`、`agents.v1`、`delta.v1`、`session.list.omit-archived.v1`、`session.deep-history.v1`——插件注册的能力不在其中，因为桥不是它的作者。第一个就是裁剪基线。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
+`hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本桥自己服务九个能力，并在 `hello` 的 `capabilities` 里公告它们：`session.snapshot.trim.v1`、`session.snapshot.page.v1`、`questions.v1`、`subagent.thread.v1`、`jobs.v1`、`agents.v1`、`delta.v1`、`session.list.omit-archived.v1`、`session.deep-history.v1`——插件注册的能力不在其中，因为桥不是它的作者。`approvals.v1` 也不在其中，它由客户端声明、本桥刻意从不公告：它门控的是一次重放而不是通道本身，因此握手对每个客户端都是同一个帧（见下文审批通道）。第一个就是裁剪基线。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
 
 第二个能力 `session.snapshot.page.v1` 给首屏本身加上页预算。不声明时，一次快照仍是整个开帧窗口，逐字节与今天一致。声明之后，`session.snapshot` 只回最新一页，按 `maxBytes`（默认 524288，即 512 KiB；不是可用预算就拒绝，而不是悄悄夹取）衡量，并用 `session.history` 那同一套按 entry 的切片来切：一个回合的 entry 可以跨在这一页与下一页之间，而该回合保留自己的字段；比整页预算还大的单条 entry 独占一页；`snapshot-too-large` 再也不会回给这样的连接。这一页带 `lastSeq` 与 `hasMore`，而它继续往回的游标就是它自己最旧那条 entry 的 `seq`——正是 `session.history` 的 `before` 所取的值，所以不再用 `nextBefore` 重述一遍。于是打开一个会话只需一页，`session.history` 以同样的 512 KiB 页把窗口其余部分往回走完。
 
@@ -91,7 +91,7 @@ agent 的两个方法什么都不解释。`presets.list` 把宿主 `agentPresets
 | `user-message` | `{text, messageId?, attachments?, actor?}` | 一条用户消息；`actor` 说明它从哪来 |
 | `subagent` | `{childId, label?, mode?, callId?}` | 宿主登记了一个被委派的子会话；需能力 `subagent.thread.v1` |
 
-`approval.request` 的摘要取自宿主按客户端语言给出的显示理由，缺失时回落英文、再回落工具名，并附带工具名本身。客户端用 `approval.resolve` 作答，`decision` 取 `allowed-once` 或 `rejected`；未知或过期的 `id` 会被拒绝，而无人应答的请求在两分钟后按 unavailable 结算，宿主视之为拒绝。桥只在下游有已配对客户端连接时才认领请求：一个都没有时，请求交给下一个应答者，而不是干等一台不在场的手机。
+`approval.request` 的摘要取自宿主按客户端语言给出的显示理由，缺失时回落英文、再回落工具名，并附带工具名本身。客户端用 `approval.resolve` 作答，`decision` 取 `allowed-once` 或 `rejected`；未知或过期的 `id` 会被拒绝，而无人应答的请求在两分钟后按 unavailable 结算，宿主视之为拒绝。工具发起请求的那一刻，每一条已配对连接都会收到该事件——首播不在任何能力名之后——而声明了 `approvals.v1` 的连接会在 `hello` 之后再次收到所有仍在等待的请求，因此重连过的手机、或事后才打开该会话的界面，手里依然有卡片。只有未结算的请求会被重放：已作答、已超时、已撤回的请求早已离开认领表，而重新递一次请求绝不会挪动它的两分钟截止时间。该能力只门控这第二次送达，因此它不出现在 `hello` 的 `capabilities` 里、也不改动 `minor`：握手对每个客户端都回同一个帧。桥只在下游有已配对客户端连接时才认领请求：一个都没有时，请求交给下一个应答者，而不是干等一台不在场的手机。
 
 ## 扩展缝
 
