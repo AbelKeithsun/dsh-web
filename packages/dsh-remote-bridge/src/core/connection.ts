@@ -81,9 +81,20 @@ import { TITLES_MAX_IDS, type SessionMeta } from './session-meta.ts'
 import type { SessionPermissions } from './session-permissions.ts'
 import type { BridgeGateway, GatewayPeer } from './wire.ts'
 import { CODE_SUBAGENT_ADDRESS_REQUIRED, sessionAddress, subagentAddress, wireArgs, type SessionAddress } from './wire.ts'
+import { CLOSE_LIVENESS_TIMEOUT } from './ws-frames.ts'
 
 /** Protocol-level heartbeat period: a frame is sent after this long without one. */
 export const IDLE_PING_MS = 20_000
+/**
+ * Deadline behind one liveness ping: a peer that sends no frame at all within
+ * this long of the ping is torn down.
+ *
+ * It only ever exists because a ping was sent — a connection the host has not
+ * pinged has no deadline — so a quiet client is never closed for being quiet,
+ * only for failing to answer. The measured one-way path over the relay is about
+ * 410 ms (2026-10-19), so this is more than an order of magnitude of slack.
+ */
+export const LIVENESS_TIMEOUT_MS = 10_000
 /** How long `session.snapshot` waits for its follow stream's opening frame. */
 export const SNAPSHOT_OPEN_TIMEOUT_MS = 10_000
 /** Largest turn window one snapshot asks DSH for. */
@@ -453,6 +464,8 @@ export class BridgeConnection {
   #deviceId: string | undefined
   #nonce: { readonly value: string; readonly expiresAt: number } | undefined
   #heartbeat: NodeJS.Timeout | undefined
+  /** The deadline armed by the liveness ping currently outstanding, if any. */
+  #liveness: NodeJS.Timeout | undefined
   #lastSendAt = 0
   #disposed = false
 
@@ -499,7 +512,11 @@ export class BridgeConnection {
     if (this.#heartbeat !== undefined) return
     const period = this.#options.heartbeatMs ?? IDLE_PING_MS
     this.#heartbeat = setInterval(() => {
-      if (this.#options.now() - this.#lastSendAt >= period) this.#send({ t: 'ping', ts: this.#options.now() })
+      if (this.#options.now() - this.#lastSendAt < period) return
+      this.#send({ t: 'ping', ts: this.#options.now() })
+      // The ping is out, so the peer now owes an answer: a peer that went
+      // silent without closing its socket is exactly what this deadline finds.
+      this.#armLivenessDeadline()
     }, period)
     this.#heartbeat.unref?.()
   }
@@ -517,6 +534,9 @@ export class BridgeConnection {
    */
   async handleText(text: string): Promise<void> {
     if (this.#disposed) return
+    // Any frame at all proves the peer is alive, so it satisfies the deadline
+    // behind the outstanding ping — a pong that answers no ping included.
+    this.#clearLivenessDeadline()
     const outcome = decodeClientFrame(text)
     if (!outcome.ok) {
       this.#send(errorFrame(outcome.id, outcome.code, outcome.msg))
@@ -547,10 +567,15 @@ export class BridgeConnection {
    * Tear the connection down: stop the heartbeat, abort every follow stream it
    * owns, and tell the carrier to go away. Idempotent, and safe to call from a
    * socket error handler — a carrier whose socket already closed ignores it.
+   * @param close - the close frame to send instead of the bridge-unloading one.
+   *   Only the liveness deadline passes it, so a client can tell a peer that
+   *   stopped answering from an ordinary teardown; every other caller leaves it
+   *   out and keeps the same code and reason as before.
    */
-  dispose(): void {
+  dispose(close?: { readonly code: number; readonly reason: string }): void {
     if (this.#disposed) return
     this.#disposed = true
+    this.#clearLivenessDeadline()
     if (this.#heartbeat !== undefined) {
       clearInterval(this.#heartbeat)
       this.#heartbeat = undefined
@@ -566,7 +591,27 @@ export class BridgeConnection {
     this.#deltas.clear()
     // The bridge itself may be unloading with live sockets: the client is told
     // the endpoint is going away instead of being left on a dead protocol.
-    this.#transport.close(1001, 'the bridge is going away')
+    this.#transport.close(close?.code ?? 1001, close?.reason ?? 'the bridge is going away')
+  }
+
+  /** Arm the deadline behind one liveness ping, replacing any earlier one. */
+  #armLivenessDeadline(): void {
+    this.#clearLivenessDeadline()
+    this.#liveness = setTimeout(() => {
+      this.#options.log(`connection closed on the liveness deadline: no frame within ${LIVENESS_TIMEOUT_MS} ms of a liveness ping`)
+      this.dispose({
+        code: CLOSE_LIVENESS_TIMEOUT,
+        reason: `no frame within ${LIVENESS_TIMEOUT_MS} ms of a liveness ping`,
+      })
+    }, LIVENESS_TIMEOUT_MS)
+    this.#liveness.unref?.()
+  }
+
+  /** Drop the deadline: the peer answered, or the connection is already gone. */
+  #clearLivenessDeadline(): void {
+    if (this.#liveness === undefined) return
+    clearTimeout(this.#liveness)
+    this.#liveness = undefined
   }
 
   async #dispatch(frame: ReqFrame): Promise<DispatchOutcome> {

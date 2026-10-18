@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApprovalRegistry } from '../src/core/approvals.ts'
+import { IDLE_PING_MS } from '../src/core/connection.ts'
 import { approvalSummary, type ApprovalRequestLike } from '../src/core/hub.ts'
 import { answerOf, makeBareHub, makeConnection, makeHub, RecordingTransport, requestFrame } from './support/harness.ts'
 
@@ -21,6 +22,19 @@ const unavailable = async (): Promise<'unavailable'> => 'unavailable'
 /** Declare the approval capability on one connection. */
 async function declareApprovals(connection: { handleText(text: string): Promise<void> }, id = 1): Promise<void> {
   await connection.handleText(requestFrame(id, 'hello', { proto: 1, cap: ['approvals.v1'] }))
+}
+
+/**
+ * Let `ms` of fake time pass while the phone answers every liveness ping.
+ *
+ * The bridge tears a connection down when a ping's deadline passes unanswered,
+ * so a test about anything else has to model a phone that answers.
+ */
+async function liveFor(connection: { handleText(text: string): Promise<void> }, ms: number): Promise<void> {
+  for (let elapsed = 0; elapsed < ms; elapsed += IDLE_PING_MS) {
+    await vi.advanceTimersByTimeAsync(Math.min(IDLE_PING_MS, ms - elapsed))
+    await connection.handleText(JSON.stringify({ t: 'pong', ts: elapsed }))
+  }
 }
 
 /** @returns the payload of every `approval.request` frame the carrier took. */
@@ -228,8 +242,8 @@ describe('approval replay', () => {
     vi.useFakeTimers()
     const harness = makeHub()
     const pending = harness.hub.approve(hostApproval(), unavailable)
-    // When the phone reconnects near the end and is handed the live question
-    await vi.advanceTimersByTimeAsync(100_000)
+    // When the phone stays reachable and reconnects near the end, and is handed the live question
+    await liveFor(harness.connection, 100_000)
     await declareApprovals(harness.connection, 9)
     expect(approvalPayloads(harness.transport)).toHaveLength(2)
     // Then the claim still ends when its own deadline says, not twenty seconds later

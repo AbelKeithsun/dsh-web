@@ -36,7 +36,7 @@ The package publishes one protocol and, beside it, one small browser surface. Wh
 | event | `{"t":"ev","seq":<uint>,"m":"<topic>","p":{...}}` |
 | heartbeat | `{"t":"ping","ts":<ms>}` and `{"t":"pong","ts":<ms>}` |
 
-`seq` is per connection and starts at 1: it numbers the events that connection received, not the harness's own history. Frames are text, one JSON object per frame, at most 10 MiB (10485760 bytes). Idle connections are probed every 20 s; a client answers a ping with a pong of its own and a bridge answers the same way.
+`seq` is per connection and starts at 1: it numbers the events that connection received, not the harness's own history. Frames are text, one JSON object per frame, at most 10 MiB (10485760 bytes). Idle connections are probed every 20 s; a client answers a ping with a pong of its own and a bridge answers the same way. A client that sends no frame at all within 10 s of a ping is closed with code 4000; a pong that answers no ping is still ignored.
 
 ## Methods
 

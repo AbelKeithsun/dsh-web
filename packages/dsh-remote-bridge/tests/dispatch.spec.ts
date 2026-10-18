@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { answerOf, makeConnection, requestFrame, titlesDouble } from './support/harness.ts'
+import { IDLE_PING_MS, LIVENESS_TIMEOUT_MS } from '../src/core/connection.ts'
 import { SessionMeta } from '../src/core/session-meta.ts'
+import { CLOSE_LIVENESS_TIMEOUT } from '../src/core/ws-frames.ts'
 
 describe('protocol v1 authorization and dispatch', () => {
   afterEach(() => { vi.useRealTimers() })
@@ -137,5 +139,67 @@ describe('protocol v1 authorization and dispatch', () => {
     // Then a disposed connection stops heartbeating
     await vi.advanceTimersByTimeAsync(60_000)
     expect(harness.transport.ofType('ping')).toHaveLength(1)
+  })
+
+  it('user stops answering the heartbeat and the bridge closes the socket on the liveness deadline', async () => {
+    // Given a connection whose heartbeat the test drives on a fake clock
+    vi.useFakeTimers()
+    const harness = makeConnection({ paired: true, heartbeatMs: IDLE_PING_MS })
+    harness.connection.startHeartbeat()
+    // When one idle period passes, the ping goes out and nothing closes yet: the
+    // deadline only exists because that ping was sent
+    await vi.advanceTimersByTimeAsync(IDLE_PING_MS)
+    expect(harness.transport.ofType('ping')).toHaveLength(1)
+    expect(harness.transport.closed).toBeUndefined()
+    // When the user answers nothing and the deadline expires
+    await vi.advanceTimersByTimeAsync(LIVENESS_TIMEOUT_MS)
+    // Then the existing teardown path closes the socket under the liveness code
+    expect(harness.transport.closed).toEqual({
+      code: CLOSE_LIVENESS_TIMEOUT,
+      reason: `no frame within ${LIVENESS_TIMEOUT_MS} ms of a liveness ping`,
+    })
+    expect(harness.connection.disposed).toBe(true)
+    // Then one log line names the deadline, and the heartbeat is gone with it
+    expect(harness.logs).toContain(`connection closed on the liveness deadline: no frame within ${LIVENESS_TIMEOUT_MS} ms of a liveness ping`)
+    await vi.advanceTimersByTimeAsync(IDLE_PING_MS * 3)
+    expect(harness.transport.ofType('ping')).toHaveLength(1)
+  })
+
+  it('user answers every ping and stays connected across several ping cycles', async () => {
+    // Given a connection the bridge probes after each idle period
+    vi.useFakeTimers()
+    const harness = makeConnection({ paired: true, heartbeatMs: IDLE_PING_MS })
+    harness.connection.startHeartbeat()
+    // When three idle periods pass and the user answers every ping at once
+    for (let cycle = 1; cycle <= 3; cycle += 1) {
+      // The next ping is one full idle period after the previous one, and the last
+      // advance already spent a whole deadline of it.
+      await vi.advanceTimersByTimeAsync(cycle === 1 ? IDLE_PING_MS : IDLE_PING_MS - LIVENESS_TIMEOUT_MS)
+      expect(harness.transport.ofType('ping')).toHaveLength(cycle)
+      await harness.connection.handleText(JSON.stringify({ t: 'pong', ts: cycle }))
+      // Then a whole deadline passes after each answer without the socket closing
+      await vi.advanceTimersByTimeAsync(LIVENESS_TIMEOUT_MS)
+      expect(harness.transport.closed).toBeUndefined()
+    }
+    // Then the connection survived all three cycles
+    expect(harness.connection.disposed).toBe(false)
+    expect(harness.transport.ofType('ping')).toHaveLength(3)
+  })
+
+  it('user sends an unrelated frame and satisfies the liveness deadline without a pong', async () => {
+    // Given a connection with one outstanding liveness ping
+    vi.useFakeTimers()
+    const harness = makeConnection({ paired: true, heartbeatMs: IDLE_PING_MS })
+    harness.connection.startHeartbeat()
+    await vi.advanceTimersByTimeAsync(IDLE_PING_MS)
+    expect(harness.transport.ofType('ping')).toHaveLength(1)
+    // When the user sends a frame that is not the pong the bridge asked for
+    await harness.connection.handleText(JSON.stringify({ t: 'ping', ts: 42 }))
+    // Then the existing client-ping answer is unchanged
+    expect(harness.transport.ofType('pong')).toEqual([{ t: 'pong', ts: 42 }])
+    // Then that frame alone satisfies the deadline the host's ping armed
+    await vi.advanceTimersByTimeAsync(LIVENESS_TIMEOUT_MS)
+    expect(harness.transport.closed).toBeUndefined()
+    expect(harness.connection.disposed).toBe(false)
   })
 })
