@@ -96,4 +96,6 @@ See [issue #513](https://github.com/zhu1090093659/dsh-web/issues/513).
 
 ## Telemetry
 
-The browser half sends one anonymous install heartbeat per UTC day to dsh-market.com: a random localStorage id plus this package's name, nothing else. The server stores only a salted hash of that id, never IP addresses, and exposes aggregate counts only. See [docs/telemetry.md](../../docs/telemetry.md) for the full contract.
+The browser half sends one anonymous install heartbeat per UTC day to dsh-market.com: a random localStorage id plus this package's name, nothing else. The server stores only a salted hash of that id, never IP addresses, and exposes aggregate counts only.
+
+The switch at the top of this section turns the family-wide heartbeat off for every wired plugin at once. It stores the preference in localStorage under `dsh-web-ui-telemetry-opt-out`, and a browser that sends Do Not Track stops reporting on its own; the section then explains that the switch only records the local preference. The Workshop, plugin installation and online updates keep working either way. See [docs/telemetry.md](../../docs/telemetry.md) for the full contract.

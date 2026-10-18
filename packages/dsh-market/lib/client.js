@@ -2662,6 +2662,8 @@ window.__ModuleLoader__.load({
 		};
 		//#endregion
 		//#region src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT = "https://dsh-market.com/api/telemetry/event";
@@ -2672,6 +2674,26 @@ window.__ModuleLoader__.load({
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed() {
+			return isTelemetryOptedOut() || doNotTrackRequested();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId() {
@@ -2701,6 +2723,7 @@ window.__ModuleLoader__.load({
 		*/
 		function reportDailyHeartbeat(items) {
 			try {
+				if (isTelemetrySuppressed()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;

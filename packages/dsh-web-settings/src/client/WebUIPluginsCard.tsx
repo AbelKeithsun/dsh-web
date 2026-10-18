@@ -4,11 +4,14 @@
  * section, so there is no disclosure fold).
  *
  * The heading is the section's whole copy: a lede sentence restated the title
- * the nav cell already shows, and it pushed the cards a paragraph down.
+ * the nav cell already shows, and it pushed the cards a paragraph down. The
+ * telemetry opt-out renders under the heading: it governs the whole family, so
+ * it outranks the per-plugin cards below it.
  */
 
 import type { ReactNode } from 'react'
 import type { PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { TelemetryToggle } from './TelemetryToggle.tsx'
 import css from './web-ui-settings.module.css'
 
 /** Props the settings section binds for the family plugin cards page. */
@@ -17,12 +20,13 @@ export type WebUIPluginsSectionProps =
   & PropsLocale<'web-ui-plugins'>
   & PropsRenderSlots<'web-ui.plugin.item'>
 
-/** Render the family plugin cards directly under a static heading. */
+/** Render the telemetry opt-out and the family plugin cards under a static heading. */
 export function WebUIPluginsSection(props: WebUIPluginsSectionProps): ReactNode {
   const { t, renderSlot } = props
   return (
     <div className={css.section}>
       <h2 className={css.heading} title={t('title')}>{t('title')}</h2>
+      <TelemetryToggle t={t} />
       <ul className={css.subcards}>
         {renderSlot('web-ui.plugin.item', {})}
       </ul>

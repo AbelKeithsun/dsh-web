@@ -38,9 +38,9 @@ window.__ModuleLoader__.load({
 		//#endregion
 		let _deepseek_ai_cordis = require("@deepseek-ai/cordis");
 		let _deepseek_ai_dsh_client_store = require("@deepseek-ai/dsh-client-store");
-		let react_jsx_runtime = require("react/jsx-runtime");
 		let react = require("react");
 		react = __toESM(react, 1);
+		let react_jsx_runtime = require("react/jsx-runtime");
 		let react_dom_client = require("react-dom/client");
 		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		let react_dom = require("react-dom");
@@ -613,50 +613,9 @@ window.__ModuleLoader__.load({
 			}
 		};
 		//#endregion
-		//#region \0dsh-css:packages/dsh-web-settings/src/client/web-ui-settings.module.css.mjs
-		const css$19 = ".HfjcPG_section{flex-direction:column;display:flex}.HfjcPG_heading{color:var(--dsw-alias-label-primary);margin:0 0 14px;font-size:17px;font-weight:600;line-height:1.4}.HfjcPG_sectionList{margin:0;padding:0;list-style:none}.HfjcPG_subcards{flex-direction:column;gap:10px;margin:0;padding:0;list-style:none;display:flex}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(5)>[class*=_navIcon],[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(6)>[class*=_navIcon],[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(7)>[class*=_navIcon],[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(8)>[class*=_navIcon]{display:none}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(5):before{content:\"\";background:currentColor;flex:none;width:16px;height:16px;-webkit-mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z'/%3E%3C/svg%3E\") 50%/contain no-repeat;mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z'/%3E%3C/svg%3E\") 50%/contain no-repeat}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(6):before{content:\"\";background:currentColor;flex:none;width:16px;height:16px;-webkit-mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12zm0-4a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'/%3E%3C/svg%3E\") 50%/contain no-repeat;mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12zm0-4a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'/%3E%3C/svg%3E\") 50%/contain no-repeat}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(7):before{content:\"\";background:currentColor;flex:none;width:16px;height:16px;-webkit-mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cellipse cx='8' cy='11' rx='4.2' ry='2.8'/%3E%3Ccircle cx='2.8' cy='6.2' r='1.9'/%3E%3Ccircle cx='8' cy='4.6' r='1.9'/%3E%3Ccircle cx='13.2' cy='6.2' r='1.9'/%3E%3C/svg%3E\") 50%/contain no-repeat;mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cellipse cx='8' cy='11' rx='4.2' ry='2.8'/%3E%3Ccircle cx='2.8' cy='6.2' r='1.9'/%3E%3Ccircle cx='8' cy='4.6' r='1.9'/%3E%3Ccircle cx='13.2' cy='6.2' r='1.9'/%3E%3C/svg%3E\") 50%/contain no-repeat}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(8):before{content:\"\";background:currentColor;flex:none;width:16px;height:16px;-webkit-mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5.5' cy='5.5' r='3'/%3E%3Ccircle cx='11' cy='5.5' r='3'/%3E%3Cpath d='M2.5 13.5c0-3 2-4.2 3-4.2H11c1.5 0 3 1.2 3 4.2z'/%3E%3C/svg%3E\") 50%/contain no-repeat;mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5.5' cy='5.5' r='3'/%3E%3Ccircle cx='11' cy='5.5' r='3'/%3E%3Cpath d='M2.5 13.5c0-3 2-4.2 3-4.2H11c1.5 0 3 1.2 3 4.2z'/%3E%3C/svg%3E\") 50%/contain no-repeat}";
-		const tagId$19 = "@linxin666/dsh-web-all/packages/dsh-web-settings/src/client/web-ui-settings.module.css";
-		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$19) + "]") === null) {
-			const tag = document.createElement("style");
-			tag.dataset.plugin = "@linxin666/dsh-web-all";
-			tag.dataset.pluginCss = tagId$19;
-			tag.textContent = css$19;
-			document.head.appendChild(tag);
-		}
-		var web_ui_settings_module_css_default = {
-			"heading": "HfjcPG_heading",
-			"section": "HfjcPG_section",
-			"sectionList": "HfjcPG_sectionList",
-			"subcards": "HfjcPG_subcards"
-		};
-		//#endregion
-		//#region ../dsh-web-settings/src/client/WebUIPluginsCard.tsx
-		/** Render the family plugin cards directly under a static heading. */
-		function WebUIPluginsSection(props) {
-			const { t, renderSlot } = props;
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-				className: web_ui_settings_module_css_default.section,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h2", {
-					className: web_ui_settings_module_css_default.heading,
-					title: t("title"),
-					children: t("title")
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("ul", {
-					className: web_ui_settings_module_css_default.subcards,
-					children: renderSlot("web-ui.plugin.item", {})
-				})]
-			});
-		}
-		//#endregion
-		//#region ../dsh-web-settings/src/client/locales.ts
-		/**
-		* The `web-ui-plugins` locale dictionaries for the group card.
-		*/
-		/** Simplified Chinese dictionary (the key-set source of truth). */
-		const zh$12 = { "title": "Web 插件" };
-		/** English dictionary, checked complete against the zh key set. */
-		const en$12 = { "title": "Web Plugins" };
-		//#endregion
 		//#region ../dsh-web-settings/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY$8 = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY$8 = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX$8 = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT$8 = "https://dsh-market.com/api/telemetry/event";
@@ -667,6 +626,33 @@ window.__ModuleLoader__.load({
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut$8() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY$8) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Turn the family-wide opt-out on or off (writing '1' / removing the key); never throws. */
+		function setTelemetryOptedOut(optedOut) {
+			try {
+				if (optedOut) localStorage.setItem(TELEMETRY_OPT_OUT_KEY$8, "1");
+				else localStorage.removeItem(TELEMETRY_OPT_OUT_KEY$8);
+			} catch {}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested$8() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed$8() {
+			return isTelemetryOptedOut$8() || doNotTrackRequested$8();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId$8() {
@@ -696,6 +682,7 @@ window.__ModuleLoader__.load({
 		*/
 		function reportDailyHeartbeat$8(items) {
 			try {
+				if (isTelemetrySuppressed$8()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
@@ -725,6 +712,122 @@ window.__ModuleLoader__.load({
 				}).catch(() => {});
 			} catch {}
 		}
+		//#endregion
+		//#region \0dsh-css:packages/dsh-web-settings/src/client/web-ui-settings.module.css.mjs
+		const css$19 = ".HfjcPG_section{flex-direction:column;display:flex}.HfjcPG_heading{color:var(--dsw-alias-label-primary);margin:0 0 14px;font-size:17px;font-weight:600;line-height:1.4}.HfjcPG_telemetry{border:1px solid var(--dsw-alias-border-l);color:var(--dsw-alias-label-secondary);border-radius:8px;flex-direction:column;gap:4px;margin:0 0 14px;padding:10px 12px;font-size:12px;line-height:1.5;display:flex}.HfjcPG_telemetryRow{cursor:pointer;align-items:center;gap:8px;display:flex}.HfjcPG_telemetryCheckbox{cursor:pointer;flex:none;margin:0}.HfjcPG_telemetryLabel{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:500}.HfjcPG_telemetryHint{display:block}.HfjcPG_telemetryDnt{color:var(--dsw-alias-label-primary);display:block}.HfjcPG_sectionList{margin:0;padding:0;list-style:none}.HfjcPG_subcards{flex-direction:column;gap:10px;margin:0;padding:0;list-style:none;display:flex}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(5)>[class*=_navIcon],[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(6)>[class*=_navIcon],[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(7)>[class*=_navIcon],[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(8)>[class*=_navIcon]{display:none}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(5):before{content:\"\";background:currentColor;flex:none;width:16px;height:16px;-webkit-mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z'/%3E%3C/svg%3E\") 50%/contain no-repeat;mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z'/%3E%3C/svg%3E\") 50%/contain no-repeat}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(6):before{content:\"\";background:currentColor;flex:none;width:16px;height:16px;-webkit-mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12zm0-4a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'/%3E%3C/svg%3E\") 50%/contain no-repeat;mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12zm0-4a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'/%3E%3C/svg%3E\") 50%/contain no-repeat}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(7):before{content:\"\";background:currentColor;flex:none;width:16px;height:16px;-webkit-mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cellipse cx='8' cy='11' rx='4.2' ry='2.8'/%3E%3Ccircle cx='2.8' cy='6.2' r='1.9'/%3E%3Ccircle cx='8' cy='4.6' r='1.9'/%3E%3Ccircle cx='13.2' cy='6.2' r='1.9'/%3E%3C/svg%3E\") 50%/contain no-repeat;mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cellipse cx='8' cy='11' rx='4.2' ry='2.8'/%3E%3Ccircle cx='2.8' cy='6.2' r='1.9'/%3E%3Ccircle cx='8' cy='4.6' r='1.9'/%3E%3Ccircle cx='13.2' cy='6.2' r='1.9'/%3E%3C/svg%3E\") 50%/contain no-repeat}[class*=_navList]:has(>[class*=_navCell]:nth-child(8)):not(:has(>[class*=_navCell]:nth-child(9)))>[class*=_navCell]:nth-child(8):before{content:\"\";background:currentColor;flex:none;width:16px;height:16px;-webkit-mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5.5' cy='5.5' r='3'/%3E%3Ccircle cx='11' cy='5.5' r='3'/%3E%3Cpath d='M2.5 13.5c0-3 2-4.2 3-4.2H11c1.5 0 3 1.2 3 4.2z'/%3E%3C/svg%3E\") 50%/contain no-repeat;mask:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5.5' cy='5.5' r='3'/%3E%3Ccircle cx='11' cy='5.5' r='3'/%3E%3Cpath d='M2.5 13.5c0-3 2-4.2 3-4.2H11c1.5 0 3 1.2 3 4.2z'/%3E%3C/svg%3E\") 50%/contain no-repeat}";
+		const tagId$19 = "@linxin666/dsh-web-all/packages/dsh-web-settings/src/client/web-ui-settings.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$19) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@linxin666/dsh-web-all";
+			tag.dataset.pluginCss = tagId$19;
+			tag.textContent = css$19;
+			document.head.appendChild(tag);
+		}
+		var web_ui_settings_module_css_default = {
+			"heading": "HfjcPG_heading",
+			"section": "HfjcPG_section",
+			"sectionList": "HfjcPG_sectionList",
+			"subcards": "HfjcPG_subcards",
+			"telemetry": "HfjcPG_telemetry",
+			"telemetryCheckbox": "HfjcPG_telemetryCheckbox",
+			"telemetryDnt": "HfjcPG_telemetryDnt",
+			"telemetryHint": "HfjcPG_telemetryHint",
+			"telemetryLabel": "HfjcPG_telemetryLabel",
+			"telemetryRow": "HfjcPG_telemetryRow"
+		};
+		//#endregion
+		//#region ../dsh-web-settings/src/client/TelemetryToggle.tsx
+		/**
+		* The family-wide anonymous install telemetry switch, rendered inside the Web
+		* Plugins settings section above the plugin cards.
+		*
+		* The control is a settings-section fragment, not a plugin root, so it carries
+		* no data-dsh-plugin or data-dsh-part attribute. It reads the stored preference
+		* on mount and writes it through the shared reporter, which every family client
+		* package consumes; the browser's own Do Not Track signal suppresses the
+		* heartbeat independently, so the note under the hint reports that state.
+		*/
+		/** Render the opt-out checkbox, its explanatory hint, and the Do Not Track note. */
+		function TelemetryToggle(props) {
+			const { t } = props;
+			const [optedOut, setOptedOut] = (0, react.useState)(false);
+			const [doNotTrack, setDoNotTrack] = (0, react.useState)(false);
+			(0, react.useEffect)(() => {
+				setOptedOut(isTelemetryOptedOut$8());
+				setDoNotTrack(isTelemetrySuppressed$8() && !isTelemetryOptedOut$8());
+			}, []);
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: web_ui_settings_module_css_default.telemetry,
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+						className: web_ui_settings_module_css_default.telemetryRow,
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+							type: "checkbox",
+							className: web_ui_settings_module_css_default.telemetryCheckbox,
+							checked: optedOut,
+							onChange: (event) => {
+								const next = event.target.checked;
+								setOptedOut(next);
+								setTelemetryOptedOut(next);
+								setDoNotTrack(isTelemetrySuppressed$8() && !isTelemetryOptedOut$8());
+							}
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							className: web_ui_settings_module_css_default.telemetryLabel,
+							children: t("telemetry.label")
+						})]
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: web_ui_settings_module_css_default.telemetryHint,
+						children: t("telemetry.hint")
+					}),
+					doNotTrack ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: web_ui_settings_module_css_default.telemetryDnt,
+						role: "status",
+						children: t("telemetry.dnt")
+					}) : null
+				]
+			});
+		}
+		//#endregion
+		//#region ../dsh-web-settings/src/client/WebUIPluginsCard.tsx
+		/** Render the telemetry opt-out and the family plugin cards under a static heading. */
+		function WebUIPluginsSection(props) {
+			const { t, renderSlot } = props;
+			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: web_ui_settings_module_css_default.section,
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h2", {
+						className: web_ui_settings_module_css_default.heading,
+						title: t("title"),
+						children: t("title")
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(TelemetryToggle, { t }),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("ul", {
+						className: web_ui_settings_module_css_default.subcards,
+						children: renderSlot("web-ui.plugin.item", {})
+					})
+				]
+			});
+		}
+		//#endregion
+		//#region ../dsh-web-settings/src/client/locales.ts
+		/**
+		* The `web-ui-plugins` locale dictionaries for the group card.
+		*/
+		/** Simplified Chinese dictionary (the key-set source of truth). */
+		const zh$12 = {
+			"title": "Web 插件",
+			"telemetry.label": "匿名安装遥测",
+			"telemetry.hint": "每个浏览器每天向 dsh-market.com 发送一次匿名心跳：一个随机 ID 与本机已启用的插件名，不含任何对话内容。关闭后全部家族插件的浏览器端都不再发送；插件市场与在线更新不受影响。",
+			"telemetry.dnt": "当前浏览器开启了「请勿跟踪」，心跳已停止；下面的开关只表示本机保存的偏好。"
+		};
+		/** English dictionary, checked complete against the zh key set. */
+		const en$12 = {
+			"title": "Web Plugins",
+			"telemetry.label": "Anonymous install telemetry",
+			"telemetry.hint": "Each browser sends one anonymous heartbeat to dsh-market.com per day: a random id plus the names of the plugins enabled here, never any conversation content. Turning it off stops the browser half of every family plugin from reporting; the Workshop and online updates keep working.",
+			"telemetry.dnt": "This browser sends a Do Not Track request, so the heartbeat has already stopped; the switch below only records a preference on this machine."
+		};
 		//#endregion
 		//#region ../dsh-web-settings/src/client/index.ts
 		var client_exports$12 = /* @__PURE__ */ __exportAll({
@@ -1748,6 +1851,8 @@ window.__ModuleLoader__.load({
 		const PLUGIN_MANAGER_SERVICE = "pluginManager";
 		//#endregion
 		//#region ../dsh-plugin-manager/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY$7 = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY$7 = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX$7 = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT$7 = "https://dsh-market.com/api/telemetry/event";
@@ -1758,6 +1863,26 @@ window.__ModuleLoader__.load({
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut$7() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY$7) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested$7() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed$7() {
+			return isTelemetryOptedOut$7() || doNotTrackRequested$7();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId$7() {
@@ -1787,6 +1912,7 @@ window.__ModuleLoader__.load({
 		*/
 		function reportDailyHeartbeat$7(items) {
 			try {
+				if (isTelemetrySuppressed$7()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
@@ -4729,6 +4855,8 @@ window.__ModuleLoader__.load({
 		};
 		//#endregion
 		//#region ../dsh-market/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY$6 = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY$6 = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX$6 = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT$6 = "https://dsh-market.com/api/telemetry/event";
@@ -4739,6 +4867,26 @@ window.__ModuleLoader__.load({
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut$6() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY$6) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested$6() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed$6() {
+			return isTelemetryOptedOut$6() || doNotTrackRequested$6();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId$6() {
@@ -4768,6 +4916,7 @@ window.__ModuleLoader__.load({
 		*/
 		function reportDailyHeartbeat$6(items) {
 			try {
+				if (isTelemetrySuppressed$6()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
@@ -17984,6 +18133,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		};
 		//#endregion
 		//#region ../dsh-task-board/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY$5 = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY$5 = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX$5 = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT$5 = "https://dsh-market.com/api/telemetry/event";
@@ -17994,6 +18145,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut$5() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY$5) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested$5() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed$5() {
+			return isTelemetryOptedOut$5() || doNotTrackRequested$5();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId$5() {
@@ -18023,6 +18194,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		*/
 		function reportDailyHeartbeat$5(items) {
 			try {
+				if (isTelemetrySuppressed$5()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
@@ -23602,6 +23774,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		};
 		//#endregion
 		//#region ../dsh-git-graph/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY$4 = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY$4 = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX$4 = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT$4 = "https://dsh-market.com/api/telemetry/event";
@@ -23612,6 +23786,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut$4() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY$4) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested$4() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed$4() {
+			return isTelemetryOptedOut$4() || doNotTrackRequested$4();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId$4() {
@@ -23641,6 +23835,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		*/
 		function reportDailyHeartbeat$4(items) {
 			try {
+				if (isTelemetrySuppressed$4()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
@@ -27898,6 +28093,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		}
 		//#endregion
 		//#region ../dsh-remote-web-ui/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY$3 = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY$3 = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX$3 = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT$3 = "https://dsh-market.com/api/telemetry/event";
@@ -27908,6 +28105,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut$3() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY$3) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested$3() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed$3() {
+			return isTelemetryOptedOut$3() || doNotTrackRequested$3();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId$3() {
@@ -27937,6 +28154,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		*/
 		function reportDailyHeartbeat$3(items) {
 			try {
+				if (isTelemetrySuppressed$3()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
@@ -30109,6 +30327,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		}
 		//#endregion
 		//#region ../dsh-update/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY$2 = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY$2 = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX$2 = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT$2 = "https://dsh-market.com/api/telemetry/event";
@@ -30119,6 +30339,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut$2() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY$2) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested$2() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed$2() {
+			return isTelemetryOptedOut$2() || doNotTrackRequested$2();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId$2() {
@@ -30148,6 +30388,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		*/
 		function reportDailyHeartbeat$2(items) {
 			try {
+				if (isTelemetrySuppressed$2()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
@@ -46650,6 +46891,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		}
 		//#endregion
 		//#region ../dsh-ssh/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY$1 = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY$1 = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX$1 = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT$1 = "https://dsh-market.com/api/telemetry/event";
@@ -46660,6 +46903,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut$1() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY$1) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested$1() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed$1() {
+			return isTelemetryOptedOut$1() || doNotTrackRequested$1();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId$1() {
@@ -46689,6 +46952,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		*/
 		function reportDailyHeartbeat$1(items) {
 			try {
+				if (isTelemetrySuppressed$1()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
@@ -50964,6 +51228,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		}
 		//#endregion
 		//#region ../dsh-skill-explorer/src/client/telemetry.ts
+		/** localStorage key carrying the family-wide telemetry opt-out ('1' = off). */
+		const TELEMETRY_OPT_OUT_KEY = "dsh-web-ui-telemetry-opt-out";
 		const VISITOR_KEY = "dsh-web-ui-telemetry-visitor";
 		const DAY_KEY_PREFIX = "dsh-web-ui-telemetry-day:";
 		const ENDPOINT = "https://dsh-market.com/api/telemetry/event";
@@ -50974,6 +51240,26 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			} catch {
 				return;
 			}
+		}
+		/** Whether the user switched the family-wide opt-out on (reads storage only). */
+		function isTelemetryOptedOut() {
+			try {
+				return localStorage.getItem(TELEMETRY_OPT_OUT_KEY) === "1";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether the browser itself asks not to be tracked; a failed read means no signal. */
+		function doNotTrackRequested() {
+			try {
+				return navigator.doNotTrack === "1" || navigator.doNotTrack === "yes";
+			} catch {
+				return false;
+			}
+		}
+		/** Whether a heartbeat must be suppressed right now: opt-out stored, or the browser asks not to be tracked. */
+		function isTelemetrySuppressed() {
+			return isTelemetryOptedOut() || doNotTrackRequested();
 		}
 		/** Read or lazily create the anonymous visitor id; null when storage is unavailable. */
 		function visitorId() {
@@ -51003,6 +51289,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		*/
 		function reportDailyHeartbeat(items) {
 			try {
+				if (isTelemetrySuppressed()) return;
 				if (items.length === 0) return;
 				const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
 				if (navigator.webdriver) return;
