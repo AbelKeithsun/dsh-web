@@ -30,6 +30,19 @@ import { TunnelManager, type TunnelHandle } from '../src/tunnel.ts'
 /** A pid no process can hold, so a probe reads it as gone on every platform. */
 const ABSENT_PID = 9_999_999
 
+/**
+ * Whether this platform can report another pid's command line. The reaper
+ * identifies a recorded child by comparing the recorded line against
+ * `/proc/<pid>/cmdline` (Linux) or `ps -ww -o command=` (the rest); a platform
+ * with neither — Windows — reads every command line as unreadable, which is the
+ * documented fail-safe ("Windows never reaps", 2026-10-17 note) and settles
+ * every record as `stale`. The cases that assert a reap or an `owned` verdict
+ * therefore have nothing to observe there, so they skip instead of asserting a
+ * behaviour this platform deliberately does not have. The record-shape and
+ * ordinary-stop cases below keep running everywhere.
+ */
+const canReadCommandLines = process.platform !== 'win32'
+
 let home = ''
 const spawned: ChildProcess[] = []
 
@@ -142,7 +155,7 @@ function makeManager(graceMs = 50): { manager: TunnelManager; children: ChildPro
 }
 
 describe('leftover tunnel child recovery', () => {
-  it('operator gets the leftover child of a crashed host reaped on the next start', async () => {
+  it.skipIf(!canReadCommandLines)('operator gets the leftover child of a crashed host reaped on the next start', async () => {
     // Given a host that died without stopping its tunnel child: the child is
     // still running and the host's record — pid plus exact command line —
     // outlived it under the DSH home.
@@ -187,7 +200,7 @@ describe('leftover tunnel child recovery', () => {
     expect(existsSync(file)).toBe(false)
   })
 
-  it('operator keeps a live child whose command line no longer matches the record', async () => {
+  it.skipIf(!canReadCommandLines)('operator keeps a live child whose command line no longer matches the record', async () => {
     // Given a live child and a record whose command line is not the one ps
     // reports for its pid (a recycled pid, or a record rewritten since).
     const child = await spawnChild('dsh-tunnel-orphan-mismatch-probe')
@@ -209,7 +222,7 @@ describe('leftover tunnel child recovery', () => {
     await exited(child)
   })
 
-  it('operator keeps the child a live sibling host owns and its record', async () => {
+  it.skipIf(!canReadCommandLines)('operator keeps the child a live sibling host owns and its record', async () => {
     // Given a record whose owner host is still running: this test process
     // stands in for a second DSH host sharing the same home.
     const child = await spawnChild('dsh-tunnel-orphan-sibling-probe')
@@ -240,7 +253,7 @@ describe('leftover tunnel child recovery', () => {
     expect(parseProcCommandLine('')).toBeUndefined()
   })
 
-  it('operator gets a child that ignores SIGTERM killed after the bounded wait', async () => {
+  it.skipIf(!canReadCommandLines)('operator gets a child that ignores SIGTERM killed after the bounded wait', async () => {
     // Given an orphan that installs a SIGTERM handler and therefore survives.
     const stubborn = await spawnChild('dsh-tunnel-orphan-stubborn-probe', STUBBORN)
     const file = recordFile()
@@ -256,7 +269,7 @@ describe('leftover tunnel child recovery', () => {
 })
 
 describe('tunnel child record ownership', () => {
-  it('operator keeps another host record when the handle exposes no process to record', async () => {
+  it.skipIf(!canReadCommandLines)('operator keeps another host record when the handle exposes no process to record', async () => {
     // Given a record a live sibling host owns, and a manager whose handle
     // exposes no OS process, so this manager records nothing of its own.
     const sibling = await spawnChild('dsh-tunnel-orphan-processless-probe')
