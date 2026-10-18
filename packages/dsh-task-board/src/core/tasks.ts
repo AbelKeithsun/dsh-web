@@ -16,6 +16,29 @@ export type TaskStatus = 'backlog' | 'todo' | 'running' | 'done' | 'failed'
 export type ExecutionOutcome = 'succeeded' | 'failed' | 'cancelled'
 
 /**
+ * What one execution left behind: the text of the run's last assistant message
+ * and the session event it was read from.
+ *
+ * The board records a verdict per execution but no output, so a parent card
+ * could see that a subtask succeeded without seeing what it produced. Card
+ * content cannot answer that (it is the plan and freezes at the first
+ * execution), so the closing text rides the execution record instead.
+ */
+export interface ExecutionSummary {
+  /** Last assistant message text of the run, bounded by {@link EXECUTION_SUMMARY_LIMIT}. */
+  text: string
+  /** Seq of the session event that text came from; absent text has no seq either. */
+  seq: number
+}
+
+/**
+ * Upper bound of one recorded summary, in characters. The ledger stores a
+ * conclusion, not a transcript: a reader that needs the whole message follows
+ * {@link ExecutionSummary.seq} into the session history.
+ */
+export const EXECUTION_SUMMARY_LIMIT = 4000
+
+/**
  * One real execution attempt: the run's own id, the dsh session that ran it
  * (filled once the session is created), and the settled outcome once the
  * session's turn ended.
@@ -72,6 +95,16 @@ export interface ExecutionRecord {
   ownResult?: ExecutionOutcome
   /** Human failure text that arrived with {@link ownResult}. */
   ownError?: string
+  /**
+   * What this run left behind: the text of its last assistant message, taken
+   * when the settlement read the session and recorded with the verdict.
+   *
+   * Absent — never an empty string — when the session could not be read or
+   * carried no assistant prose, so "recorded nothing" stays distinguishable
+   * from "produced nothing". Settling never fails over it: a summary is
+   * informational, and every field above is what the board decides with.
+   */
+  summary?: ExecutionSummary
   /**
    * Goal acceptance state of this execution (task-board goal verification).
    * Fixed when the execution starts and never rewritten from later settings:
@@ -843,12 +876,21 @@ export function settleExecution(
   outcome: ExecutionOutcome,
   now: number,
   error: string | undefined,
+  summary?: ExecutionSummary,
 ): TaskRecord {
   const index = task.executions.findIndex(execution => execution.id === executionId)
   if (index === -1) return task
   const execution = task.executions[index]
   if (execution.endedAt !== undefined) return task
-  const settled: ExecutionRecord = { ...execution, endedAt: now, result: outcome, error }
+  // A settle without one keeps whatever an earlier settle already recorded: a
+  // cascade parent's final fold has no session of its own to read.
+  const settled: ExecutionRecord = {
+    ...execution,
+    endedAt: now,
+    result: outcome,
+    error,
+    ...(summary === undefined ? {} : { summary }),
+  }
   const executions = [...task.executions]
   executions[index] = settled
   return { ...task, status: settledStatus(task, outcome), updatedAt: now, executions }

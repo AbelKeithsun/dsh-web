@@ -399,6 +399,32 @@ describe('HostExecutionRunner', () => {
     expect((page.mock.calls[1]?.[0].args.request as { beforeSeq?: number }).beforeSeq).toBe(300)
   })
 
+  it('operator gets the text the run left behind on the verdict the runner returns', async () => {
+    // Given a session whose completed turn spoke, and an earlier message before it
+    const gateway = {
+      invoke: fakeInvoke(async (request: GatewayRequest) => request.method === 'list'
+        ? { items: [{ sessionId: 'session-a', running: false }] }
+        : request.method === 'projections'
+          ? { values: { goal: null } }
+          : { records: [], hasMore: false }),
+      stream: fakeStream(async () => ({
+        async *[Symbol.asyncIterator]() {
+          yield snapshot([
+            sessionEvent('assistant/message', 90, 900, { message: { content: [{ type: 'text', text: 'an earlier run said this' }] } }),
+            sessionEvent('assistant/message', 100, 1_100, { message: { content: [{ type: 'text', text: 'summary field recorded' }] } }),
+            sessionEvent('turn/end', 101, 1_200, { reason: { kind: 'completed' } }),
+          ], 101, false)
+        },
+      })),
+    }
+
+    // When the runner inspects that execution after its own start
+    const verdict = await new HostExecutionRunner(gateway).inspect('session-a', 1_000)
+
+    // Then the verdict carries the closing text of this run with its event seq
+    expect(verdict).toEqual({ outcome: 'succeeded', summary: { text: 'summary field recorded', seq: 100 } })
+  })
+
   it('carries the session list in listRunning and reuses it in inspect without another list RPC', async () => {
     const items = [{ sessionId: 'session-a', running: false }]
     const list = vi.fn(async () => ({ items }))

@@ -12,6 +12,7 @@
 import { isValidCron, isValidTimeZone } from './schedule.ts'
 import { SCHEDULE_STOP_REASONS, isTaskPermission, isTaskStatus, normalizeTags, normalizeTargetId, type ScheduleRule, type ScheduleStopReason, type TaskFreeze, type TaskRecord, type TaskPermission, type TaskStatus } from './tasks.ts'
 import { isExecutionOutcome } from './subtask.ts'
+import { normalizeExecutionSummary } from './execution-summary.ts'
 import type { TaskHandover } from './handover.ts'
 import { sanitizeFreezeSnapshot } from './freeze-snapshot.ts'
 import { sanitizeHandover } from './handover.ts'
@@ -256,6 +257,9 @@ export function parseLedger(raw: string | null): TaskRecord[] {
       runGroupId: normalizeTargetId(execution.runGroupId),
       ownResult: isExecutionOutcome(execution.ownResult) ? execution.ownResult : undefined,
       ownError: typeof execution.ownError === 'string' ? execution.ownError : undefined,
+      // A summary a reader does not recognize (an older document has none) is
+      // simply absent; a malformed one is dropped without costing the run.
+      summary: normalizeExecutionSummary(execution.summary),
       // A malformed acceptance block is dropped rather than dropping the
       // execution record: the board then treats that run as unverified.
       verification: normalizeVerification(execution.verification),

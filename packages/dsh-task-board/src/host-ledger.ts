@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { dshHome } from './dsh-home.ts'
 import { isValidCron, isValidTimeZone, nextRunAtMs, resolveHostTimeZone } from './core/schedule.ts'
 import { isTaskRecord, parseLedger } from './core/store.ts'
-import { canMoveManually, hasOpenExecution, retainRecentExecutions, scheduleExhausted, scheduleRunBudget, settleExecution, settledStatus, startExecution, withSchedule, withStatus, type ExecutionOutcome, type ExecutionRecord, type ScheduleMode, type ScheduleStopReason, type TaskRecord } from './core/tasks.ts'
+import { canMoveManually, hasOpenExecution, retainRecentExecutions, scheduleExhausted, scheduleRunBudget, settleExecution, settledStatus, startExecution, withSchedule, withStatus, type ExecutionOutcome, type ExecutionRecord, type ExecutionSummary, type ScheduleMode, type ScheduleStopReason, type TaskRecord } from './core/tasks.ts'
 import {
   DEFAULT_SUBTASK_DEPTH,
   cascadeTargets,
@@ -877,8 +877,12 @@ export class HostTaskLedger {
    * and only finalizes once every child execution in its run group has
    * settled, so a parent card leaves 'running' with the whole tree's verdict
    * rather than its own turn alone.
+   *
+   * `summary` is what the run left behind (see `ExecutionSummary`), passed in
+   * by whichever reader observed the session. It is informational: a caller
+   * without one settles exactly as before, and a settlement never waits on it.
    */
-  settle(taskId: string, executionId: string, outcome: ExecutionOutcome, error?: string): void {
+  settle(taskId: string, executionId: string, outcome: ExecutionOutcome, error?: string, summary?: ExecutionSummary): void {
     const now = this.now()
     const task = this.document.tasks.find(item => item.id === taskId)
     const execution = task?.executions.find(entry => entry.id === executionId)
@@ -886,17 +890,22 @@ export class HostTaskLedger {
     const groupId = execution.runGroupId
     if (groupId === undefined) {
       this.document.tasks = this.document.tasks.map(item => item.id === taskId
-        ? settleExecution(item, executionId, outcome, now, error)
+        ? settleExecution(item, executionId, outcome, now, error, summary)
         : item)
       this.commit()
       return
     }
     let changed = false
     if (execution.ownResult === undefined) {
+      // A cascade parent records its own turn's closing text with its own
+      // outcome; the fold that finalizes the card carries no session of its own
+      // and leaves what is already here in place.
       this.document.tasks = this.document.tasks.map(item => item.id !== taskId ? item : {
         ...item,
         updatedAt: now,
-        executions: item.executions.map(entry => entry.id === executionId ? { ...entry, ownResult: outcome, ownError: error } : entry),
+        executions: item.executions.map(entry => entry.id === executionId
+          ? { ...entry, ownResult: outcome, ownError: error, ...(summary === undefined ? {} : { summary }) }
+          : entry),
       })
       changed = true
     }

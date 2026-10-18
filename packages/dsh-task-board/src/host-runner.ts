@@ -7,7 +7,8 @@ import { teammateName } from './core/subtask.ts'
 import { mostRecentWorkspaceId } from './core/workspace-target.ts'
 import { declaredRoute, normalizeReasoningEffort, resolveReasoningEffort, type ReasoningRoute } from './core/reasoning-effort.ts'
 import type { ModelCatalogView } from './core/verification.ts'
-import type { TaskPermission, TaskRecord } from './core/tasks.ts'
+import type { ExecutionSummary, TaskPermission, TaskRecord } from './core/tasks.ts'
+import { executionSummaryOf } from './core/execution-summary.ts'
 
 /**
  * Host services needed to validate a task's workspace before creating a
@@ -169,9 +170,9 @@ export type ExecutionInspection =
    * forever.
    */
   | { outcome: 'pending'; unreadable?: true; reason?: string }
-  | { outcome: 'succeeded' }
-  | { outcome: 'failed'; error: string }
-  | { outcome: 'cancelled'; error: string }
+  | { outcome: 'succeeded'; summary?: ExecutionSummary }
+  | { outcome: 'failed'; error: string; summary?: ExecutionSummary }
+  | { outcome: 'cancelled'; error: string; summary?: ExecutionSummary }
 
 /** A post-create launch failure that still identifies the session to the ledger. */
 export class SessionLaunchError extends Error {
@@ -909,13 +910,20 @@ export class HostExecutionRunner {
       return { outcome: 'pending' }
     }
     this.scanMemos.delete(sessionId)
+    // What the run left behind rides the verdict the caller settles with, for a
+    // success and a failure alike: the events are in hand here, and no later
+    // reader can recover them once the session is gone. A run with no assistant
+    // prose carries no field at all, so settling stays a decision about the
+    // verdict alone.
+    const closing = executionSummaryOf(events.map(entry => entry.event), startedAt)
+    const carried = closing === undefined ? {} : { summary: closing }
     const reason = nonCompletedTurnEnd(turnEnd.event.data)
-    if (reason === undefined) return await this.goalVerdict(sessionId) ?? { outcome: 'succeeded' }
+    if (reason === undefined) return { ...(await this.goalVerdict(sessionId) ?? { outcome: 'succeeded' as const }), ...carried }
     // `error` keeps its historical wording; every other non-completed reason
     // (aborted / blocked / max-tokens / interrupted) now reports instead of
     // silently counting as success.
     return reason === 'error'
-      ? { outcome: 'failed', error: 'agent turn ended with an error' }
-      : { outcome: 'failed', error: 'agent turn ended without completing: ' + reason }
+      ? { outcome: 'failed', error: 'agent turn ended with an error', ...carried }
+      : { outcome: 'failed', error: 'agent turn ended without completing: ' + reason, ...carried }
   }
 }

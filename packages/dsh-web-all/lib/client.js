@@ -4940,6 +4940,12 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		//#region ../dsh-task-board/src/core/tasks.ts
+		/**
+		* Upper bound of one recorded summary, in characters. The ledger stores a
+		* conclusion, not a transcript: a reader that needs the whole message follows
+		* {@link ExecutionSummary.seq} into the session history.
+		*/
+		const EXECUTION_SUMMARY_LIMIT = 4e3;
 		/** Every stop reason this build understands; the repair and wire gates share it. */
 		const SCHEDULE_STOP_REASONS = [
 			"fired",
@@ -7228,6 +7234,52 @@ window.__ModuleLoader__.load({
 			if (byId === void 0 || byId === null) return void 0;
 			for (const row of Object.values(byId)) if (row !== void 0 && (row.retainedBy?.mainView ?? 0) > 0) return row.id;
 		}
+		//#endregion
+		//#region ../dsh-task-board/src/core/execution-summary.ts
+		/**
+		* What one execution left behind: the text of its last assistant message,
+		* recorded on the execution record next to the verdict it belongs to.
+		*
+		* A settled execution used to carry only a verdict, so a parent card could see
+		* that a subtask succeeded without ever seeing what it produced, and had to
+		* guess or redo the work. The card's own content cannot answer that: card
+		* content is the plan and freezes at the first execution
+		* (`canEditTaskContent`), so the closing words of a run are recorded on the
+		* execution record instead.
+		*
+		* Pure (no cordis, no runtime imports) so the settlement path is unit-testable
+		* without a session, and so a text-less run degrades to "no field" rather than
+		* to an empty string.
+		*/
+		/**
+		* Bound one summary, keeping its tail: the closing paragraphs carry the
+		* conclusion a reader is after, and the omitted opening is announced instead of
+		* silently dropped. Mirrors the evidence reader's tail bound.
+		*/
+		function truncateExecutionSummary(text, limit = EXECUTION_SUMMARY_LIMIT) {
+			if (text.length <= limit) return text;
+			const notice = "[truncated " + String(text.length - limit) + " chars] ";
+			return notice.length >= limit ? text.slice(-limit) : notice + text.slice(-(limit - notice.length));
+		}
+		/**
+		* Repair one persisted or reported summary.
+		*
+		* A summary is informational, so an unreadable one is dropped on its own rather
+		* than costing the execution (or the task row) it hangs on. A hand-edited
+		* overlong text is bounded on the way in, so no reader ever holds more than the
+		* limit.
+		*/
+		function normalizeExecutionSummary(value) {
+			if (typeof value !== "object" || value === null) return void 0;
+			const row = value;
+			if (typeof row.text !== "string" || typeof row.seq !== "number" || !Number.isFinite(row.seq)) return void 0;
+			const text = row.text.trim();
+			if (text === "") return void 0;
+			return {
+				text: truncateExecutionSummary(text),
+				seq: row.seq
+			};
+		}
 		/** Marker replacing every sensitive match. */
 		const REDACTED_MARKER = "[REDACTED]";
 		const BEGIN = "<<<FREEZE";
@@ -8124,6 +8176,7 @@ window.__ModuleLoader__.load({
 					runGroupId: normalizeTargetId(execution.runGroupId),
 					ownResult: isExecutionOutcome(execution.ownResult) ? execution.ownResult : void 0,
 					ownError: typeof execution.ownError === "string" ? execution.ownError : void 0,
+					summary: normalizeExecutionSummary(execution.summary),
 					verification: normalizeVerification(execution.verification),
 					external: execution.external === true ? true : void 0
 				}));

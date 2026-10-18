@@ -12,7 +12,7 @@ import { TASK_BOARD_SCHEMA_VERSION, type TaskBoardAction, type TaskBoardEventPay
 import type { CardDefaults } from './core/card-defaults.ts'
 import { TaskBoardExtensionRegistry } from './host/extension-registry.ts'
 import type { TaskBoardExtension } from './core/extension.ts'
-import { isTaskPermission, normalizeTargetId, type ExecutionOutcome, type ScheduleMode, type TaskRecord, type TaskStatus } from './core/tasks.ts'
+import { isTaskPermission, normalizeTargetId, type ExecutionOutcome, type ExecutionSummary, type ScheduleMode, type TaskRecord, type TaskStatus } from './core/tasks.ts'
 import { passedAttempt, resolveContract, verificationNeverInvoked, verificationOnlyInvalid, verificationRequired, withAcceptanceDetailCleared, type ExecutionVerification, type ModelCatalogView, type VerificationContract, type VerificationSettings } from './core/verification.ts'
 import type { TaskPermission } from './core/handover.ts'
 
@@ -956,10 +956,13 @@ export class TaskBoardHostService {
               : verificationOnlyInvalid(verification)
                 ? INVALID_ONLY_VERIFICATION_REASON
                 : NO_MATCHING_PASS_VERIFICATION_REASON,
+            result.summary,
           )
           continue
         }
-        this.settleAndNotify(execution.taskId, execution.executionId, result.outcome, 'error' in result ? result.error : undefined)
+        // The run's closing text rides whichever verdict it earned: a failed
+        // execution still leaves what it managed to say.
+        this.settleAndNotify(execution.taskId, execution.executionId, result.outcome, 'error' in result ? result.error : undefined, result.summary)
       } catch {
         // A transient inspection failure never settles a running execution.
       }
@@ -979,16 +982,16 @@ export class TaskBoardHostService {
    * ancestor of it — in the running column with no way out. The first poll of
    * each streak is logged, so the Host log names the session.
    */
-  private settleAndNotify(taskId: string, executionId: string, outcome: ExecutionOutcome, error?: string): void {
+  private settleAndNotify(taskId: string, executionId: string, outcome: ExecutionOutcome, error?: string, summary?: ExecutionSummary): void {
     const before = this.ledger.getTask(taskId)
     if (before?.executions.find(entry => entry.id === executionId)?.endedAt !== undefined) {
       // Already settled: the ledger would no-op, and re-emitting would report
       // the same settlement twice.
-      this.ledger.settle(taskId, executionId, outcome, error)
+      this.ledger.settle(taskId, executionId, outcome, error, summary)
       return
     }
     const previousStatus = before?.status
-    this.ledger.settle(taskId, executionId, outcome, error)
+    this.ledger.settle(taskId, executionId, outcome, error, summary)
     const task = this.ledger.getTask(taskId)
     if (task !== undefined && previousStatus !== undefined && previousStatus !== task.status) {
       this.extensions.emitStatusChanged({ taskId, status: task.status, previous: previousStatus })
