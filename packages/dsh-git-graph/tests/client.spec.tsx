@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * Branch-chip behavior tests: the input selector context entry renders the
- * branch chip from the session baseline, non-repository workspaces (and
- * sessions without a cwd) hide it, blank (hero) sessions keep it mounted,
+ * Branch-chip behavior tests: the composer input-dock entry renders the
+ * branch chip in the blank hero phase, non-repository workspaces (and
+ * sessions without a cwd) hide it, active sessions hide it,
  * the popover searches/filters and marks the current branch, the footer
  * flows fire the right verbs, switch rejections surface readable copy, and
  * the create/graph dialogs behave (validation, duplicate copy, lane
@@ -75,11 +75,8 @@ interface BenchOptions {
   container?: HTMLElement
 }
 
-/** The seat whose props the bench should compose. */
-type BenchSeat = 'context' | 'dock'
-
 /** Render the branch chip with stub framework hooks and a scripted inject face. */
-function bench(options: BenchOptions = {}, seat: BenchSeat = 'context') {
+function bench(options: BenchOptions = {}) {
   const sessionId = sid('sess-1')
   const cwd = 'cwd' in options ? options.cwd : '/ws/proj'
   const repoStatus = options.repoStatus === undefined
@@ -141,14 +138,14 @@ function bench(options: BenchOptions = {}, seat: BenchSeat = 'context') {
     subscribeChanges: vi.fn((sessionId: SessionId | undefined, _onChange: () => void) => { record('subscribeChanges', sessionId); return () => {} }),
   }
 
-  const blank = options.blank ?? seat === 'context'
+  const blank = options.blank ?? true
   const sessionsState = {
     byId: { [sessionId]: { cwd, blank } },
   }
   const commonProps = {
-    // The context/dock holes read their state from the standard session kit +
-    // the inject face; the dock seat additionally carries the conversation
-    // snapshot used to identify the blank hero phase.
+    // The dock hole reads its state from the standard session kit + the inject
+    // face; its runtime share also carries the conversation snapshot used to
+    // identify the blank hero phase.
     useSession: (() => undefined) as never,
     useSessions: ((selector: (state: typeof sessionsState) => unknown) => selector(sessionsState)) as never,
     useWorkspaces: (() => undefined) as never,
@@ -157,22 +154,14 @@ function bench(options: BenchOptions = {}, seat: BenchSeat = 'context') {
     ...injected,
   } as const
 
-  let props: BranchChipProps
-  if (seat === 'dock') {
-    props = {
-      ...commonProps,
-      sessionId,
-      session: {
-        blank: options.blank ?? false,
-        openState: options.openState ?? 'open',
-      } as never,
-      input: {} as never,
-    }
-  } else {
-    props = {
-      ...commonProps,
-      sessionId,
-    }
+  const props: BranchChipProps = {
+    ...commonProps,
+    sessionId,
+    session: {
+      blank: options.blank ?? true,
+      openState: options.openState ?? 'open',
+    } as never,
+    input: {} as never,
   }
 
   const view = render(<BranchChip {...props} />, options.container !== undefined ? { container: options.container } : undefined)
@@ -217,15 +206,7 @@ describe('BranchChip', () => {
     expect(branchChip.textContent).toContain('main')
   })
 
-  it('hides the branch selector in active dock sessions', async () => {
-    const { injected } = bench({}, 'dock')
-    await act(async () => {})
-    expect(screen.queryByRole('button', { name: '分支' })).toBeNull()
-    expect(injected.repoStatus).not.toHaveBeenCalled()
-    expect(injected.subscribeChanges).not.toHaveBeenCalled()
-  })
-
-  it('hides the branch selector in active context sessions', async () => {
+  it('hides the branch selector in active sessions', async () => {
     const { injected } = bench({ blank: false })
     await act(async () => {})
     expect(screen.queryByRole('button', { name: '分支' })).toBeNull()
@@ -233,18 +214,8 @@ describe('BranchChip', () => {
     expect(injected.subscribeChanges).not.toHaveBeenCalled()
   })
 
-  it('keeps the full pill in the blank hero and context seats', async () => {
-    bench({ blank: true }, 'dock')
-    const heroChip = await screen.findByRole('button', { name: '分支' })
-    expect(heroChip.className).toContain('chipHero')
-    cleanup()
-    bench({ blank: true })
-    const contextChip = await screen.findByRole('button', { name: '分支' })
-    expect(contextChip.className).not.toContain('chipHero')
-  })
-
   it('styles the dock chip with the official hero seat in the blank phase', async () => {
-    bench({ blank: true, openState: 'open' }, 'dock')
+    bench({ blank: true, openState: 'open' })
     const branchChip = await screen.findByRole('button', { name: '分支' })
     const chipWrap = branchChip.parentElement as HTMLElement
     expect(chipWrap.className).toContain('chipWrap')
@@ -259,7 +230,7 @@ describe('BranchChip', () => {
   })
 
   it('enters the hero seat while a blank session composer is still loading', async () => {
-    bench({ blank: true, openState: 'loading' }, 'dock')
+    bench({ blank: true, openState: 'loading' })
     const branchChip = await screen.findByRole('button', { name: '分支' })
     const anchor = anchorOf(branchChip)
     expect(anchor.className).toContain('anchorHero')
@@ -277,7 +248,7 @@ describe('BranchChip', () => {
     stack.append(heroRow, outlet)
     document.body.append(stack)
     try {
-      bench({ blank: true, openState: 'open', container: outlet }, 'dock')
+      bench({ blank: true, openState: 'open', container: outlet })
       await waitFor(() => {
         const chip = screen.getByRole('button', { name: '分支' })
         const anchor = anchorOf(chip)
@@ -311,7 +282,7 @@ describe('BranchChip', () => {
     try {
       // Given a hero row whose trailing options group is pinned right by
       // margin-left: auto, and a dock outlet after that row
-      bench({ blank: true, openState: 'open', container: outlet }, 'dock')
+      bench({ blank: true, openState: 'open', container: outlet })
       await waitFor(() => {
         const chip = screen.getByRole('button', { name: '分支' })
         const anchor = anchorOf(chip)

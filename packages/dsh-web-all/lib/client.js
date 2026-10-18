@@ -23008,10 +23008,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				if (sessionId === void 0) return false;
 				return state.byId?.[sessionId]?.blank === true;
 			});
-			const dockSeat = "session" in props && "input" in props;
-			const sessionSnapshot = dockSeat ? props.session : void 0;
+			const sessionSnapshot = props.session;
 			const heroSeat = sessionSnapshot?.blank === true && (sessionSnapshot.openState === "open" || blankSession === true);
-			const showBranchSelector = dockSeat ? heroSeat : blankSession;
 			const stockLightTheme = useStockLightTheme();
 			/** Repository state: undefined = loading, null = not a repository, else the snapshot. */
 			const [repo, setRepo] = (0, react.useState)(void 0);
@@ -23080,11 +23078,11 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			}, [props.repoStatus, sessionId]);
 			const lastFocusRefetch = (0, react.useRef)(0);
 			(0, react.useEffect)(() => {
-				if (!showBranchSelector) return void 0;
+				if (!heroSeat) return void 0;
 				return refetch();
-			}, [showBranchSelector, refetch]);
+			}, [heroSeat, refetch]);
 			(0, react.useEffect)(() => {
-				if (!showBranchSelector) return void 0;
+				if (!heroSeat) return void 0;
 				const unsubscribe = props.subscribeChanges(sessionId, () => {
 					refetch();
 				});
@@ -23100,7 +23098,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					window.removeEventListener("focus", onFocus);
 				};
 			}, [
-				showBranchSelector,
+				heroSeat,
 				props.subscribeChanges,
 				sessionId,
 				refetch
@@ -23110,7 +23108,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				refetch();
 			};
 			(0, react.useEffect)(() => {
-				if (!showBranchSelector || !branchOpen) return void 0;
+				if (!heroSeat || !branchOpen) return void 0;
 				let live = true;
 				setBranchesView(null);
 				props.branches(sessionId).then((view) => {
@@ -23120,12 +23118,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					live = false;
 				};
 			}, [
-				showBranchSelector,
+				heroSeat,
 				branchOpen,
 				props.branches,
 				sessionId
 			]);
-			if (!showBranchSelector || repo === void 0 || repo === null) return null;
+			if (!heroSeat || repo === void 0 || repo === null) return null;
 			const openBranchPopover = () => {
 				setBranchOpen((open) => !open);
 			};
@@ -23583,13 +23581,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		//#region ../dsh-git-graph/src/client/index.ts
 		var client_exports$7 = /* @__PURE__ */ __exportAll({
 			BranchChip: () => BranchChip,
-			CONTEXT_FALLBACK_MS: () => CONTEXT_FALLBACK_MS,
 			apply: () => apply$8,
 			inject: () => inject$8
 		});
 		/** Dictionary namespace owned by this plugin. */
 		const NS$7 = "git-graph";
-		/** Required services: slots for the selector-context entry, sessions for the cwd lookup, workspaces for worktree sessions, locale for the copy. */
+		/** Required services: slots for the dock entry, sessions for the cwd lookup, workspaces for worktree sessions, locale for the copy. */
 		const inject$8 = [
 			"slots",
 			"sessions",
@@ -23603,15 +23600,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			message: "session has no workspace"
 		};
 		/**
-		* How long the chip waits for the selector-context declaration before
-		* falling back to the input dock. The window covers the shell's first
-		* render of the input selector row after the conversation service is up;
-		* shells that never declare the hole (rc.6) land on the dock after it.
-		*/
-		const CONTEXT_FALLBACK_MS = 2e3;
-		/**
 		* Client plugin body: the branch chip entry with its git verbs, on the
-		* selector-context hole with an input-dock fallback.
+		* composer's input dock.
 		* @param ctx - client root context.
 		*/
 		function apply$8(ctx) {
@@ -23634,10 +23624,6 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			], (worktreeScope) => {
 				worktreeScope.effect(() => installAutoIsolation(worktreeScope, git), "dsh-git-graph: auto-isolation");
 			});
-			let fallbackTimer;
-			ctx.effect(() => () => {
-				if (fallbackTimer !== void 0) clearTimeout(fallbackTimer);
-			}, "dsh-git-graph: context fallback timer");
 			ctx.inject([
 				"slots",
 				"conversation",
@@ -23768,38 +23754,19 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 						}
 					};
 				};
-				const chipEntry = {
-					id: "git-graph",
-					order: 100,
-					locale: NS$7,
-					inject: injected
-				};
-				let mounted = false;
-				const disposeContextWait = scope.slots.inject("conversation.input.selector.context", () => {
-					mounted = true;
+				scope.slots.inject("conversation.input.dock", () => {
 					try {
 						return scope.slots.register({
-							name: "conversation.input.selector.context",
-							...chipEntry
+							name: "conversation.input.dock",
+							id: "git-graph",
+							order: 100,
+							locale: NS$7,
+							inject: injected
 						}, BranchChip);
 					} catch {
 						return () => {};
 					}
 				});
-				fallbackTimer = setTimeout(() => {
-					if (mounted) return;
-					disposeContextWait();
-					scope.slots.inject("conversation.input.dock", () => {
-						try {
-							return scope.slots.register({
-								name: "conversation.input.dock",
-								...chipEntry
-							}, BranchChip);
-						} catch {
-							return () => {};
-						}
-					});
-				}, CONTEXT_FALLBACK_MS);
 			});
 		}
 		//#endregion

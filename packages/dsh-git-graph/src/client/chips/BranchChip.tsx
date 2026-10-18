@@ -1,11 +1,9 @@
 /**
- * The git branch selector chip for blank sessions. It mounts in the selector
- * context hole (`conversation.input.selector.context`) beside the official
- * workspace selector. On shells that dropped the hole, it uses
- * `conversation.input.dock` only for the blank-session hero phase and lifts
- * itself into the official hero chip row, immediately after the agent-preset
- * seat and before the row's trailing options group. It is intentionally absent
- * while a session is running.
+ * The git branch selector chip for blank sessions. It mounts on the composer's
+ * input dock (`conversation.input.dock`) and, in the blank-session hero phase,
+ * lifts itself into the official hero chip row immediately after the
+ * agent-preset seat and before the row's trailing options group. It is
+ * intentionally absent while a session is running.
  * @module dsh-git-graph/client/chips/BranchChip
  */
 
@@ -23,9 +21,9 @@ import { WorktreeManager } from '../worktrees/WorktreeManager.tsx'
 import { GraphDialog } from '../graph/GraphDialog.tsx'
 import css from './context.module.css'
 
-/** Full props of the branch chip: either seat's runtime share (the session-maybe context hole or the dock fallback's blank-session hero) + the git-graph inject face + the locale seat. */
+/** Full props of the branch chip: the input dock's runtime share (the blank-session hero) + the git-graph inject face + the locale seat. */
 export type BranchChipProps =
-  (PropsRuntime<'conversation.input.selector.context'> | PropsRuntime<'conversation.input.dock'>)
+  PropsRuntime<'conversation.input.dock'>
   & GitGraphInjected
   & PropsLocale<'git-graph'>
 
@@ -123,15 +121,12 @@ export function BranchChip(props: BranchChipProps) {
     const sessions = state as { byId?: Record<string, { blank?: boolean }> }
     return sessions.byId?.[sessionId]?.blank === true
   })
-  // The dock seat carries the composer snapshot. It exposes the selector
-  // only in the blank hero phase; the session-maybe context seat uses the
-  // session baseline's blank flag instead.
-  const dockSeat = 'session' in props && 'input' in props
-  const sessionSnapshot = dockSeat ? props.session : undefined
+  // The dock seat carries the composer snapshot and exposes the selector only
+  // in the blank hero phase.
+  const sessionSnapshot = props.session
   // 0.1.2 cohort: the composer phase machine is gone from the snapshot; the
   // blank empty-log mirror plus open state covers the same show-selector seat.
   const heroSeat = sessionSnapshot?.blank === true && (sessionSnapshot.openState === 'open' || blankSession === true)
-  const showBranchSelector = dockSeat ? heroSeat : blankSession
   const stockLightTheme = useStockLightTheme()
 
   /** Repository state: undefined = loading, null = not a repository, else the snapshot. */
@@ -201,11 +196,11 @@ export function BranchChip(props: BranchChipProps) {
   // or start a Git status round trip.
   const lastFocusRefetch = useRef(0)
   useEffect(() => {
-    if (!showBranchSelector) return undefined
+    if (!heroSeat) return undefined
     return refetch()
-  }, [showBranchSelector, refetch])
+  }, [heroSeat, refetch])
   useEffect(() => {
-    if (!showBranchSelector) return undefined
+    if (!heroSeat) return undefined
     const unsubscribe = props.subscribeChanges(sessionId, () => { refetch() })
     const onFocus = (): void => {
       const now = Date.now()
@@ -218,7 +213,7 @@ export function BranchChip(props: BranchChipProps) {
       unsubscribe()
       window.removeEventListener('focus', onFocus)
     }
-  }, [showBranchSelector, props.subscribeChanges, sessionId, refetch])
+  }, [heroSeat, props.subscribeChanges, sessionId, refetch])
 
   const closeCreate = (): void => {
     setCreateOpen(false)
@@ -229,16 +224,16 @@ export function BranchChip(props: BranchChipProps) {
   // above the data-gated returns so the hook order is stable while `repo`
   // settles from undefined (loading) to a snapshot.
   useEffect(() => {
-    if (!showBranchSelector || !branchOpen) return undefined
+    if (!heroSeat || !branchOpen) return undefined
     let live = true
     setBranchesView(null)
     props.branches(sessionId).then((view) => { if (live) setBranchesView(view) })
     return () => { live = false }
-  }, [showBranchSelector, branchOpen, props.branches, sessionId])
+  }, [heroSeat, branchOpen, props.branches, sessionId])
 
   // Active sessions intentionally expose no branch-selection control. Loading
   // and non-repository workspaces likewise render no dead control.
-  if (!showBranchSelector || repo === undefined || repo === null) return null
+  if (!heroSeat || repo === undefined || repo === null) return null
 
   const openBranchPopover = (): void => {
     setBranchOpen(open => !open)
