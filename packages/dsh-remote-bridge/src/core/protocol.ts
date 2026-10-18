@@ -98,6 +98,22 @@ export const CAP_JOBS = 'jobs.v1'
 export const CAP_DELTA = 'delta.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to be told that an
+ * archived session is not in the roster at all.
+ *
+ * Unlike every capability beside it this one negotiates nothing: the bridge
+ * never transfers an archived session, whether or not a client declares it, so
+ * an older client simply receives the shorter roster it would have hidden
+ * anyway. The name is an announcement of that fact, so a client can stop
+ * filtering for itself: behind it, no `session.list` row is a session the
+ * host's archive set names, a row that does survive still carries
+ * `archived: false` under the same schema, and a live child of an archived
+ * parent still crosses with its `parentSessionId` — the parent id, not the
+ * parent row.
+ */
+export const CAP_ROSTER_OMITS_ARCHIVED = 'session.list.omit-archived.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.
@@ -165,8 +181,12 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
- * 4 when byte-level increments shipped: behind {@link CAP_DELTA} `session.list`
- * and `board.snapshot` answer a reset or a delta against a `since` token. 3 was
+ * 5 when the roster stopped carrying archived sessions: behind
+ * {@link CAP_ROSTER_OMITS_ARCHIVED} `session.list` names no session the host's
+ * archive set holds, so a session archived between two listings arrives as a
+ * removal and one restored as a change. 4 when byte-level increments shipped:
+ * behind {@link CAP_DELTA} `session.list` and `board.snapshot` answer a reset
+ * or a delta against a `since` token. 3 was
  * the background-job channel — behind {@link CAP_JOBS} a client may call
  * `jobs.list` and receive `jobs.changed`. 2 was the subagent thread —
  * a `user-message` delta may carry an `actor` and a `subagent` delta exists
@@ -175,7 +195,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 4
+export const MINOR = 5
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -191,6 +211,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_SUBAGENT_THREAD,
   CAP_JOBS,
   CAP_DELTA,
+  CAP_ROSTER_OMITS_ARCHIVED,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'

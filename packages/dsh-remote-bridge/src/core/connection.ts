@@ -718,11 +718,21 @@ export class BridgeConnection {
     const items = isRecord(call.value) ? call.value.items : undefined
     if (!Array.isArray(items)) return refusal(CODE_INTERNAL, 'session/list returned no item table')
     // Read once for the whole roster: the archive flag comes from one process-wide
-    // set, and an unreadable registry leaves the key out of every row.
+    // set, and an unreadable registry leaves the key out of every row — and drops
+    // nothing, because a bridge that cannot tell must not answer a shorter roster.
+    // A row that survives therefore always carries `archived: false`: the key stays
+    // in the schema even though no `true` crosses it any more.
     const archived = this.#options.sessionMeta.archiveSet()
     const sessions: SessionRow[] = []
     for (const item of items) {
       if (!isRecord(item) || typeof item.sessionId !== 'string') continue
+      // An archived session is not part of the roster this connection is sent at
+      // all: the phone hides such a row on arrival, so sending it is bytes paid
+      // for nothing. Skipped before the row is built, so no field of it is read.
+      // A live child keeps its own row, and with it the parent id that row names,
+      // so an archived parent never costs a child its lineage; the follow gate
+      // does notice, because that parent is no longer a session the roster names.
+      if (archived?.has(item.sessionId) === true) continue
       const cwd = optionalText(item.cwd)
       const parentSessionId = optionalText(item.parentSessionId)
       sessions.push({

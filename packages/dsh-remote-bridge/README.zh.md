@@ -41,7 +41,7 @@
 
 | 方法 | 请求 `p` | 响应 `r` |
 | --- | --- | --- |
-| `hello` | `{proto:1, minor:2, client:"ios/0.1", cap:["session.snapshot.trim.v1","subagent.thread.v1"]}` | `{proto:1, minor:2, server:"dsh-remote-bridge", capabilities:["session.snapshot.trim.v1","session.snapshot.page.v1","questions.v1","subagent.thread.v1"], resume:"snapshot", auth:"paired" 或 "unpaired"}` |
+| `hello` | `{proto:1, minor:5, client:"ios/0.1", cap:["session.snapshot.trim.v1","subagent.thread.v1"]}` | `{proto:1, minor:5, server:"dsh-remote-bridge", capabilities:["session.snapshot.trim.v1","session.snapshot.page.v1","questions.v1","subagent.thread.v1","jobs.v1","delta.v1","session.list.omit-archived.v1"], resume:"snapshot", auth:"paired" 或 "unpaired"}` |
 | `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
 | `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId, maxBytes?}` | `{turns:[...], lastSeq:<uint>, hasMore?}` |
@@ -54,15 +54,17 @@
 
 `hello` 无需设备令牌即可调用，并回报本连接自身的 `auth` 状态。`session.snapshot` 把宿主 follow 流的开帧快照映射成 `turns`，把它的 cursor 作为 `lastSeq` 回报，随后保持该流作为本连接对该会话的订阅；`session.prompt` 幂等地确保同一条订阅，因此客户端可以跳过 snapshot。发言模式固定为排队，`clientTimeZone` 由服务端填本机 IANA 时区，`requestId` 是幂等键：同名 `requestId` 在同一会话内只发一次，重复调用直接回 `{accepted:true}` 且不再发送。`session.interrupt` 取消回合，不拆除订阅。
 
-`hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本桥自己服务四个能力，并在 `hello` 的 `capabilities` 里公告它们：`session.snapshot.trim.v1`、`session.snapshot.page.v1`、`questions.v1`、`subagent.thread.v1`——插件注册的能力不在其中，因为桥不是它的作者。第一个就是裁剪基线。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
+`hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本桥自己服务七个能力，并在 `hello` 的 `capabilities` 里公告它们：`session.snapshot.trim.v1`、`session.snapshot.page.v1`、`questions.v1`、`subagent.thread.v1`、`jobs.v1`、`delta.v1`、`session.list.omit-archived.v1`——插件注册的能力不在其中，因为桥不是它的作者。第一个就是裁剪基线。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
 
 第二个能力 `session.snapshot.page.v1` 给首屏本身加上页预算。不声明时，一次快照仍是整个开帧窗口，逐字节与今天一致。声明之后，`session.snapshot` 只回最新一页，按 `maxBytes`（默认 524288，即 512 KiB；不是可用预算就拒绝，而不是悄悄夹取）衡量，并用 `session.history` 那同一套按 entry 的切片来切：一个回合的 entry 可以跨在这一页与下一页之间，而该回合保留自己的字段；比整页预算还大的单条 entry 独占一页；`snapshot-too-large` 再也不会回给这样的连接。这一页带 `lastSeq` 与 `hasMore`，而它继续往回的游标就是它自己最旧那条 entry 的 `seq`——正是 `session.history` 的 `before` 所取的值，所以不再用 `nextBefore` 重述一遍。于是打开一个会话只需一页，`session.history` 以同样的 512 KiB 页把窗口其余部分往回走完。
 
 `subagent.thread.v1` 让一种 delta 存在：宿主持久事件 `subagent/catalog` 登记一个被委派的子会话，桥据此发 `subagent`，载荷 `{childId, label?, mode?, callId?}`。`callId` 是派生出该子会话的那次 `tool/call`——同一个 turn+step 里恰好一条 `tool/call` 时才给；那一步发过两条以上、或该 call 已经关联过另一个 child 时一律省略，因为猜出来的 id 会把线程挂到错的卡片上。`user-message` 的 `actor` 不受任何能力约束：delta 与快照里的 `user/message` entry 都带 `{kind, sourceKind, sessionId?, label?}`，机械地取自宿主自己的 `source` 记录——`user` 与 `user-approval` 是 `human`，`agent-message` 与 `subagent-settled` 是 `agent`，其余来源种类一律 `system` 并保留原文——所以一条消息不会因为来源种类没被本协议分类过就被丢弃，而 source kind 不可读的事件干脆不带 `actor`。跟随一个会话需要授权，而不是默认成立：本连接已经打开过的会话、以及名册里作为普通会话列出的会话可以直接跟随；被委派的子会话只有它挂靠的父会话属于这两者之一时才可跟随。父会话无法由任何名册解析出来的子会话回 `session-not-followable`，且不为它打开任何流，因此放宽子会话这道闸门不会变成读取调用方从未被授权会话的通道。普通会话用它自己的 id 寻址；被委派的子会话——名册行带 `origin:"subagent"` 的那些——只能通过它的持久父会话寻址，而把一个子会话当作普通会话来问，宿主会回 `session/agent-busy`。父 id 来自名册——唯一携带谱系的端点——而桥在第一次尝试之前就读它，因此名册指明了父的子会话直接用 `{kind:"subagent", parentSessionId, childSessionId, mode:"unknown"}` 寻址，并拿到自己的真实历史。那次读取没解析出父时，改由宿主自己的拒绝当信号：只对这一个会话用委派地址重试一次。先列会话再打开会话的客户端不会多付一次读取，而每个连接最多读一次名册。普通会话永远不为此付费：它们用自己的 id 第一次尝试就打开。没有内容可看的会话也不等于失败：日志里只有宿主自己记账记录的会话，回的是真实投影加一个空回合；只有拿不到开帧、或宿主自己抛错，才会被拒绝。
 
+`session.list.omit-archived.v1` 是这里唯一不协商任何东西的能力。桥从不传输已归档的会话——宿主归档集在每次列出时读一次，其中每个 id 都在该行构造之前被跳过——无论客户端是否声明该能力，因此那之后写下的客户端拿到的就是它本来要自己过滤掉的较短名册。在它之后：没有任何 `session.list` 行是归档集点名的会话；存活行在不变的 schema 下仍携带 `archived: false`；读不到归档集的那次列出则一行都不丢。已归档父会话的活跃子会话仍是自己的一行，并仍然点出那个父 id：父 id 由子会话自己的行走带，因此父被归档从不会让子会话失去谱系。名册同时也是 delta 机器做差分的那一集，所以两次列出之间被归档的会话以移除的形式到达，被恢复的则以变更的形式到达，两者都不需要任何特例。
+
 `session.history` 以分页方式往回读一个会话的历史，而且它是纯读：既不打开、也不丢弃或改指任何订阅，同一个游标永远给出同一页。它的数据来自 `session.snapshot` 所用的那份开帧基线，因此两者永远不会在某个回合或某条 entry 上给出不同答案——`history` 只是对这份投影做切片。分页按 **entry** 切，不按回合切：一页从调用方游标之下取最新的 entry，直到编码后的页达到 `maxBytes`（默认 524288，即 512 KiB）；因此一个回合的 entry 可以跨页，而该回合仍保留自己的 `seq`、`endSeq`、`reason` 与 `time`；单条 entry 若比整页预算还大，就独占一页，而不是被拒绝。`before` 是持久水位而非下标：这一页取 `seq` 严格小于它的 entry，所以游标跨连接仍然有意义，投影在它之下改变形状也不会让分页跳号或重复。省略 `before` 即取最新一页；`hasMore` 说明下面是否还有更旧的 entry，而下一页的游标 `nextBefore` 恰好在 `hasMore` 为真时出现。裁剪能力在这里的生效方式与快照完全一致。
 
-`session.list` 除名册自身字段外还带上手机用来分组与命名的元数据：`cwd`、`parentSessionId`、`origin` 只在宿主确实上报时才出现，`blank` 始终存在，`archived` 只在本次进程能读到宿主归档集时出现——读不到就省略该键，而不是回 `false`。`title` 在本连接尚未通过 `session.titles` 解析过该 id 时保持 `""`，因此列名册仍然只是一次调用，且不会给每一行挂上一次标题读取。`session.titles` 用宿主自己的标题服务回答一批 1 到 100 个 id——读的是本进程的活跃会话，绝不为每个会话各开一条 follow 流——且每个被请求的 id 都是键：本宿主没有活跃持有的 id、或标题尚未落地的 id，一律回 `""`。一个已解析的标题会在 10 秒内被直接复用，之后才再问服务，因此重命名最多要等这么久才可见。与其它会话方法一样，没有设备令牌时两者都回 `unpaired`。
+`session.list` 除名册自身字段外还带上手机用来分组与命名的元数据：`cwd`、`parentSessionId`、`origin` 只在宿主确实上报时才出现，`blank` 始终存在，`archived` 只在本次进程能读到宿主归档集时出现——读不到就省略该键，而不是回 `false`。已归档的会话根本不是一行：归档集每次列出只读一次，其中的 id 在构造该行之前就被跳过，因此真正穿过去的标记永远是 `false`，而手机本来要藏起来的那些行一个字节都不再花。`title` 在本连接尚未通过 `session.titles` 解析过该 id 时保持 `""`，因此列名册仍然只是一次调用，且不会给每一行挂上一次标题读取。`session.titles` 用宿主自己的标题服务回答一批 1 到 100 个 id——读的是本进程的活跃会话，绝不为每个会话各开一条 follow 流——且每个被请求的 id 都是键：本宿主没有活跃持有的 id、或标题尚未落地的 id，一律回 `""`。一个已解析的标题会在 10 秒内被直接复用，之后才再问服务，因此重命名最多要等这么久才可见。与其它会话方法一样，没有设备令牌时两者都回 `unpaired`。
 
 ## 事件
 
@@ -96,7 +98,7 @@
 
 已注册方法的派发排在两道协议闸门之后：没有插件注册的名字最先回 `unknown-method`；没有有效设备令牌的连接回 `unpaired`，与协议方法完全一致；从未声明该表所需能力的客户端同样回 `unknown-method`——方法对它而言不存在，而不是没有权限。处理器收到请求载荷与本连接 id，回 `{ok:true, r}` 或 `{ok:false, code, msg}`；两种都原样穿过，因为错误码归注册它的插件所有。处理器抛错、或两种形状都没回时，以桥自己的 `internal` 穿过。
 
-自子代理线程发布起 `hello` 回 `minor:2`；`minor:1` 是本扩展缝。两者都没有改动主版本 1、任何冻结字段、方法名或主题名，因此从未声明任何扩展能力的客户端看到的协议 v1 与之前完全相同。
+自名册不再携带已归档会话起 `hello` 回 `minor:5`；`minor:4` 加了字节级增量，`minor:3` 是后台作业通道，`minor:2` 是子代理线程，`minor:1` 是本扩展缝。它们都没有改动主版本 1、任何冻结字段、方法名或主题名。唯一对每个客户端都变短的响应体是名册本身，它不再点名已归档会话；其余答案对什么都不声明的客户端仍是协议 v1 自己的。
 
 ## 错误码
 
@@ -244,7 +246,8 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
 
 - **标题属于活跃会话。** `session.titles` 读的是本宿主进程活跃持有的会话的标题；名册仍会列出未被挂载的持久会话，这些 id 在宿主挂载它们之前一律回 `""`。
 - **已服务过的标题最多可能旧 10 秒。** 一个已解析的标题在 10 秒内被直接复用，之后才再问标题服务，因此重命名或刚生成的标题最多要等这么久才出现。
-- **读不到归档集时没有 `archived` 键。** 该标记来自宿主的 workspace registry；该服务未挂载时，每一行都省略此键，而不是回 `false`。
+- **读不到归档集时没有 `archived` 键。** 该标记来自宿主的 workspace registry；该服务未挂载时，每一行都省略此键，而不是回 `false`，并且一行都不丢——读不到的桥不会给出更短的名册。
+- **已归档的父会话不授权任何东西。** 已归档父会话的活跃子会话仍会被列出、也仍点出那个父，但在父被恢复之前跟随该子会话会回 `session-not-followable`：授权一个会话的是名册，而已归档的那个已不在名册上。
 - **`lastSeq` 与 `seq` 是两个计数器。** `session.snapshot` 的 `lastSeq` 是宿主流的 cursor，事件的 `seq` 是本连接自己的事件序号，二者不可比较；续传状态属于客户端。
 - **不做增量补发。** 发现跳号或重连的客户端重新调 `session.snapshot` 拿完整基线；本包不为断开的客户端缓存 delta。
 - **被委派的子会话每个连接最多付一次名册读取。** 子会话的持久父 id 只有 `session.list` 会发布，所以一个连接在没先列名册的情况下打开的第一个子会话，要付一次名册读取；此后任何父名下的任何子会话都不再付费，而先列名册再打开的客户端一分不付。名册若解析不出该子会话的父，桥回 `session-not-followable`，而不是编造一个地址；父不是本连接已授权会话的子会话同样如此。

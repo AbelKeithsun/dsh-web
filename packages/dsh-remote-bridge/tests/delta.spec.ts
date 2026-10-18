@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ROSTER_DELTA_MAX_ROWS } from '../src/core/delta.ts'
+import { SessionMeta } from '../src/core/session-meta.ts'
 import { answerOf, makeConnection, requestFrame, type ConnectionHarness } from './support/harness.ts'
 
 /** The capability a client declares to be answered increments (protocol v1 §15). */
@@ -20,8 +21,17 @@ interface RosterAnswer {
   readonly mode: string
   readonly token: string
   readonly sessions?: readonly { readonly id: string; readonly agentRunning?: boolean }[]
-  readonly changed?: readonly { readonly id: string }[]
+  readonly changed?: readonly { readonly id: string; readonly archived?: boolean }[]
   readonly removed?: readonly string[]
+}
+
+/** A paired connection over a roster whose archive set a test rewrites between listings. */
+async function archiveConnection(): Promise<{ readonly harness: ConnectionHarness; readonly set: (ids: readonly string[]) => void }> {
+  let archived: readonly string[] = []
+  const meta = new SessionMeta(() => ({ archive: { archivedSessionIds: archived } }), () => 1_792_000_000_000, () => {})
+  const harness = makeConnection({ paired: true, sessionMeta: meta })
+  await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: [DECLARES_DELTA] }))
+  return { harness, set: ids => { archived = ids } }
 }
 
 /** A paired connection that declared `delta.v1`, so its answers may be increments. */
@@ -100,6 +110,37 @@ describe('session.list byte-level increments over protocol v1', () => {
     expect(second.mode).toBe('delta')
     expect(second.removed).toEqual(['s-2'])
     expect(second.changed).toEqual([])
+  })
+
+  it('user sees a session archived between two listings come back as removed, not as a silent gap', async () => {
+    // Given a connection holding three live sessions
+    const { harness, set } = await archiveConnection()
+    const first = await list(harness, 2, ['s-1', 's-2', 's-3'])
+    expect(idsOf(first)).toEqual(['s-1', 's-2', 's-3'])
+    // When one of them is archived while the connection stays open
+    set(['s-2'])
+    const second = await list(harness, 3, ['s-1', 's-2', 's-3'], first.token)
+    // Then the increment names that id as a removal: the row is neither sent nor
+    // silently forgotten, which is what a client holding it needs to let it go
+    expect(second.mode).toBe('delta')
+    expect(second.removed).toEqual(['s-2'])
+    expect(second.changed).toEqual([])
+  })
+
+  it('user sees an archived session restored between two listings come back as changed', async () => {
+    // Given a connection whose roster already lost an archived session
+    const { harness, set } = await archiveConnection()
+    set(['s-2'])
+    const first = await list(harness, 2, ['s-1', 's-2', 's-3'])
+    expect(idsOf(first)).toEqual(['s-1', 's-3'])
+    // When it is restored
+    set([])
+    const second = await list(harness, 3, ['s-1', 's-2', 's-3'], first.token)
+    // Then it comes back as a changed row, one that is not flagged archived
+    expect(second.mode).toBe('delta')
+    expect(idsOf(second)).toEqual(['s-2'])
+    expect(second.removed).toEqual([])
+    expect(second.changed?.[0]?.archived).toBe(false)
   })
 
   it('user replaying another connection\'s token is answered a reset', async () => {

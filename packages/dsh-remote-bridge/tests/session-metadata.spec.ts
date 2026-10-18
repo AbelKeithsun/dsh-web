@@ -13,8 +13,8 @@ function summary(sessionId: string, extra: Record<string, unknown> = {}): Record
 }
 
 describe('session metadata over protocol v1', () => {
-  it('operator listing sessions sees the working directory, lineage and blank flag of every row', async () => {
-    // Given a host whose roster reports a delegated session and an archived one
+  it('operator listing sessions sees the working directory, lineage and blank flag of every live row', async () => {
+    // Given a host whose roster reports a delegated session, a live one and an archived one
     const titles = titlesDouble({ 'sub-1': 'Draft the copy' })
     const harness = makeConnection({
       paired: true,
@@ -24,11 +24,13 @@ describe('session metadata over protocol v1', () => {
       items: [
         summary('sub-1', { updatedAt: 7, running: true, cwd: '/Users/zcl/code/x', parentSessionId: 's-1', origin: 'subagent' }),
         summary('s-2', { blank: true, cwd: '/Users/zcl/code/y' }),
+        summary('s-3', { blank: true }),
       ],
     })
     // When the operator lists sessions
     await harness.connection.handleText(requestFrame(1, 'session.list'))
-    // Then every field the host reported crosses under the protocol's own name
+    // Then every field the host reported crosses under the protocol's own name,
+    // and the archived session is not in the answer at all
     expect(answerOf(harness, 1).r).toEqual({
       mode: 'reset',
       token: '',
@@ -44,9 +46,61 @@ describe('session metadata over protocol v1', () => {
           blank: false,
           archived: false,
         },
-        { id: 's-2', title: '', updatedAt: 5, agentRunning: false, cwd: '/Users/zcl/code/y', blank: true, archived: true },
+        { id: 's-3', title: '', updatedAt: 5, agentRunning: false, blank: true, archived: false },
       ],
     })
+  })
+
+  it('operator listing sessions still sees a live child whose parent is archived, with its parent id', async () => {
+    // Given a host that archived a parent session and kept its delegated child live
+    const harness = makeConnection({
+      paired: true,
+      sessionMeta: metaOver({ archive: { archivedSessionIds: ['s-1'] } }),
+    })
+    harness.gateway.handler = async () => ({
+      items: [summary('s-1'), summary('sub-2', { parentSessionId: 's-1', origin: 'subagent' })],
+    })
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(15, 'session.list'))
+    // Then the child is still a row and still names the parent the roster no longer carries
+    expect(answerOf(harness, 15).r).toEqual({
+      mode: 'reset',
+      token: '',
+      sessions: [
+        { id: 'sub-2', title: '', updatedAt: 5, agentRunning: false, parentSessionId: 's-1', origin: 'subagent', blank: false, archived: false },
+      ],
+    })
+  })
+
+  it('operator whose archive set cannot be read is sent the whole roster, with no archive key', async () => {
+    // Given a host whose archive set throws when this process reads it
+    const logs: string[] = []
+    const archive = {
+      get archivedSessionIds(): readonly string[] {
+        throw new Error('the workspace registry is shutting down')
+      },
+    }
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver({ archive }, () => Date.now(), message => { logs.push(message) }) })
+    harness.gateway.handler = async () => ({ items: [summary('s-1'), summary('s-2')] })
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(16, 'session.list'))
+    // Then nothing was dropped for a filter that could not be applied, the rows
+    // carry no flag rather than a false one, and the reason was logged
+    const answer = answerOf(harness, 16)
+    expect((answer.r as { sessions: { id: string }[] }).sessions.map(row => row.id)).toEqual(['s-1', 's-2'])
+    expect(Object.keys((answer.r as { sessions: Record<string, unknown>[] }).sessions[0] ?? {})).toEqual(['id', 'title', 'updatedAt', 'agentRunning', 'blank'])
+    expect(logs).toEqual(['the session archive set could not be read: the workspace registry is shutting down'])
+  })
+
+  it('operator greeting the bridge is told the roster carries no archived session', async () => {
+    // Given a paired connection
+    const harness = makeConnection({ paired: true })
+    // When it greets the bridge
+    await harness.connection.handleText(requestFrame(17, 'hello', { proto: 1 }))
+    // Then the announcement names the fact and the minor version that carries it
+    const hello = answerOf(harness, 17).r as { minor: number; capabilities: string[] }
+    expect(hello.minor).toBe(5)
+    expect(hello.capabilities).toContain('session.list.omit-archived.v1')
   })
 
   it('operator whose host reports no optional field gets rows without those keys at all', async () => {
