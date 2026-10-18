@@ -189,9 +189,15 @@ function snapshotAnswer(board: BoardFace | undefined, payload: Readonly<Record<s
   })
   // Nothing to diff without a window seat, a declared capability, or a task
   // table that can be keyed: the whole board is the answer, and no copy of it is
-  // retained because there is no base this answer could be continued from.
+  // retained because there is no base this answer could be continued from. A
+  // connection that already had a base — it declared the capability and then
+  // re-helloed without it — has that base dropped here rather than kept for a
+  // client that can no longer continue from it.
   const deltas = call.deltas
-  if (call.declares?.(CAP_DELTA) !== true || deltas === undefined) return whole('')
+  if (call.declares?.(CAP_DELTA) !== true || deltas === undefined) {
+    deltas?.drop?.(BOARD_DELTA_KEY)
+    return whole('')
+  }
   if (tasks === undefined || !keyedById(tasks)) return whole('')
   const answer = deltas
     .window<BoardTaskRow>(BOARD_DELTA_KEY, { maxRows: BOARD_DELTA_MAX_ROWS })

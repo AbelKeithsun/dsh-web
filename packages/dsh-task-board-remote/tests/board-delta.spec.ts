@@ -181,6 +181,21 @@ describe('board.snapshot byte-level increments over protocol v1', () => {
     expect(idsOf(second)).toHaveLength(10)
   })
 
+  it('user who drops the capability sees the retained board base released', async () => {
+    // Given a connection that held the board as an increment base
+    const deltas = new RemoteBridgeDeltas()
+    const board = new FakeBoard()
+    const issued = await read(() => board, deltaCall(deltas))
+    expect(issued.r?.token).not.toBe('')
+    // When the same connection re-greets without the capability and reads again
+    const plain = await read(() => board, { connectionId: 'c1', declares: () => false, deltas })
+    expect(plain.r?.token).toBe('')
+    // Then its earlier token names nothing: the base was dropped, not kept for a
+    // client that can no longer continue from it
+    const replay = await read(() => board, deltaCall(deltas), issued.r?.token)
+    expect(replay.r?.mode).toBe('reset')
+  })
+
   it('user who never declared delta.v1 is answered today\'s board with an empty token', async () => {
     // Given a board with one card
     const board = new FakeBoard()

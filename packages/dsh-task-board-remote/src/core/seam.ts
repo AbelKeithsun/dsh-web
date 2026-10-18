@@ -73,6 +73,14 @@ export interface DeltaWindowFace<T> {
 /** Where a connection's delta windows are read from. */
 export interface DeltaSeatFace {
   window<T extends DeltaRowFace>(key: string, limits: { readonly maxRows: number }): DeltaWindowFace<T>
+  /**
+   * Forget one window and the set it retained.
+   *
+   * Optional because it is newer than `window`: a bridge that answers the first
+   * one but not this one still serves the board, it just cannot be told to drop
+   * a base early.
+   */
+  drop?(key: string): void
 }
 
 /** Who is calling one board method. */
