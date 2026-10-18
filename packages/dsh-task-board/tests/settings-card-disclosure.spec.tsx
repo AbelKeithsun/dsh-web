@@ -61,6 +61,7 @@ function cardState(runLaunchWidth = ''): TaskBoardSettingsCardState {
     maxSubtaskDepth: field,
     sessionPollSeconds: field,
     runLaunchWidth: { ...field, text: runLaunchWidth },
+    spendBudgetTokens: { ...field, text: '0' },
     goalRunEnabled: { ...field, text: 'false' },
     goalVerification: { ...field, text: 'true' },
     goalVerificationModel: field,

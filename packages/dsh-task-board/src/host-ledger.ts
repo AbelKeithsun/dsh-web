@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path'
 import { dshHome } from './dsh-home.ts'
 import { isValidCron, isValidTimeZone, nextRunAtMs, resolveHostTimeZone } from './core/schedule.ts'
 import { isTaskRecord, parseLedger } from './core/store.ts'
+import { DEFAULT_SPEND_BUDGET_TOKENS, spendCapMessage, spendCapReached } from './core/spend-budget.ts'
+import { usedTokensToday } from './host-spend.ts'
 import { canMoveManually, hasOpenExecution, retainRecentExecutions, scheduleExhausted, scheduleRunBudget, settleExecution, settledStatus, startExecution, withSchedule, withStatus, type ExecutionOutcome, type ExecutionRecord, type ExecutionSummary, type ScheduleMode, type ScheduleStopReason, type TaskRecord } from './core/tasks.ts'
 import {
   DEFAULT_SUBTASK_DEPTH,
@@ -493,12 +495,24 @@ export class HostTaskLedger {
   /** Live reader of the deployment's new-card defaults (a volatile config read). */
   private readonly cardDefaults: () => CardDefaults
 
-  constructor(dir: string = join(dshHome(), 'task-board'), private readonly now: () => number = Date.now, options: { sessionDefaultPermission?: TaskPermission | (() => TaskPermission); maxSubtaskDepth?: number; cardDefaults?: () => CardDefaults } = {}) {
+  /**
+   * Live reader of the daily token cap (0 = no gate). The scheduled path asks it
+   * per due occurrence, so a cap raised after a skipped occurrence admits the
+   * next one without a restart.
+   */
+  private readonly spendBudget: () => number
+
+  /** Today's measured spend in tokens, or undefined when nothing can be measured. */
+  private readonly spendUsed: (now: number) => number | undefined
+
+  constructor(dir: string = join(dshHome(), 'task-board'), private readonly now: () => number = Date.now, options: { sessionDefaultPermission?: TaskPermission | (() => TaskPermission); maxSubtaskDepth?: number; cardDefaults?: () => CardDefaults; spendBudgetTokens?: () => number; spendUsedToday?: (now: number) => number | undefined } = {}) {
     // Resolved before the load/repair passes below: they can evaluate the gate.
     const baseline = options.sessionDefaultPermission
     this.sessionDefault = typeof baseline === 'function' ? baseline : () => baseline ?? DEFAULT_SESSION_PERMISSION
     this.depthLimit = normalizeSubtaskDepth(options.maxSubtaskDepth ?? DEFAULT_SUBTASK_DEPTH)
     this.cardDefaults = options.cardDefaults ?? (() => ({}))
+    this.spendBudget = options.spendBudgetTokens ?? (() => DEFAULT_SPEND_BUDGET_TOKENS)
+    this.spendUsed = options.spendUsedToday ?? (now => usedTokensToday(now))
     mkdirSync(dir, { recursive: true })
     this.file = join(dir, 'ledger-v2.json')
     this.lockFile = join(dir, 'ledger-v2.lock')
@@ -753,6 +767,17 @@ export class HostTaskLedger {
       return []
     }
 
+    const spendRefusal = this.spendRefusal(triggeredAt)
+    if (spendRefusal !== undefined) {
+      // A scheduled occurrence has no client to throw at, so the refusal lands
+      // on the board's own scheduler error and the occurrence is skipped without
+      // consuming the rule's run budget: raising the cap, or the day rolling
+      // over, admits the next trigger instead of leaving a spent rule behind.
+      this.document.scheduler.error = `scheduled run refused for task ${taskId}: ${spendRefusal}`
+      this.skipOccurrence(taskId, 'limit', triggeredAt)
+      return []
+    }
+
     if (schedule.mode === 'once') {
       // The single planned instant is due: open its one run and stop the rule
       // in the same commit, so the budget can never produce a second one.
@@ -777,6 +802,21 @@ export class HostTaskLedger {
       lastTriggeredAt: triggeredAt,
       ...(spent ? { endedReason: 'limit' as const } : {}),
     })
+  }
+
+  /**
+   * Why a due occurrence may not open a run because the day already spent the
+   * cap, or undefined when it may. A cap of 0 — the default — answers before the
+   * measurement is read, so a board with no gate reads no ledger file.
+   * @param now - clock instant (ms epoch).
+   * @returns the refusal message, when the cap is reached.
+   */
+  private spendRefusal(now: number): string | undefined {
+    const cap = this.spendBudget()
+    if (!(cap > 0)) return undefined
+    const used = this.spendUsed(now)
+    if (used === undefined || !spendCapReached(used, cap)) return undefined
+    return spendCapMessage(used, cap)
   }
 
   /**

@@ -24,6 +24,7 @@ import { TASK_PERMISSIONS, isTaskPermission, type TaskPermission } from './core/
 import { DEFAULT_SUBTASK_DEPTH, SUBTASK_DEPTH_MAX, SUBTASK_DEPTH_MIN } from './core/subtask.ts'
 import { DEFAULT_SESSION_POLL_SECONDS, SESSION_POLL_MAX_SECONDS, SESSION_POLL_MIN_SECONDS } from './core/poll-cadence.ts'
 import { DEFAULT_RUN_LAUNCH_WIDTH, RUN_LAUNCH_WIDTH_MAX, RUN_LAUNCH_WIDTH_MIN } from './core/launch-width.ts'
+import { DEFAULT_SPEND_BUDGET_TOKENS } from './core/spend-budget.ts'
 import {
   DEFAULT_VERIFICATION_BUDGET_SECONDS,
   DEFAULT_VERIFICATION_CALL_TIMEOUT_SECONDS,
@@ -121,6 +122,15 @@ export interface Config {
    * queueing.
    */
   runLaunchWidth?: Volatile<number>
+  /**
+   * Daily token ceiling for the work this board dispatches (default 0 = no
+   * gate). Tokens, not money: the ledger the board measures against prices
+   * DeepSeek's own routes only, so a cost cap would read 0 elsewhere. Read at
+   * each gate, so an edit binds the next run without a remount; a manual
+   * run/rerun whose day already spent the cap is refused, and a due occurrence
+   * is skipped onto the scheduler with its run budget untouched.
+   */
+  spendBudgetTokens?: Volatile<number>
   /**
    * Continuable-subagent provider the Agent Teams service uses to compose a
    * teammate. Matches the Agent Teams tool plugin's `freshProvider` default;
@@ -249,6 +259,8 @@ export interface ConfigInput {
   sessionPollSeconds?: number
   /** Concurrent run launches allowed at once, 1..16. */
   runLaunchWidth?: number
+  /** Daily token ceiling for board runs; 0 disables the gate. */
+  spendBudgetTokens?: number
   /** Continuable-subagent provider the Agent Teams service composes a teammate from. */
   teamProvider?: string
   /** Global native /goal switch; default off, frozen per execution. */
@@ -283,6 +295,7 @@ export const Config: z<ConfigInput, Config> = z.object({
   maxSubtaskDepth: z.number().min(SUBTASK_DEPTH_MIN).max(SUBTASK_DEPTH_MAX).default(DEFAULT_SUBTASK_DEPTH).volatile(),
   sessionPollSeconds: z.number().min(SESSION_POLL_MIN_SECONDS).max(SESSION_POLL_MAX_SECONDS).default(DEFAULT_SESSION_POLL_SECONDS).volatile(),
   runLaunchWidth: z.number().min(RUN_LAUNCH_WIDTH_MIN).max(RUN_LAUNCH_WIDTH_MAX).default(DEFAULT_RUN_LAUNCH_WIDTH).volatile(),
+  spendBudgetTokens: z.number().min(DEFAULT_SPEND_BUDGET_TOKENS).default(DEFAULT_SPEND_BUDGET_TOKENS).volatile(),
   teamProvider: z.string().min(1).default(DEFAULT_TEAM_PROVIDER),
   goalRunEnabled: z.boolean().default(false).volatile(),
   cardDefaultMode: z.string().default('').volatile(),
@@ -619,6 +632,12 @@ function applyImpl(ctx: Context, config?: Config): void {
    */
   const runLaunchWidth = (): number => readConfigField(config?.runLaunchWidth, DEFAULT_RUN_LAUNCH_WIDTH)
   /**
+   * Current daily token cap, read at each gate like the width above. The value
+   * decides first: 0 — the default — ends the gate before a file is opened, so
+   * a board that never set a cap pays nothing for it.
+   */
+  const spendBudgetTokens = (): number => readConfigField(config?.spendBudgetTokens, DEFAULT_SPEND_BUDGET_TOKENS)
+  /**
    * The baseline the permission confirmation gate judges against: the row's own
    * `sessionDefaultPermission` when the deployment pins one, otherwise the Host's
    * default preset. Read per call through the ledger, so a Host Settings change
@@ -682,6 +701,7 @@ function applyImpl(ctx: Context, config?: Config): void {
     maxSubtaskDepth: maxSubtaskDepth(),
     goalRunEnabled,
     runLaunchWidth,
+    spendBudgetTokens,
     cardDefaults,
     verificationSettings,
     verificationCatalog,
