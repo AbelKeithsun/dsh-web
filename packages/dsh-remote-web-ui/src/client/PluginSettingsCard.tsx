@@ -55,6 +55,19 @@ export interface PluginSettingsCardProps<TKey extends string = string> {
   /** Drop every staged edit. */
   onDiscard: () => void
   /**
+   * Id applied to the card's title element, so a header control (an immediate
+   * toggle in `headerAction`) can name itself through `aria-labelledby`
+   * instead of repeating the title as a string.
+   */
+  titleId?: string
+  /**
+   * Render the header only, with no body region. A card whose whole setting is
+   * the header control (a switch whose explanation is the description) has no
+   * controls to lay out below it, and an empty body would draw a divider line
+   * with nothing under it.
+   */
+  headerOnly?: boolean
+  /**
    * Render the controls expanded on arrival (still collapsible). Defaults to
    * true: promoted first-level sections show their settings immediately.
    */
@@ -71,6 +84,13 @@ export interface PluginSettingsCardProps<TKey extends string = string> {
    * edits, so the footer would sit there permanently disabled.
    */
   hideFooter?: boolean
+  /**
+   * Optional control rendered at the header's trailing edge, before the pending
+   * badge and the chevron. A card whose setting is one immediate flip (it
+   * applies outside the staged form) puts its ToggleSwitch here, so the control
+   * is reachable without opening the card and matches a plugin card's shape.
+   */
+  headerAction?: ReactNode
   /** Render children even when the settings namespace is not exposed by the host. */
   renderChildrenWhenNotExposed?: boolean
   /** Hide the 'not exposed' warning banner when the settings namespace is not exposed. */
@@ -100,9 +120,10 @@ export function PluginSettingsCard<TKey extends string = string>(props: PluginSe
       <div className={css.headerStatic}>
         {props.icon !== undefined ? <span className={css.mark} aria-hidden="true">{props.icon}</span> : null}
         <span className={css.headText}>
-          <span className={css.name} title={title}>{title}</span>
+          <span className={css.name} id={props.titleId} title={title}>{title}</span>
           <span className={css.description} title={description}>{props.descriptionNode ?? description}</span>
         </span>
+        {props.headerAction !== undefined ? <span className={css.headerAction}>{props.headerAction}</span> : null}
         {state.dirty ? <span className={css.pending} title={props.t('settings.unsaved')}>{props.t('settings.unsaved')}</span> : null}
       </div>
     )
@@ -116,9 +137,10 @@ export function PluginSettingsCard<TKey extends string = string>(props: PluginSe
       >
         {props.icon !== undefined ? <span className={css.mark} aria-hidden="true">{props.icon}</span> : null}
         <span className={css.headText}>
-          <span className={css.name} title={title}>{title}</span>
+          <span className={css.name} id={props.titleId} title={title}>{title}</span>
           <span className={css.description} title={description}>{props.descriptionNode ?? description}</span>
         </span>
+        {props.headerAction !== undefined ? <span className={css.headerAction}>{props.headerAction}</span> : null}
         {state.dirty ? <span className={css.pending} title={props.t('settings.unsaved')}>{props.t('settings.unsaved')}</span> : null}
         <svg
           width="14"
@@ -154,10 +176,13 @@ export function PluginSettingsCard<TKey extends string = string>(props: PluginSe
       </li>
     )
   }
+  // A header-only card has no body region at all: the divider would otherwise
+  // sit above an empty box.
+  const bodyVisible = expanded && props.headerOnly !== true
   return (
     <li className={cardClass}>
       {header}
-      {expanded
+      {bodyVisible
         ? (
           <div className={css.body}>
             {!state.writable ? <p className={css.readOnly} role="status">{props.t('settings.readOnly')}</p> : null}
@@ -560,5 +585,40 @@ export function ChoiceField(props: FieldProps & {
         {props.invalid ? props.invalidLabel : props.hint}
       </p>
     </div>
+  )
+}
+
+/**
+ * An immediate boolean toggle drawn as a switch track, for a setting that
+ * applies on flip rather than through a staged save. It is a real button with
+ * `role="switch"` and `aria-checked`, so keyboard and assistive activation
+ * arrive as a click and the state is announced instead of inferred from a
+ * checkbox tick.
+ */
+export function ToggleSwitch(props: {
+  /** Id of the element naming the switch (the card's title). */
+  labelledBy?: string
+  /** Accessible name when no element labels it. */
+  ariaLabel?: string
+  /** Current state. */
+  checked: boolean
+  /** Disables the switch while a write is in flight or the Host refuses writes. */
+  disabled?: boolean
+  /** Called with the requested next state. */
+  onChange: (next: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      className={css.toggle}
+      role="switch"
+      aria-checked={props.checked}
+      aria-labelledby={props.labelledBy}
+      aria-label={props.labelledBy === undefined ? props.ariaLabel : undefined}
+      disabled={props.disabled}
+      onClick={() => { props.onChange(!props.checked) }}
+    >
+      <span className={css.toggleTrack}><span className={css.toggleThumb} /></span>
+    </button>
   )
 }
