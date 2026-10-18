@@ -169,7 +169,7 @@ describe('jobs.v1 capability gating', () => {
     expect(plain.transport.responseTo(2)).toMatchObject({ ok: false, e: { code: 'unknown-method' } })
   })
 
-  it('user reading the handshake sees jobs.v1 and minor three', async () => {
+  it('user reading the handshake sees jobs.v1 and the minor the bridge answers', async () => {
     // Given a paired connection
     const harness = makeConnection({ paired: true })
     // When it greets the bridge
