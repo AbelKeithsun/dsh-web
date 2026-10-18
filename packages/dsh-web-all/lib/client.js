@@ -30221,7 +30221,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"update.error.notFound": "未找到 dsh-web 聚合包安装，无法更新。",
 			"update.error.link": "dsh-web 或其组件使用本地链接，无法自动更新；请同步本地仓库，或移除与全家桶重复的独立链接。",
 			"update.error.pnpmFailed": "更新执行失败（pnpm 退出码 {code}），详见下方输出。",
-			"update.error.stale": "更新命令已执行，但安装版本未变化。常见原因：pnpm 11 的 minimumReleaseAge 门禁会静默跳过发布不足 24 小时的新版本。请在 profile 目录（~/.dsh/profiles/<profile>）的 pnpm-workspace.yaml 中配置 minimumReleaseAgeExclude（例如 \"@linxin666/*\"）或 minimumReleaseAge: 0 后重新点击更新。",
+			"update.error.stale": "更新命令已执行，但安装版本未变化。常见原因：pnpm 11/12 的 minimumReleaseAge 门禁会静默跳过发布不足 24 小时的新版本。更新命令已带 --config.minimum-release-age=0 覆盖该门禁：pnpm 12 起 --config 只接受 kebab-case（驼峰键不报错、也不生效），因此覆盖失效时先确认宿主用的 pnpm 版本认这个键；覆盖确实无效时，可在 profile 目录（~/.dsh/profiles/<profile>）的 pnpm-workspace.yaml 中配置 minimumReleaseAgeExclude（例如 \"@linxin666/*\"）或 minimumReleaseAge: 0 后重新点击更新。",
 			"update.error.verifyFailed": "更新命令已执行，但无法核对安装后的版本（可能是 registry 探测失败或安装路径变化）。请查看下方输出，或稍后重试。",
 			"update.error.unknown": "更新失败，请重试。"
 		};
@@ -30267,7 +30267,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			"update.error.notFound": "The dsh-web aggregate package is not installed; nothing to update.",
 			"update.error.link": "dsh-web or one of its components uses a local link. Sync the checkout, or remove a standalone link duplicated by the aggregate.",
 			"update.error.pnpmFailed": "The update failed (pnpm exited with code {code}); see the output below.",
-			"update.error.stale": "The update command ran but the installed versions did not change. Likely cause: the pnpm 11 minimumReleaseAge gate silently skips releases published less than 24 hours ago. Add minimumReleaseAgeExclude (e.g. \"@linxin666/*\") or set minimumReleaseAge: 0 in pnpm-workspace.yaml under the profile directory (~/.dsh/profiles/<profile>), then run the update again.",
+			"update.error.stale": "The update command ran but the installed versions did not change. Likely cause: the pnpm 11/12 minimumReleaseAge gate silently skips releases published less than 24 hours ago. The update command already passes --config.minimum-release-age=0 to override it: from pnpm 12 on, --config accepts kebab-case only (a camelCase key is ignored without any warning), so first check that the pnpm the host runs honours that key; when the override really does not apply, add minimumReleaseAgeExclude (e.g. \"@linxin666/*\") or set minimumReleaseAge: 0 in pnpm-workspace.yaml under the profile directory (~/.dsh/profiles/<profile>), then run the update again.",
 			"update.error.verifyFailed": "The update command ran but the installed versions could not be verified afterwards (registry probe failed or the install path changed). Inspect the output below, or retry later.",
 			"update.error.unknown": "Update failed; try again."
 		};

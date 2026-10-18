@@ -478,7 +478,7 @@ describe("runUpdate", () => {
     child.emitOutput("Progress 1/2")
     child.run(0)
     const result = await promise
-    expect(spawned).toEqual({ command: "pnpm", args: ["update", "--latest", "--config.minimumReleaseAge=0", "a", "b"], cwd: "/p" })
+    expect(spawned).toEqual({ command: "pnpm", args: ["update", "--latest", "--config.minimum-release-age=0", "a", "b"], cwd: "/p" })
     expect(result).toEqual({ ok: true, exitCode: 0, output: "Progress 1/2" })
   })
   it("reports pnpm-failed on a non-zero exit", async () => {
@@ -504,11 +504,12 @@ describe("runUpdate", () => {
     expect(order).toEqual(["pnpm", "corepack"])
     // Every fallback candidate must keep --latest (exact specs in the profile
     // are otherwise treated as pinned and never move) and the release-age
-    // override (pnpm 11's minimumReleaseAge gate would silently skip
-    // same-day releases); corepack prefixes the pnpm subcommand.
+    // override (the pnpm 11/12 minimumReleaseAge gate would silently skip
+    // same-day releases); corepack prefixes the pnpm subcommand. The key is
+    // kebab-case because pnpm 12 ignores the camelCase spelling.
     expect(argo.map(entry => entry.args)).toEqual([
-      ["update", "--latest", "--config.minimumReleaseAge=0", "a"],
-      ["pnpm", "update", "--latest", "--config.minimumReleaseAge=0", "a"],
+      ["update", "--latest", "--config.minimum-release-age=0", "a"],
+      ["pnpm", "update", "--latest", "--config.minimum-release-age=0", "a"],
     ])
     expect(result).toEqual({ ok: true, exitCode: 0, output: "corepack pnpm 1/2" })
   })
@@ -528,9 +529,9 @@ describe("runUpdate", () => {
     // Every fallback candidate keeps --latest and the release-age override
     // (npx prefixes --yes before pnpm).
     expect(argo.map(entry => entry.args)).toEqual([
-      ["update", "--latest", "--config.minimumReleaseAge=0", "a"],
-      ["pnpm", "update", "--latest", "--config.minimumReleaseAge=0", "a"],
-      ["--yes", "pnpm", "update", "--latest", "--config.minimumReleaseAge=0", "a"],
+      ["update", "--latest", "--config.minimum-release-age=0", "a"],
+      ["pnpm", "update", "--latest", "--config.minimum-release-age=0", "a"],
+      ["--yes", "pnpm", "update", "--latest", "--config.minimum-release-age=0", "a"],
     ])
     expect(result.ok).toBe(true)
     expect(result.output).toBe("npx pnpm ok")
@@ -615,7 +616,7 @@ describe("runUpdate", () => {
     })
     child.run(0)
     await promise
-    expect(spawnedArgs).toEqual(["update", "--latest", "--config.minimumReleaseAge=0", "@linxin666/dsh-web-all"])
+    expect(spawnedArgs).toEqual(["update", "--latest", "--config.minimum-release-age=0", "@linxin666/dsh-web-all"])
   })
 
   it("operator sees clean pnpm output when a character straddles two reads", async () => {
@@ -815,7 +816,7 @@ describe("runUpdateVerified", () => {
 
   it("reports stale when pnpm exits 0 but the installed versions did not move", async () => {
     // Registry carries 0.1.11 while the installed anchor stays 0.1.10 — the
-    // pnpm 11 minimumReleaseAge gate can produce exactly this "green exit,
+    // pnpm 11/12 minimumReleaseAge gate can produce exactly this "green exit,
     // nothing changed" outcome, and the panel must not claim success.
     const child = new FakeChild(0)
     const spawnImpl = (() => child) as never
@@ -891,7 +892,8 @@ describe("runUpdateVerified", () => {
   })
 
   it("accepts a partial update as success when versions moved", async () => {
-    // Lenient minimumReleaseAge gate: pnpm moves 0.1.10 -> 0.1.13 while the
+    // Lenient pnpm 11/12 minimumReleaseAge gate: pnpm moves 0.1.10 -> 0.1.13
+    // while the
     // registry latest is 0.1.15 — versions moved, so this is a real update,
     // not a stale failure (the stale decision anchors on the pre-run
     // versions, not on the registry latest).

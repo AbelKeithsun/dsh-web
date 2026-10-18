@@ -723,15 +723,22 @@ function capOutput(output: string, text: string): string {
 }
 
 /**
- * Bypass for pnpm 11's supply-chain gate: `minimumReleaseAge` (default 24 h)
+ * Bypass for pnpm's supply-chain gate: `minimumReleaseAge` (default 24 h)
  * silently skips same-day releases — `pnpm update --latest` then exits 0
  * without moving anything and the post-run verification would misreport a
  * stale no-op. The update here is explicitly user-initiated and the panel
  * shows exactly which versions are being installed, so the gate only adds a
  * confusing silent no-op; override it per-invocation instead of asking every
  * user to edit the profile's pnpm-workspace.yaml.
+ *
+ * The key is kebab-case on purpose. pnpm 12 stops accepting camelCase after
+ * `--config.` (`--config.minimumReleaseAge=0` is accepted as a flag, changes
+ * nothing, and prints no warning), while pnpm 11 accepts both spellings — so
+ * kebab-case is the only spelling that overrides the gate on both majors
+ * (#1897). The panel then sees a green exit with nothing moved and reports
+ * `stale`.
  */
-const MIN_RELEASE_AGE_OVERRIDE = '--config.minimumReleaseAge=0'
+const MIN_RELEASE_AGE_OVERRIDE = '--config.minimum-release-age=0'
 
 /**
  * Run the update inside the profile directory. Tries pnpm first, falls back
@@ -768,7 +775,7 @@ export function runUpdate(deps: UpdateRunDeps): Promise<UpdateRunResult> {
     // as pinned — it prints "Already up to date" and exits 0 without moving
     // the installed version, so the panel would report a false success.
     // `MIN_RELEASE_AGE_OVERRIDE` rides along every candidate: without it the
-    // pnpm 11 minimumReleaseAge gate (default 24 h) silently keeps same-day
+    // pnpm 11/12 minimumReleaseAge gate (default 24 h) silently keeps same-day
     // releases in place, which the post-run verification would then have to
     // surface as `stale` even though the update is legitimate.
     const candidates: ReadonlyArray<{ command: string; args: string[] }> = [
@@ -916,8 +923,8 @@ export interface UpdateRunVerifiedDeps {
 /**
  * Run the update, then verify the installed versions actually moved. pnpm
  * exits 0 even when it silently kept the installed versions — runUpdate
- * overrides pnpm 11's `minimumReleaseAge` gate (default 24 h) with
- * `--config.minimumReleaseAge=0`, but an older pnpm without the override or
+ * overrides the pnpm 11/12 `minimumReleaseAge` gate (default 24 h) with
+ * `--config.minimum-release-age=0`, but a pnpm that ignores the override or
  * another silent no-op can still keep versions in place — so a green exit
  * alone must not report a misleading "update complete". Re-read the
  * installed versions afterwards and surface a `stale` failure (with the
@@ -987,7 +994,7 @@ export async function runUpdateVerified(deps: UpdateRunVerifiedDeps): Promise<Up
   // false success.
   if (status.outdated) {
     // stale: the check ran, a newer release exists, and no package moved
-    // (e.g. the minimumReleaseAge gate kept everything in place).
+    // (e.g. the pnpm 11/12 minimumReleaseAge gate kept everything in place).
     return {
       ...result,
       ok: false,

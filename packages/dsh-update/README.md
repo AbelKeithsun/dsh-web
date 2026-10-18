@@ -34,7 +34,7 @@ The feature is deliberately structured as an **independent plugin row** (row id 
   phone-remote trigger alone.
 - **Verified install**: the run endpoint executes `pnpm update --latest` in the
   profile the web GUI was booted from, then re-reads the installed versions. The
-  pnpm 11 `minimumReleaseAge` gate can silently keep same-day releases, so a
+  pnpm 11/12 `minimumReleaseAge` gate can silently keep same-day releases, so a
   green exit alone is not reported as success.
 - **Release notes**: the panel fetches the matching GitHub release notes and lists
   the component versions it moved.
@@ -117,8 +117,11 @@ A paired remote desktop reaches them through the `dsh-remote-web-ui` gated
   local development mode and cannot self-update; sync the checkout instead.
 - `pnpm` must be resolvable on the host (`pnpm`, `corepack`, or `npx`); the panel
   names the candidate that failed when none works.
-- pnpm 11's `minimumReleaseAge` gate can hold back same-day releases. When the
-  installed versions did not move, the panel explains the
+- The pnpm 11/12 `minimumReleaseAge` gate can hold back same-day releases. The
+  update command overrides it per run with `--config.minimum-release-age=0`; the
+  key is kebab-case because pnpm 12 ignores `--config.minimumReleaseAge=0`
+  without a warning, while pnpm 11 accepts both spellings (#1897). When the
+  installed versions did not move, the panel explains that key change and the
   `minimumReleaseAgeExclude` / `minimumReleaseAge: 0` remedy.
 - The captured pnpm output is shown verbatim and can contain local paths.
 - The wide sidebar row that puts the footer actions beside the settings trigger
