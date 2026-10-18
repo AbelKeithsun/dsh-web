@@ -1,5 +1,5 @@
 # Bilingual-pair consistency record (docs/i18n.md): the git blob hash of each
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with git hash-object.
-2026-10-16-remote-bridge-protocol-v1.md: 2244b070c0c8efae83b323e1c8d27428d3fa5bb2
-2026-10-16-remote-bridge-protocol-v1.zh.md: 25c4fbc3035abc68c3a5c329402a4381631c39e3
+2026-10-16-remote-bridge-protocol-v1.md: 619a394dc5efe26082b447c010e4225d75975473
+2026-10-16-remote-bridge-protocol-v1.zh.md: fda96bad4cb26c2c7fdb8a1d81118ab68e9a88c6
