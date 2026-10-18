@@ -78,8 +78,18 @@ export class FakeGateway implements BridgeGateway {
   readonly streamRequests: RecordedCall[] = []
   /** Unary answers; the default accepts everything. */
   handler: (call: RecordedCall) => Promise<unknown> = async () => ({ accepted: true })
-  /** Follow streams by session id. */
-  follow: (call: RecordedCall) => AsyncIterable<unknown> = () => new ControllableStream().iterable()
+  /**
+   * Follow streams by call.
+   *
+   * A wait subscription is answered with an already ended stream: the question
+   * channel reads the host's remaining wait from that stream before publishing,
+   * and a real host reports it the moment the waiter attaches, so a double that
+   * never yields would hold the question instead of modelling the host. A suite
+   * that wants frames assigns its own `follow`.
+   */
+  follow: (call: RecordedCall) => AsyncIterable<unknown> = (call) => (
+    call.method === 'attachWait' ? new ControllableStream().end().iterable() : new ControllableStream().iterable()
+  )
 
   invoke(request: GatewayInvokeRequest): Promise<unknown> {
     const call: RecordedCall = { namespace: request.namespace, method: request.method, args: request.args, peer: request.peer, signal: request.signal }
@@ -258,6 +268,8 @@ export interface HarnessOptions {
   readonly questionIds?: (byteLength: number) => string
   /** The extension seam's method registry, when the suite inspects it. */
   readonly extensions?: RemoteBridgeRegistry
+  /** Clock the question deadline bookkeeping reads; the default is the wall clock. */
+  readonly questionNow?: () => number
 }
 
 /** Session metadata for a host whose session services are all present. */
@@ -323,6 +335,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     peer: ownerPeer,
     log: message => { logs.push(message) },
     ...(options.questionIds === undefined ? {} : { random: options.questionIds }),
+    ...(options.questionNow === undefined ? {} : { now: options.questionNow }),
   })
   const extensions = options.extensions ?? new RemoteBridgeRegistry()
   const settings: BridgeConnectionOptions = {
@@ -425,6 +438,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     peer: ownerPeer,
     log: message => { logs.push(message) },
     ...(options.questionIds === undefined ? {} : { random: options.questionIds }),
+    ...(options.questionNow === undefined ? {} : { now: options.questionNow }),
   })
   const extensions = options.extensions ?? new RemoteBridgeRegistry()
   const hub = new BridgeHub({
