@@ -1,9 +1,13 @@
 /** @vitest-environment jsdom */
 
 /**
- * The family-wide telemetry opt-out control in the Web Plugins settings
- * section: it reflects the stored preference, writes it back, and reports the
- * browser's Do Not Track state without pretending the switch caused it.
+ * The family-wide telemetry switch in the Web Plugins settings section: it
+ * reflects the stored preference, writes it back, and reports the browser's Do
+ * Not Track state without pretending the switch caused it.
+ *
+ * The switch's value is the positive one (checked = the heartbeat runs, the
+ * default), while the stored preference is the opt-out; the two are inverses,
+ * so each case below pins both directions.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -30,7 +34,7 @@ function memoryStorage(): Storage {
   }
 }
 
-const checkbox = (): HTMLInputElement => screen.getByRole('checkbox') as HTMLInputElement
+const toggle = (): HTMLElement => screen.getByRole('switch')
 
 describe('TelemetryToggle', () => {
   let store: Storage
@@ -46,43 +50,55 @@ describe('TelemetryToggle', () => {
     Object.defineProperty(navigator, 'doNotTrack', { value: undefined, configurable: true })
   })
 
-  it('Visitor who stored nothing sees an unchecked switch and no Do Not Track note', () => {
+  it('Visitor who stored nothing sees the switch on and no Do Not Track note', () => {
     // Given: this browser stores no opt-out and sends no Do Not Track signal.
     // When: the Web Plugins section renders the control.
     render(<TelemetryToggle t={t} />)
-    // Then: the switch reads as off and the DNT note is absent.
-    expect(checkbox().checked).toBe(false)
+    // Then: telemetry reads as on (the default) and the DNT note is absent.
+    expect(toggle().getAttribute('aria-checked')).toBe('true')
     expect(screen.queryByText(DNT_NOTE)).toBeNull()
-    expect(screen.getByText(en['telemetry.label']).textContent).toBe(en['telemetry.label'])
+    expect(screen.getByText(en['telemetry.title']).textContent).toBe(en['telemetry.title'])
   })
 
-  it('Visitor who clicks the switch stores the family-wide opt-out', () => {
-    // Given: the section rendered with an unchecked switch.
+  it('Visitor who switches telemetry off stores the family-wide opt-out', () => {
+    // Given: the section rendered with the switch on.
     render(<TelemetryToggle t={t} />)
     // When: the visitor switches telemetry off.
-    fireEvent.click(checkbox())
-    // Then: the shared storage key holds '1' and the switch reads as on.
+    fireEvent.click(toggle())
+    // Then: the shared storage key holds '1' and the switch reads as off.
     expect(store.getItem(OPT_OUT_KEY)).toBe('1')
-    expect(checkbox().checked).toBe(true)
+    expect(toggle().getAttribute('aria-checked')).toBe('false')
   })
 
-  it('Visitor who already opted out sees the switch on arrival', () => {
+  it('Visitor who already opted out sees the switch off on arrival', () => {
     // Given: a previous session stored the opt-out.
     store.setItem(OPT_OUT_KEY, '1')
     // When: the section renders the control.
     render(<TelemetryToggle t={t} />)
     // Then: the switch reports the stored preference.
-    expect(checkbox().checked).toBe(true)
+    expect(toggle().getAttribute('aria-checked')).toBe('false')
   })
 
-  it('Visitor whose browser sends Do Not Track sees the note while the switch stays off', () => {
+  it('Visitor who turns telemetry back on drops the stored opt-out', () => {
+    // Given: the switch starts off because the opt-out is stored.
+    store.setItem(OPT_OUT_KEY, '1')
+    render(<TelemetryToggle t={t} />)
+    // When: the visitor switches telemetry on.
+    fireEvent.click(toggle())
+    // Then: the key is gone rather than holding '0', and the switch reads as on.
+    expect(store.getItem(OPT_OUT_KEY)).toBeNull()
+    expect(toggle().getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('Visitor whose browser sends Do Not Track sees the note while the switch stays on', () => {
     // Given: the browser answers Do Not Track and nothing is stored.
     Object.defineProperty(navigator, 'doNotTrack', { value: '1', configurable: true })
     // When: the section renders the control.
     render(<TelemetryToggle t={t} />)
-    // Then: the note explains the heartbeat stopped on its own and the switch is off.
+    // Then: the note explains the heartbeat stopped on its own and the stored
+    // preference is still the default, which is on.
     expect(screen.getByRole('status').textContent).toBe(DNT_NOTE)
-    expect(checkbox().checked).toBe(false)
+    expect(toggle().getAttribute('aria-checked')).toBe('true')
   })
 
   it('Visitor whose browser sends Do Not Track and who also opted out sees no note', () => {
@@ -93,6 +109,6 @@ describe('TelemetryToggle', () => {
     render(<TelemetryToggle t={t} />)
     // Then: the preference itself explains the state, so the note stays hidden.
     expect(screen.queryByText(DNT_NOTE)).toBeNull()
-    expect(checkbox().checked).toBe(true)
+    expect(toggle().getAttribute('aria-checked')).toBe('false')
   })
 })

@@ -98,4 +98,4 @@ reverse_proxy 127.0.0.1:3080 {
 
 浏览器半区每个 UTC 日向 dsh-market.com 发送一次匿名安装心跳：仅含一个 localStorage 随机 ID 与本包名，无其他数据。服务端只存储该 ID 的加盐哈希，不存 IP，且只暴露聚合计数。
 
-本分区顶部的开关一次性关闭全家桶心跳：偏好存在 localStorage 的 `dsh-web-ui-telemetry-opt-out` 键。浏览器发出 Do Not Track 时心跳同样自行停止，分区会说明此时开关只表示本机保存的偏好。无论开关如何，创意工坊、插件安装与在线更新照常可用。完整契约见 [docs/telemetry.md](../../docs/telemetry.md)。
+本分区顶部的遥测卡片一次性关闭全家桶心跳：默认开启，所以卡片上的开关入页即为开，关掉才停止上报；偏好存在 localStorage 的 `dsh-web-ui-telemetry-opt-out` 键。浏览器发出 Do Not Track 时心跳同样自行停止，此时开关仍如实表示本机保存的偏好，卡片会说明这一点。无论开关如何，创意工坊、插件安装与在线更新照常可用。完整契约见 [docs/telemetry.md](../../docs/telemetry.md)。

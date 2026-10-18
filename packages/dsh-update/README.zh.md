@@ -29,7 +29,7 @@
   部署）才显示该触发器。官方 DSH 桌面外壳的页面来自 `dsh-app://app/`，且桌面应用
   自带更新器，因此那里完全不挂载该席位——该页面的席位只留给手机远程触发器。
 - **带核对的安装**：run 端点在该 Web GUI 启动的 profile 内执行
-  `pnpm update --latest`，随后重新读取安装版本。pnpm 11 的 `minimumReleaseAge`
+  `pnpm update --latest`，随后重新读取安装版本。pnpm 11/12 的 `minimumReleaseAge`
   门禁可能静默跳过当日发布，因此只看 pnpm 退出码为 0 不会报告成功。
 - **发布说明**：面板拉取对应 GitHub Release 说明，并列出本次实际变动的组件版本。
 - **重启提示**：更新成功后提示重启 `dsh web`——新版本要重启才会加载。
@@ -99,8 +99,11 @@ dsh plugin --profile <profile> add link:<repo>/packages/dsh-update
   同步本地检出。
 - 宿主需能解析到 `pnpm`（`pnpm`、`corepack` 或 `npx`）；都不可用时面板会点名
   失败的候选命令。
-- pnpm 11 的 `minimumReleaseAge` 门禁可能压住当日发布。安装版本没有变化时，面板
-  会给出 `minimumReleaseAgeExclude` / `minimumReleaseAge: 0` 的处置办法。
+- pnpm 11/12 的 `minimumReleaseAge` 门禁可能压住当日发布。更新命令每次运行都用
+  `--config.minimum-release-age=0` 覆盖该门禁；键必须是 kebab-case——pnpm 12 会
+  静默忽略 `--config.minimumReleaseAge=0`，而 pnpm 11 两种写法都认（#1897）。
+  安装版本没有变化时，面板会说明这个键写法差异，并给出
+  `minimumReleaseAgeExclude` / `minimumReleaseAge: 0` 的处置办法。
 - 捕获的 pnpm 输出会原样展示，其中可能包含本地路径。
 - 让脚部动作与设置触发器共用一行的宽栏布局由 `dsh-remote-web-ui` 声明。该插件被
   禁用时更新触发器回落到官方 shell 自带的堆叠脚部：依然渲染可用，只是失去共用行

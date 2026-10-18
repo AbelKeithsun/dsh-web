@@ -111,6 +111,14 @@
   line-height: 17px;
 }
 
+/* Header trailing control (an immediate toggle): a flex item that keeps its
+   natural width while the title block takes the remaining space. */
+.headerAction {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
 .chevron {
   color: var(--dsw-alias-label-tertiary);
   flex: none;
@@ -428,6 +436,65 @@
   line-height: 1.5;
 }
 
+/* Immediate boolean toggle: the official switch shape (30x16 track, 12px
+   thumb). The on state fills with the primary-action pair rather than a fixed
+   state color, so it stays legible in every theme; disabled dims through
+   opacity instead of a second palette. */
+.toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.toggleTrack {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  /* Off must still read as a rail: border-l2 is an alpha hairline color and
+     leaves the track nearly invisible on a card surface. */
+  background: var(--dsw-alias-label-dimmed);
+  transition: background 0.18s ease;
+}
+
+.toggleThumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-3);
+  transition: left 0.18s ease;
+}
+
+.toggle[aria-checked='true'] .toggleTrack {
+  background: var(--dsw-alias-button-primary-fill, var(--dsw-alias-label-primary));
+}
+
+.toggle[aria-checked='true'] .toggleThumb {
+  left: 16px;
+  background: var(--dsw-alias-label-primary-foreground, var(--dsw-alias-bg-layer-3));
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .card,
   .header,
@@ -438,7 +505,9 @@
   .save,
   .selectChevron,
   .selectChevronOpen,
-  .selectPopup {
+  .selectPopup,
+  .toggleTrack,
+  .toggleThumb {
     transition: none;
   }
 }

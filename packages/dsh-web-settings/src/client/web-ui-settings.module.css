@@ -14,47 +14,26 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* Telemetry opt-out: one switch row, its hint, and the Do Not Track note. The
-   block sits between the heading and the plugin cards, so it stays visibly a
-   page-level setting rather than one plugin's configuration. */
+/* Telemetry: a page-level setting rendered through the family card chrome, so
+   it inherits the plugin cards' border, radius and typography instead of
+   carrying a second visual language right above them. Only its copy differs
+   from a plugin card, so only the copy is styled here. */
 .telemetry {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
   margin: 0 0 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--dsw-alias-border-l);
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--dsw-alias-label-secondary);
 }
 
-.telemetryRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.telemetryCheckbox {
-  flex: none;
-  margin: 0;
-  cursor: pointer;
-}
-
-.telemetryLabel {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--dsw-alias-label-primary);
-}
-
-.telemetryHint {
+/* The card's description slot holds two stacked lines: what the heartbeat is,
+   and what turning it off costs. The header already sets the type scale, so
+   these only fix the stacking. */
+.telemetrySummary,
+.telemetryMeta,
+.telemetryNote {
   display: block;
 }
 
-.telemetryDnt {
-  display: block;
+/* The note reports that the heartbeat stopped on its own, which is a state the
+   switch does not express, so it reads at full ink rather than as a hint. */
+.telemetryNote {
   color: var(--dsw-alias-label-primary);
 }
 
