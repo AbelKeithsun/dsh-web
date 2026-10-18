@@ -1,5 +1,7 @@
 import type { TypertGateway } from '@deepseek-ai/dsh-api-gateway'
 import { DEFAULT_RUN_LAUNCH_WIDTH, normalizeRunLaunchWidth } from './core/launch-width.ts'
+import { DEFAULT_SPEND_BUDGET_TOKENS, spendCapMessage, spendCapReached } from './core/spend-budget.ts'
+import { usedTokensToday } from './host-spend.ts'
 import { DEFAULT_SESSION_POLL_SECONDS, normalizeSessionPollSeconds, sessionPollMs } from './core/poll-cadence.ts'
 import { reusableSessionId } from './core/session-reuse.ts'
 import { LaunchAdmissionQueue, type QueuedLaunch } from './host/launch-admission.ts'
@@ -276,6 +278,13 @@ export class TaskBoardHostService {
    * launch without remounting the row. Absent means the default.
    */
   private readonly runLaunchWidth: () => number
+  /**
+   * Live reader of the daily token cap; 0 means no gate. Read at each run
+   * action, so closing or raising the cap binds the next action.
+   */
+  private readonly spendBudgetTokens: () => number
+  /** Today's measured spend: absent measurement reads as "cannot see", never as zero. */
+  private readonly spendUsedToday: (now: number) => number | undefined
   private lastPowerJson = ''
   private readonly now: () => number
   /** The deployment's workspaces, consulted to resolve a card that pins none. */
@@ -338,11 +347,25 @@ export class TaskBoardHostService {
      * is still queueing. Absent means the default width.
      */
     runLaunchWidth?: () => number
+    /**
+     * Live daily token cap (a volatile config read). 0 — the default, and what
+     * every deployment that never configured one keeps — ends the gate before
+     * anything is measured. A positive cap refuses a run whose day already spent
+     * it, on both the action path and the cron path.
+     */
+    spendBudgetTokens?: () => number
+    /**
+     * Today's measured spend in tokens, or undefined when this deployment keeps
+     * no readable usage ledger. Defaults to the family usage ledger reader.
+     */
+    spendUsedToday?: (now: number) => number | undefined
   } = {}) {
     this.ledger = options.ledger ?? new HostTaskLedger(undefined, undefined, {
       sessionDefaultPermission: options.sessionDefaultPermission,
       maxSubtaskDepth: options.maxSubtaskDepth,
       cardDefaults: options.cardDefaults,
+      spendBudgetTokens: options.spendBudgetTokens,
+      spendUsedToday: options.spendUsedToday,
     })
     this.runner = new HostExecutionRunner(gateway, options.commandDispatcher, options.workspaceRegistry, undefined, options.ownerPeer)
     this.workspaceRegistry = options.workspaceRegistry
@@ -353,6 +376,8 @@ export class TaskBoardHostService {
     this.goalRunEnabled = options.goalRunEnabled ?? (() => false)
     this.cardDefaults = options.cardDefaults ?? (() => ({}))
     this.runLaunchWidth = options.runLaunchWidth ?? (() => DEFAULT_RUN_LAUNCH_WIDTH)
+    this.spendBudgetTokens = options.spendBudgetTokens ?? (() => DEFAULT_SPEND_BUDGET_TOKENS)
+    this.spendUsedToday = options.spendUsedToday ?? (now => usedTokensToday(now))
     this.launches = new LaunchAdmissionQueue(() => normalizeRunLaunchWidth(this.runLaunchWidth()))
     this.verificationSettings = options.verificationSettings ?? (() => ({ enabled: false, model: '', reasoningEffort: '' }))
     this.verificationCatalog = options.verificationCatalog ?? (async () => undefined)
@@ -573,6 +598,7 @@ export class TaskBoardHostService {
       const task = this.ledger.state().tasks.find(item => item.id === action.taskId)
       if (task?.teamRun === true) throw new Error('Agent Teams is unavailable in this deployment')
     }
+    if (action.kind === 'run' || action.kind === 'rerun') this.assertSpendCap()
     const result = this.ledger.applyRequest(requestId, this.withInheritedWorkspace(action, initiator), initiator)
     if (result.runs !== undefined) this.dispatchRuns(result.runs)
     // A committed write that can move a rule moves the nearest trigger;
@@ -590,6 +616,25 @@ export class TaskBoardHostService {
       scheduler: result.state.scheduler,
       power: this.power.snapshot(),
     }
+  }
+
+  /**
+   * Refuse a run whose day already spent the cap.
+   *
+   * A cap of 0 — the shipped default — answers before the measurement is read:
+   * no ledger file is opened and nothing is summed, which is what keeps a board
+   * that never configured a cap identical to the one before it existed.
+   *
+   * The refusal is a thrown message rather than a code: the wire hands its text
+   * to the caller as board-refused, exactly like every other refusal this board
+   * makes.
+   */
+  private assertSpendCap(): void {
+    const cap = this.spendBudgetTokens()
+    if (!(cap > 0)) return
+    const used = this.spendUsedToday(this.now())
+    if (used === undefined || !spendCapReached(used, cap)) return
+    throw new Error(spendCapMessage(used, cap))
   }
 
   /** Route one provider action and answer the resulting board snapshot. */

@@ -109,6 +109,24 @@ function runLaunchWidthField(): FieldSpec {
 }
 
 /**
+ * The daily token cap field: whole tokens, 0 for "no gate". Every non-negative
+ * whole number is a legal cap, so the draft only has to be one; a blank draft
+ * clears the entry back to the schema default (0).
+ */
+function spendBudgetField(): FieldSpec {
+  return {
+    field: 'spendBudgetTokens',
+    format: value => typeof value === 'number' && Number.isInteger(value) ? String(value) : '',
+    parse: (text) => {
+      const trimmed = text.trim()
+      if (trimmed === '') return { kind: 'clear' }
+      if (!/^\d+$/.test(trimmed)) return undefined
+      return { kind: 'set', value: Number(trimmed) }
+    },
+  }
+}
+
+/**
  * The judge-model field: blank inherits the host model catalog default, and a
  * non-blank draft must be a qualified provider/model route. An unparseable
  * draft blocks the save instead of storing a route nothing can resolve.
@@ -145,6 +163,11 @@ export interface TaskBoardSettings {
    * action creates; members enter the running column in batches, none is dropped.
    */
   runLaunchWidth?: number
+  /**
+   * Daily token ceiling for the work this board dispatches; 0 means no gate.
+   * Tokens, not money: only DeepSeek's own routes are priced.
+   */
+  spendBudgetTokens?: number
   /**
    * GLOBAL native /goal switch (default off): the master control over whether
    * this board starts a run with dsh's built-in /goal at all. Frozen per
@@ -187,6 +210,8 @@ export interface TaskBoardSettingsCardState extends CardShell {
   sessionPollSeconds: CardFieldState
   /** Run-launch admission width field. */
   runLaunchWidth: CardFieldState
+  /** Daily token cap field. */
+  spendBudgetTokens: CardFieldState
   /** GLOBAL native /goal switch. */
   goalRunEnabled: CardFieldState
   /** Goal-acceptance switch. */
@@ -237,6 +262,7 @@ export class TaskBoardSettingsCardController {
       subtaskDepthField(),
       sessionPollField(),
       runLaunchWidthField(),
+      spendBudgetField(),
       booleanField('goalRunEnabled'),
       booleanField('goalVerification'),
       modelRouteField('goalVerificationModel'),
@@ -261,6 +287,7 @@ export class TaskBoardSettingsCardController {
       maxSubtaskDepth: this.form.field('maxSubtaskDepth'),
       sessionPollSeconds: this.form.field('sessionPollSeconds'),
       runLaunchWidth: this.form.field('runLaunchWidth'),
+      spendBudgetTokens: this.form.field('spendBudgetTokens'),
       goalRunEnabled: this.form.field('goalRunEnabled'),
       goalVerification: this.form.field('goalVerification'),
       goalVerificationModel: this.form.field('goalVerificationModel'),
@@ -529,6 +556,16 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
             {...state.runLaunchWidth}
             onEdit={(text) => { props.edit('runLaunchWidth', text) }}
             onReset={() => { props.resetField('runLaunchWidth') }}
+          />
+          <ValueField
+            id="settings-task-board-spend-budget"
+            label={t('settings.spendBudgetTokens')}
+            hint={t('settings.spendBudgetTokensHint')}
+            numeric
+            {...fieldProps}
+            {...state.spendBudgetTokens}
+            onEdit={(text) => { props.edit('spendBudgetTokens', text) }}
+            onReset={() => { props.resetField('spendBudgetTokens') }}
           />
         </PluginSettingsCard>
 
