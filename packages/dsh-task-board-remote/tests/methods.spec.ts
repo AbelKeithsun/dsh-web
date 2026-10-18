@@ -23,8 +23,14 @@ describe('board.snapshot', () => {
     const methods = methodsOf(() => board)
     // When the phone asks for the board
     const answer = await methods[METHOD_BOARD_SNAPSHOT]({}, CALL)
-    // Then the host's own document crosses unchanged, field for field
-    expect(answer).toEqual({ ok: true, r: { snapshot: board.snapshot() } })
+    // Then the host's own document crosses unchanged, field for field, with the
+    // §15 keys beside it: a reset, and no token because this client declared no
+    // capability it could continue from
+    const snapshot = board.snapshot()
+    expect(answer).toEqual({
+      ok: true,
+      r: { mode: 'reset', token: '', snapshot, revision: snapshot.revision, tasks: snapshot.tasks },
+    })
   })
 
   it('user asks for the board on a host that mounts none and is told it is unavailable', async () => {

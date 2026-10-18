@@ -12,7 +12,7 @@ describe('protocol v1 authorization and dispatch', () => {
     // Then the handshake answers with this bridge's identity and the unpaired state
     expect(answerOf(harness, 1)).toEqual({
       ok: true,
-      r: { proto: 1, minor: 3, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1'], resume: 'snapshot', auth: 'unpaired' },
+      r: { proto: 1, minor: 4, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1', 'delta.v1'], resume: 'snapshot', auth: 'unpaired' },
     })
   })
 
@@ -65,7 +65,7 @@ describe('protocol v1 authorization and dispatch', () => {
     // When the user lists sessions
     await harness.connection.handleText(requestFrame(6, 'session.list'))
     // Then the roster crosses in the protocol's own field names
-    expect(answerOf(harness, 6).r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 5, agentRunning: false, blank: true }] })
+    expect(answerOf(harness, 6).r).toEqual({ mode: 'reset', token: '', sessions: [{ id: 's-1', title: '', updatedAt: 5, agentRunning: false, blank: true }] })
   })
 
   it('user unpaired reaches for session titles and is refused without reading a title', async () => {

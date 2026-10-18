@@ -17,6 +17,7 @@
  * @module dsh-remote-bridge/core/extension
  */
 
+import type { RemoteBridgeDeltas } from './delta.ts'
 import { KNOWN_METHODS } from './protocol.ts'
 
 /** Cordis service this seam is published under. */
@@ -35,6 +36,25 @@ export interface RemoteBridgeCall {
    * carries a new one, because nothing proves it is the same peer.
    */
   readonly connectionId: string
+  /**
+   * @param capability - one capability name of this protocol or of the calling
+   * extension.
+   * @returns whether this connection announced it in `hello`.
+   *
+   * The seam hands handlers the same predicate the bridge itself gates on, so
+   * an extension can gate behind a bridge capability (§15's `delta.v1`) without
+   * holding a copy of the client's declaration.
+   */
+  declares(capability: string): boolean
+  /**
+   * This connection's delta windows, released with the connection.
+   *
+   * The mechanism of §15 lives once, in this bridge, and an extension borrows it
+   * per connection: the difference is always computed where the last answer is
+   * already held, and a dropped connection takes its base with it instead of
+   * leaving one to be expired by a second registry.
+   */
+  readonly deltas: RemoteBridgeDeltas
 }
 
 /**

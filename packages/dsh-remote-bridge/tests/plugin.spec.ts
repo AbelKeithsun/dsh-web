@@ -163,7 +163,7 @@ describe('the mounted plugin', () => {
     await settle()
     // Then the answer came back out of the socket, as an unpaired connection
     expect(serverFrames(pair.serverBytes())).toEqual([
-      { t: 'res', id: 1, ok: true, r: { proto: 1, minor: 3, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1'], resume: 'snapshot', auth: 'unpaired' } },
+      { t: 'res', id: 1, ok: true, r: { proto: 1, minor: 4, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1', 'delta.v1'], resume: 'snapshot', auth: 'unpaired' } },
     ])
   })
 

@@ -30,6 +30,8 @@ describe('session metadata over protocol v1', () => {
     await harness.connection.handleText(requestFrame(1, 'session.list'))
     // Then every field the host reported crosses under the protocol's own name
     expect(answerOf(harness, 1).r).toEqual({
+      mode: 'reset',
+      token: '',
       sessions: [
         {
           id: 'sub-1',
@@ -55,7 +57,7 @@ describe('session metadata over protocol v1', () => {
     await harness.connection.handleText(requestFrame(2, 'session.list'))
     // Then the row carries only the keys this host can actually answer for
     const answer = answerOf(harness, 2)
-    expect(answer.r).toEqual({ sessions: [{ id: 's-1', title: '', updatedAt: 5, agentRunning: false, blank: false }] })
+    expect(answer.r).toEqual({ mode: 'reset', token: '', sessions: [{ id: 's-1', title: '', updatedAt: 5, agentRunning: false, blank: false }] })
     expect(Object.keys((answer.r as { sessions: Record<string, unknown>[] }).sessions[0] ?? {})).toEqual(['id', 'title', 'updatedAt', 'agentRunning', 'blank'])
   })
 
@@ -95,6 +97,8 @@ describe('session metadata over protocol v1', () => {
     await harness.connection.handleText(requestFrame(7, 'session.list'))
     // Then the cached title rides the row and the roster itself read no title
     expect(answerOf(harness, 7).r).toEqual({
+      mode: 'reset',
+      token: '',
       sessions: [{ id: 's-1', title: 'Plan the trip', updatedAt: 5, agentRunning: false, blank: false }],
     })
     expect(titles.reads).toEqual(['s-1'])

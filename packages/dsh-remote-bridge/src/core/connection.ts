@@ -18,6 +18,7 @@
 
 import type { ApprovalRegistry } from './approvals.ts'
 import type { DeviceRoster } from './devices.ts'
+import { ROSTER_DELTA_MAX_ROWS, RemoteBridgeDeltas, type DeltaRow } from './delta.ts'
 import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, SpawnCallIndex, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
 import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension.ts'
@@ -26,6 +27,7 @@ import { scopeKey, type JobRoster, type JobsPayload } from './jobs.ts'
 import type { PairingService } from './pairing.ts'
 import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
 import {
+  CAP_DELTA,
   CAP_JOBS,
   CAP_QUESTIONS,
   CAP_SESSION_SNAPSHOT_PAGE,
@@ -164,7 +166,7 @@ interface CallFailure {
 type DispatchOutcome = { readonly ok: true; readonly r: unknown } | CallFailure
 
 /** One session-list row as the protocol publishes it. */
-interface SessionRow {
+interface SessionRow extends DeltaRow {
   readonly id: string
   readonly title: string
   readonly updatedAt: number
@@ -182,6 +184,20 @@ interface SessionRow {
 
 function refusal(code: string, msg: string): CallFailure {
   return { ok: false, code, msg }
+}
+
+/**
+ * The opaque `since` token one request carried.
+ *
+ * Anything that is not a non-empty string is "no usable token", which answers a
+ * reset — the same answer an unknown token gets, because a request that named
+ * no base cannot be diffed against one.
+ * @param payload - the request's `p`.
+ * @returns the token, or undefined.
+ */
+function sinceOf(payload: Readonly<Record<string, unknown>>): string | undefined {
+  const value = payload.since
+  return typeof value === 'string' && value !== '' ? value : undefined
 }
 
 /**
@@ -399,6 +415,12 @@ export class BridgeConnection {
   readonly #jobWatches = new Map<string, () => void>()
   /** The last roster payload this connection received per scope key, for whole-set dedupe. */
   readonly #jobSeen = new Map<string, string>()
+  /**
+   * This connection's delta windows, one per set it is served incrementally.
+   * Held here so the base is released exactly when the connection is, and so no
+   * two connections can ever diff against each other's set.
+   */
+  readonly #deltas = new RemoteBridgeDeltas()
   #lineageRead = false
   #deviceId: string | undefined
   #nonce: { readonly value: string; readonly expiresAt: number } | undefined
@@ -511,6 +533,9 @@ export class BridgeConnection {
     for (const dispose of this.#jobWatches.values()) dispose()
     this.#jobWatches.clear()
     this.#jobSeen.clear()
+    // A dropped connection's incremental bases are released with it: a token it
+    // was given names nothing afterwards, and nothing here outlives its socket.
+    this.#deltas.clear()
     // The bridge itself may be unloading with live sockets: the client is told
     // the endpoint is going away instead of being left on a dead protocol.
     this.#transport.close(1001, 'the bridge is going away')
@@ -547,7 +572,7 @@ export class BridgeConnection {
       case METHOD_HELLO: return this.#hello(frame.p)
       case METHOD_PAIR_BEGIN: return this.#pairBegin(frame.p)
       case METHOD_PAIR_FINISH: return await this.#pairFinish(frame.p)
-      case METHOD_SESSION_LIST: return await this.#sessionList()
+      case METHOD_SESSION_LIST: return await this.#sessionList(frame.p)
       case METHOD_SESSION_TITLES: return this.#sessionTitles(frame.p)
       case METHOD_SESSION_SNAPSHOT: return await this.#sessionSnapshot(frame.p, frame.id)
       case METHOD_SESSION_HISTORY: return await this.#sessionHistory(frame.p, frame.id)
@@ -580,7 +605,11 @@ export class BridgeConnection {
     // capability: the method is not part of its protocol.
     if (handler === undefined) return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     try {
-      const result = await handler(frame.p, { connectionId: this.#id })
+      const result = await handler(frame.p, {
+        connectionId: this.#id,
+        declares: capability => this.declares(capability),
+        deltas: this.#deltas,
+      })
       if (!isMethodResult(result)) return refusal(CODE_INTERNAL, `${frame.m} answered no result`)
       return result.ok ? { ok: true, r: result.r } : refusal(result.code, result.msg)
     } catch (error) {
@@ -649,7 +678,41 @@ export class BridgeConnection {
     return { ok: true, r: { deviceToken: enrollment.deviceToken, deviceId: enrollment.deviceId } }
   }
 
-  async #sessionList(): Promise<DispatchOutcome> {
+  /**
+   * Answer the roster as a whole set, or as the increment since a token.
+   *
+   * `since` and the two answer modes exist only for a client that declared
+   * {@link CAP_DELTA}: every other client is answered the roster it always was,
+   * with `mode:"reset"` and an empty `token` beside it, and this connection
+   * keeps no copy of a set that client cannot continue from.
+   * @param payload - `{since?}`.
+   */
+  async #sessionList(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const roster = await this.#readRoster()
+    if (!roster.ok) return roster
+    if (!this.declares(CAP_DELTA)) {
+      this.#deltas.drop('session.list')
+      return { ok: true, r: { mode: 'reset', token: '', sessions: roster.rows } }
+    }
+    const answer = this.#deltas
+      .window<SessionRow>('session.list', { maxRows: ROSTER_DELTA_MAX_ROWS })
+      .answer(roster.rows, sinceOf(payload))
+    return {
+      ok: true,
+      r: answer.mode === 'reset'
+        ? { mode: 'reset', token: answer.token, sessions: answer.rows }
+        : { mode: 'delta', token: answer.token, changed: answer.changed, removed: answer.removed },
+    }
+  }
+
+  /**
+   * Read the roster once, as the host answers it.
+   *
+   * Deliberately separate from {@link #sessionList}: lineage and authorization
+   * are learned from the same read, and an internal read must not consume or
+   * advance this connection's incremental base.
+   */
+  async #readRoster(): Promise<{ readonly ok: true; readonly rows: SessionRow[] } | CallFailure> {
     const call = await this.#unary('session', 'list')
     if (!call.ok) return call
     const items = isRecord(call.value) ? call.value.items : undefined
@@ -681,7 +744,7 @@ export class BridgeConnection {
     // child's durable parent is on its own row, so a client that lists before it
     // opens a session never costs a second read to address that session.
     this.#rememberLineage(sessions)
-    return { ok: true, r: { sessions } }
+    return { ok: true, rows: sessions }
   }
 
   /**
@@ -1100,7 +1163,7 @@ export class BridgeConnection {
   async #parentOf(sessionId: string): Promise<string | undefined> {
     const known = this.#lineage.get(sessionId)
     if (known !== undefined || this.#lineageRead) return known
-    const roster = await this.#sessionList()
+    const roster = await this.#readRoster()
     if (roster.ok) this.#lineageRead = true
     return this.#lineage.get(sessionId)
   }

@@ -44,12 +44,19 @@ export class FakeBoard implements BoardFace {
     goalRunEnabled: false,
   }
 
+  /**
+   * The task table `snapshot()` publishes. A suite replaces it to script a
+   * change between two reads; the default is the one card every other suite
+   * already expects.
+   */
+  tasks: readonly Record<string, unknown>[] = [{ id: 't-1', title: 'Plan the trip' }]
+
   snapshot(): BoardSnapshotFace {
     if (this.snapshotError !== undefined) throw this.snapshotError
     return {
       schemaVersion: 6,
       revision: this.revision,
-      tasks: this.oversize ? [{ id: 't-1', title: 'x'.repeat(10 * 1024 * 1024) }] : [{ id: 't-1', title: 'Plan the trip' }],
+      tasks: this.oversize ? [{ id: 't-1', title: 'x'.repeat(10 * 1024 * 1024) }] : this.tasks,
       scheduler: { timeZone: 'Asia/Shanghai' },
       power: { platform: 'darwin', phase: 'idle' },
       ...this.meta,

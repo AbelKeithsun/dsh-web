@@ -23,11 +23,13 @@ Neither is a hard dependency. With either one absent the row registers nothing, 
 
 | method | request `p` | response `r` |
 | --- | --- | --- |
-| `board.snapshot` | `{}` | `{snapshot}` — the Host snapshot verbatim |
+| `board.snapshot` | `{}` or `{since}` | `{mode:"reset", token, snapshot, revision, tasks}` — the Host snapshot verbatim plus the incremental keys — or `{mode:"delta", token, revision, changed, removed}` |
 | `board.options` | `{}` | `{verification:{settings,contract,catalog}, meta:{sessionDefaultPermission?, cardDefaults?, maxSubtaskDepth?, teamRunAvailable?, goalRunEnabled?}}` |
 | `board.apply` | `{requestId, action}` | `{snapshot, revision}` |
 
-A client declares `board.v1` in `hello`'s `cap` array. Without it the three methods answer `unknown-method` — the method is not part of that client's protocol — and the topic never reaches it. Pairing is checked first, exactly as it is for every protocol method.
+A client declares `board.v1` in `hello`'s `cap` array. Without it the three methods answer `unknown-method` — the method is not part of that client's protocol — and the topic never reaches it.
+
+A client that also declares the bridge's `delta.v1` may send a previous answer's `token` back as `since` and is answered only what moved — `mode:"delta"` with `changed` and the ids in `removed` — or the whole board again when a delta would not be clearly smaller. Everything about that decision is the bridge's (protocol v1 §15): this row only hands it the board's rows and wraps the answer. A client that declared nothing, or sent no token, always gets `mode:"reset"` with an empty `token`, and `snapshot` unchanged for it — the incremental keys are additive. Pairing is checked first, exactly as it is for every protocol method.
 
 `action` is the Host action's own JSON form (`create`, `update`, `move`, `archive`, `restore`, `delete`, `settle`, `record-external-outcome`, `reset-verification`, `extension-action` and the rest) and crosses verbatim. No initiator is passed: the board documents that field as the id of the DSH session issuing the action, and a phone is not one — a stand-in would put a non-session identity into the execution audit trail and into the workspace inheritance lookup, which reads the field as a session id.
 

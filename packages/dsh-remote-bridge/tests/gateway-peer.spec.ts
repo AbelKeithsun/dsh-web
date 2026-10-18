@@ -36,7 +36,7 @@ describe('gateway calls and the in-process owner peer', () => {
     // Then the call spoke for the very peer the bridge minted for itself:
     // the owner principal, no forwarded-event interactions, and no identity
     // a client frame could have set
-    expect(answerOf(harness, 1).r).toEqual({ sessions: [] })
+    expect(answerOf(harness, 1).r).toEqual({ mode: 'reset', token: '', sessions: [] })
     const call = harness.gateway.invocations[0]
     expect(call?.peer).toBe(harness.ownerPeer)
     expect(call?.peer.principal).toEqual({ kind: 'owner' })
@@ -80,7 +80,7 @@ describe('gateway calls and the in-process owner peer', () => {
     // When the now-paired user lists sessions
     await harness.connection.handleText(requestFrame(5, 'session.list'))
     // Then the first gateway call of this connection speaks for the owner peer
-    expect(answerOf(harness, 5).r).toEqual({ sessions: [] })
+    expect(answerOf(harness, 5).r).toEqual({ mode: 'reset', token: '', sessions: [] })
     expect(harness.gateway.invocations).toHaveLength(1)
     expect(harness.gateway.invocations[0]?.peer).toBe(harness.ownerPeer)
   })
@@ -106,7 +106,7 @@ describe('gateway calls and the in-process owner peer', () => {
     // When the user smuggles an identity into the payload
     await harness.connection.handleText(requestFrame(8, 'session.list', { principal: { kind: 'owner' }, peer: { id: 'forged' } }))
     // Then the call still speaks for the bridge's own peer and the payload field is dead
-    expect(answerOf(harness, 8).r).toEqual({ sessions: [] })
+    expect(answerOf(harness, 8).r).toEqual({ mode: 'reset', token: '', sessions: [] })
     expect(harness.gateway.invocations[0]?.peer).toBe(harness.ownerPeer)
     expect(harness.gateway.invocations[0]?.peer.principal).toEqual({ kind: 'owner' })
   })

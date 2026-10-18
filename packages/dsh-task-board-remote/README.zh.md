@@ -23,11 +23,13 @@
 
 | 方法 | 请求 `p` | 响应 `r` |
 | --- | --- | --- |
-| `board.snapshot` | `{}` | `{snapshot}`——宿主快照逐字转发 |
+| `board.snapshot` | `{}` 或 `{since}` | `{mode:"reset", token, snapshot, revision, tasks}`——宿主快照逐字转发外加增量键——或 `{mode:"delta", token, revision, changed, removed}` |
 | `board.options` | `{}` | `{verification:{settings,contract,catalog}, meta:{sessionDefaultPermission?, cardDefaults?, maxSubtaskDepth?, teamRunAvailable?, goalRunEnabled?}}` |
 | `board.apply` | `{requestId, action}` | `{snapshot, revision}` |
 
-客户端在 `hello` 的 `cap` 数组里声明 `board.v1`。未声明时三个方法回 `unknown-method`——方法对它而言不属于协议——主题也永不到达它。配对判定在前，与协议方法完全一致。
+客户端在 `hello` 的 `cap` 数组里声明 `board.v1`。未声明时三个方法回 `unknown-method`——方法对它而言不属于协议——主题也永不到达它。
+
+另外声明了桥的 `delta.v1` 的客户端，可以把上一次应答的 `token` 当作 `since` 发回来，只会收到动了的部分——`mode:"delta"` 带 `changed` 与 `removed` 里的 id——或者在增量并不明显更小时再收一次整份看板。这件事的判定全归桥（协议 v1 §15）：本行只把看板自己的行交给它，并把应答包成看板的形状。什么都没声明、或没带令牌的客户端永远收到 `mode:"reset"` 与空 `token`，而它读的 `snapshot` 逐字未变——增量键都是可加可忽略的。配对判定在前，与协议方法完全一致。
 
 `action` 是看板动作自身的 JSON 形态（`create`、`update`、`move`、`archive`、`restore`、`delete`、`settle`、`record-external-outcome`、`reset-verification`、`extension-action` 等），逐字穿过。不传 initiator：看板把该字段定义为发起动作的 DSH 会话 id，而手机不是会话——塞一个替身会把非会话身份写进执行审计，而工作区继承查询也把它当会话 id 读。
 

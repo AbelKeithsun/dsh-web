@@ -11,6 +11,9 @@
  */
 
 import {
+  BOARD_DELTA_KEY,
+  BOARD_DELTA_MAX_ROWS,
+  CAP_DELTA,
   CODE_BOARD_REFUSED,
   CODE_BOARD_UNAVAILABLE,
   CODE_INVALID_ARGS,
@@ -21,7 +24,12 @@ import {
   METHOD_BOARD_SNAPSHOT,
   REPLAY_LIMIT,
 } from '../protocol.ts'
-import type { BoardCall, BoardFace, BoardMethodHandler, BoardMethodResult, BoardSnapshotFace } from './seam.ts'
+import type { BoardCall, BoardFace, BoardMethodHandler, BoardMethodResult, BoardSnapshotFace, DeltaRowFace } from './seam.ts'
+
+/** One task as the delta window keys it; the rest of the record stays opaque. */
+interface BoardTaskRow extends DeltaRowFace {
+  readonly [key: string]: unknown
+}
 
 /**
  * The board meta keys §12.3 publishes beside the acceptance options. Each is
@@ -132,11 +140,64 @@ function readSnapshot(board: BoardFace): { readonly ok: true; readonly snapshot:
   return { ok: true, snapshot: snapshot as BoardSnapshotFace }
 }
 
-function snapshotAnswer(board: BoardFace | undefined): BoardMethodResult {
+/**
+ * The opaque `since` token one request carried.
+ *
+ * Anything that is not a non-empty string names no base, so the answer is a
+ * reset — the same answer an unknown token gets.
+ */
+function sinceOf(payload: Readonly<Record<string, unknown>>): string | undefined {
+  const value = payload.since
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/**
+ * @param rows - the host's task table.
+ * @returns whether every row carries the id a delta is keyed by.
+ *
+ * A set that cannot be keyed is answered whole: inventing a key, or dropping the
+ * row that lacks one, would send a delta a client cannot reconcile.
+ */
+function keyedById(rows: readonly unknown[]): rows is readonly BoardTaskRow[] {
+  return rows.every(row => typeof row === 'object' && row !== null && typeof (row as { id?: unknown }).id === 'string')
+}
+
+/**
+ * Answer one board read: the whole board, or the increment since a token (§15).
+ *
+ * The reset body keeps the host snapshot verbatim under `snapshot` — what every
+ * client written before §15 already reads — and publishes the same two facts
+ * `tasks` and `revision` beside it, so a delta-capable client parses one shape
+ * across both modes while an older one parses the shape it always did.
+ * @param board - the host face, or undefined when the board is not mounted.
+ * @param payload - `{since?}`.
+ * @param call - who is asking: its declared capabilities and its delta windows.
+ */
+function snapshotAnswer(board: BoardFace | undefined, payload: Readonly<Record<string, unknown>>, call: BoardCall): BoardMethodResult {
   if (board === undefined) return unavailable('the task board is not mounted on this host')
   const read = readSnapshot(board)
   if (!read.ok) return read.result
-  return carried({ snapshot: read.snapshot })
+  const snapshot = read.snapshot
+  const revision = snapshot.revision
+  const tasks = Array.isArray(snapshot.tasks) ? snapshot.tasks : undefined
+  const whole = (token: string): BoardMethodResult => carried({
+    mode: 'reset',
+    token,
+    snapshot,
+    revision,
+    ...(tasks === undefined ? {} : { tasks }),
+  })
+  // Nothing to diff without a window seat, a declared capability, or a task
+  // table that can be keyed: the whole board is the answer, and no copy of it is
+  // retained because there is no base this answer could be continued from.
+  const deltas = call.deltas
+  if (call.declares?.(CAP_DELTA) !== true || deltas === undefined) return whole('')
+  if (tasks === undefined || !keyedById(tasks)) return whole('')
+  const answer = deltas
+    .window<BoardTaskRow>(BOARD_DELTA_KEY, { maxRows: BOARD_DELTA_MAX_ROWS })
+    .answer(tasks, sinceOf(payload))
+  if (answer.mode === 'reset') return whole(answer.token)
+  return carried({ mode: 'delta', token: answer.token, revision, changed: answer.changed, removed: answer.removed })
 }
 
 async function optionsAnswer(board: BoardFace | undefined): Promise<BoardMethodResult> {
@@ -213,7 +274,7 @@ async function applyAnswer(
 export function createBoardMethods(options: BoardMethodsOptions): Readonly<Record<string, BoardMethodHandler>> {
   const replay = new ReplayLog(REPLAY_LIMIT)
   return {
-    [METHOD_BOARD_SNAPSHOT]: () => snapshotAnswer(options.board()),
+    [METHOD_BOARD_SNAPSHOT]: (payload, call) => snapshotAnswer(options.board(), payload, call),
     [METHOD_BOARD_OPTIONS]: () => optionsAnswer(options.board()),
     [METHOD_BOARD_APPLY]: (payload, call) => applyAnswer(options.board(), payload, call, replay),
   }

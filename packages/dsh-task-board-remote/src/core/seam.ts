@@ -49,10 +49,44 @@ export type BoardMethodResult =
   | { readonly ok: true; readonly r?: unknown }
   | { readonly ok: false; readonly code: string; readonly msg: string }
 
+/** One row of a set the bridge can diff: keyed by `id`, compared by its body. */
+export interface DeltaRowFace {
+  readonly id: string
+}
+
+/** One answer of a bridge delta window, as this plugin consumes it (§15). */
+export type DeltaAnswerFace<T> =
+  | { readonly mode: 'reset'; readonly token: string; readonly rows: readonly T[] }
+  | { readonly mode: 'delta'; readonly token: string; readonly changed: readonly T[]; readonly removed: readonly string[] }
+
+/**
+ * The bridge's per-connection delta window, structurally.
+ *
+ * The rule set behind it — base, token, cap, "smaller than a reset" — is the
+ * bridge's and lives there once; this plugin only hands it the board's own rows
+ * and wraps the answer in the board's wire shape.
+ */
+export interface DeltaWindowFace<T> {
+  answer(rows: readonly T[], since: string | undefined): DeltaAnswerFace<T>
+}
+
+/** Where a connection's delta windows are read from. */
+export interface DeltaSeatFace {
+  window<T extends DeltaRowFace>(key: string, limits: { readonly maxRows: number }): DeltaWindowFace<T>
+}
+
 /** Who is calling one board method. */
 export interface BoardCall {
   /** Stable id of the calling connection: the scope of `board.apply`'s idempotency. */
   readonly connectionId: string
+  /**
+   * @param capability - a capability the calling connection may have declared.
+   * @returns whether it did. Absent on a bridge that predates the seat, which is
+   * read as "declared nothing" and answers today's body.
+   */
+  readonly declares?: (capability: string) => boolean
+  /** This connection's delta windows. Absent on a bridge that predates §15. */
+  readonly deltas?: DeltaSeatFace
 }
 
 /** One board method. */

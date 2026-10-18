@@ -23,6 +23,27 @@ export const METHOD_BOARD_APPLY = 'board.apply'
 /** The one topic the board surface publishes. */
 export const TOPIC_BOARD_CHANGED = 'board.changed'
 
+/**
+ * The bridge's own capability (`delta.v1`, protocol v1 §15), spelled here
+ * rather than imported: this plugin takes no dependency on the bridge, and the
+ * contract between them is the string a client puts in `hello`'s `cap` array.
+ *
+ * When the calling connection declared it, `board.snapshot` answers the whole
+ * board or the increment since a token; when it did not, the answer is the whole
+ * board plus the two ignorable keys, exactly as before §15.
+ */
+export const CAP_DELTA = 'delta.v1'
+
+/**
+ * Largest board one connection's delta window retains. Past this the bridge's
+ * window retains nothing and answers a reset, so one phone can never pin an
+ * unbounded copy of the ledger.
+ */
+export const BOARD_DELTA_MAX_ROWS = 2000
+
+/** The window name this plugin's one set is keyed under within a connection. */
+export const BOARD_DELTA_KEY = 'board.snapshot'
+
 /** The board cannot be read right now: absent, failed, or too large to carry. */
 export const CODE_BOARD_UNAVAILABLE = 'board-unavailable'
 /** The host refused the action; `msg` is the host's own text. */

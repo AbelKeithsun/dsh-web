@@ -85,6 +85,19 @@ export const CAP_SUBAGENT_THREAD = 'subagent.thread.v1'
 export const CAP_JOBS = 'jobs.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to be answered with
+ * byte-level increments instead of the whole roster or the whole board.
+ *
+ * Behind it, `session.list` and `board.snapshot` (the latter through the board
+ * plugin, §15) accept an opaque `since` token and answer either the whole set
+ * (`mode:"reset"`) or only what changed since the set that token names. A
+ * client that does not declare it — including every client written before this
+ * channel existed — is answered today's body plus the ignorable `mode` and
+ * `token` keys, with `mode` always `"reset"`.
+ */
+export const CAP_DELTA = 'delta.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.
@@ -152,15 +165,17 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
- * 3 when the background-job channel shipped: behind {@link CAP_JOBS} a client
- * may call `jobs.list` and receive `jobs.changed`. 2 was the subagent thread —
+ * 4 when byte-level increments shipped: behind {@link CAP_DELTA} `session.list`
+ * and `board.snapshot` answer a reset or a delta against a `since` token. 3 was
+ * the background-job channel — behind {@link CAP_JOBS} a client may call
+ * `jobs.list` and receive `jobs.changed`. 2 was the subagent thread —
  * a `user-message` delta may carry an `actor` and a `subagent` delta exists
  * behind {@link CAP_SUBAGENT_THREAD}. 1 was the extension seam — a mounted
  * plugin may answer methods outside {@link KNOWN_METHODS} once the client
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 3
+export const MINOR = 4
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -175,6 +190,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_QUESTIONS,
   CAP_SUBAGENT_THREAD,
   CAP_JOBS,
+  CAP_DELTA,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'
