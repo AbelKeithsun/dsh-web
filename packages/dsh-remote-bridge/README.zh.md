@@ -41,11 +41,12 @@
 
 | 方法 | 请求 `p` | 响应 `r` |
 | --- | --- | --- |
-| `hello` | `{proto:1, minor:5, client:"ios/0.1", cap:["session.snapshot.trim.v1","subagent.thread.v1"]}` | `{proto:1, minor:5, server:"dsh-remote-bridge", capabilities:["session.snapshot.trim.v1","session.snapshot.page.v1","questions.v1","subagent.thread.v1","jobs.v1","delta.v1","session.list.omit-archived.v1"], resume:"snapshot", auth:"paired" 或 "unpaired"}` |
+| `hello` | `{proto:1, minor:6, client:"ios/0.1", cap:["session.snapshot.trim.v1","subagent.thread.v1"]}` | `{proto:1, minor:6, server:"dsh-remote-bridge", capabilities:["session.snapshot.trim.v1","session.snapshot.page.v1","questions.v1","subagent.thread.v1","jobs.v1","delta.v1","session.list.omit-archived.v1","session.deep-history.v1"], resume:"snapshot", auth:"paired" 或 "unpaired"}` |
 | `session.list` | `{}` | `{sessions:[{id, title, updatedAt, agentRunning, cwd?, parentSessionId?, origin?, blank, archived?}]}` |
 | `session.titles` | `{ids:[<sessionId>, ...]}` | `{titles:{"<id>":"<title>", ...}}` |
 | `session.snapshot` | `{sessionId, maxBytes?}` | `{turns:[...], lastSeq:<uint>, hasMore?}` |
 | `session.history` | `{sessionId, before?, maxBytes?}` | `{turns:[...], nextBefore?:<uint>, hasMore:<bool>}` |
+| `session.history.deep` | `{sessionId, before?, maxBytes?}` | `{turns:[...], nextBefore?:<uint>, hasMore:<bool>}` |
 | `session.prompt` | `{sessionId, text, requestId}` | `{accepted:true}` |
 | `session.interrupt` | `{sessionId}` | `{ok:true}` |
 | `pair.begin` | `{token}` | `{nonce, expiresAt}` |
@@ -54,7 +55,7 @@
 
 `hello` 无需设备令牌即可调用，并回报本连接自身的 `auth` 状态。`session.snapshot` 把宿主 follow 流的开帧快照映射成 `turns`，把它的 cursor 作为 `lastSeq` 回报，随后保持该流作为本连接对该会话的订阅；`session.prompt` 幂等地确保同一条订阅，因此客户端可以跳过 snapshot。发言模式固定为排队，`clientTimeZone` 由服务端填本机 IANA 时区，`requestId` 是幂等键：同名 `requestId` 在同一会话内只发一次，重复调用直接回 `{accepted:true}` 且不再发送。`session.interrupt` 取消回合，不拆除订阅。
 
-`hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本桥自己服务七个能力，并在 `hello` 的 `capabilities` 里公告它们：`session.snapshot.trim.v1`、`session.snapshot.page.v1`、`questions.v1`、`subagent.thread.v1`、`jobs.v1`、`delta.v1`、`session.list.omit-archived.v1`——插件注册的能力不在其中，因为桥不是它的作者。第一个就是裁剪基线。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
+`hello` 还携带客户端的能力声明，而能力是公告而非协商：无论 `cap` 里是什么，握手都回同一个帧，未知名字被忽略；单帧上限在两个方向上都是同一个常量——约束接收帧的 10 MiB，同时也是拟合快照、以及丢弃超限出站事件的同一份预算。本桥自己服务八个能力，并在 `hello` 的 `capabilities` 里公告它们：`session.snapshot.trim.v1`、`session.snapshot.page.v1`、`questions.v1`、`subagent.thread.v1`、`jobs.v1`、`delta.v1`、`session.list.omit-archived.v1`、`session.deep-history.v1`——插件注册的能力不在其中，因为桥不是它的作者。第一个就是裁剪基线。未声明它的客户端——包括该能力出现之前写下的所有客户端——拿到的基线与协议 v1 一直以来提供的逐字节一致。声明了它的客户端拿到的是裁剪过的基线：每个回合内部只保留它能渲染的 entry（`user/message`、`assistant/message`、`tool/call`、`tool/result`），宿主自己的记账记录（`system/message`、`request/header` 之类）在量帧大小之前就被剔除。快照的其余部分不变：保留哪些回合、它们的顺序，以及每个回合的 `seq`、`endSeq`、`reason`、`time` 都是投影自己的取值；一个回合的 entry 若全是记账记录，该回合仍保留为 `entries` 为空的回合；`lastSeq` 仍是宿主游标。帧预算在其后生效——先裁 entry，再丢最旧的整回合，仍然装不下才回 `snapshot-too-large`。
 
 第二个能力 `session.snapshot.page.v1` 给首屏本身加上页预算。不声明时，一次快照仍是整个开帧窗口，逐字节与今天一致。声明之后，`session.snapshot` 只回最新一页，按 `maxBytes`（默认 524288，即 512 KiB；不是可用预算就拒绝，而不是悄悄夹取）衡量，并用 `session.history` 那同一套按 entry 的切片来切：一个回合的 entry 可以跨在这一页与下一页之间，而该回合保留自己的字段；比整页预算还大的单条 entry 独占一页；`snapshot-too-large` 再也不会回给这样的连接。这一页带 `lastSeq` 与 `hasMore`，而它继续往回的游标就是它自己最旧那条 entry 的 `seq`——正是 `session.history` 的 `before` 所取的值，所以不再用 `nextBefore` 重述一遍。于是打开一个会话只需一页，`session.history` 以同样的 512 KiB 页把窗口其余部分往回走完。
 
@@ -98,7 +99,7 @@
 
 已注册方法的派发排在两道协议闸门之后：没有插件注册的名字最先回 `unknown-method`；没有有效设备令牌的连接回 `unpaired`，与协议方法完全一致；从未声明该表所需能力的客户端同样回 `unknown-method`——方法对它而言不存在，而不是没有权限。处理器收到请求载荷与本连接 id，回 `{ok:true, r}` 或 `{ok:false, code, msg}`；两种都原样穿过，因为错误码归注册它的插件所有。处理器抛错、或两种形状都没回时，以桥自己的 `internal` 穿过。
 
-自名册不再携带已归档会话起 `hello` 回 `minor:5`；`minor:4` 加了字节级增量，`minor:3` 是后台作业通道，`minor:2` 是子代理线程，`minor:1` 是本扩展缝。它们都没有改动主版本 1、任何冻结字段、方法名或主题名。唯一对每个客户端都变短的响应体是名册本身，它不再点名已归档会话；其余答案对什么都不声明的客户端仍是协议 v1 自己的。
+自持久历史分页上线起 `hello` 回 `minor:6`；`minor:5` 起名册不再携带已归档会话，`minor:4` 加了字节级增量，`minor:3` 是后台作业通道，`minor:2` 是子代理线程，`minor:1` 是本扩展缝。它们都没有改动主版本 1、任何冻结字段、方法名或主题名。唯一对每个客户端都变短的响应体是名册本身，它不再点名已归档会话；其余答案对什么都不声明的客户端仍是协议 v1 自己的。
 
 ## 错误码
 
