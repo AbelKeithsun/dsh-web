@@ -9,7 +9,7 @@
  *
  *   - `session/list` is the only endpoint whose single parameter is named
  *     `_request` (the underscore is part of the wire name);
- *   - three endpoints take NO parameters at all and must be called with `{}`;
+ *   - four endpoints take NO parameters at all and must be called with `{}`;
  *   - every other endpoint names its single parameter `request`.
  * @module dsh-remote-bridge/core/wire
  */
@@ -111,6 +111,7 @@ export interface WireRow {
  */
 export const WIRE_TABLE: readonly WireRow[] = [
   { namespace: 'session', method: 'list', wire: '_request' },
+  { namespace: 'session', method: 'create', wire: 'request' },
   { namespace: 'session', method: 'page', wire: 'request' },
   { namespace: 'session', method: 'follow', wire: 'request' },
   { namespace: 'session', method: 'prompt', wire: 'request' },
@@ -119,6 +120,7 @@ export const WIRE_TABLE: readonly WireRow[] = [
   { namespace: 'session', method: 'projections', wire: 'request' },
   { namespace: 'session', method: 'modelCatalog', wire: 'none' },
   { namespace: 'session', method: 'selectModel', wire: 'request' },
+  { namespace: 'agentPresets', method: 'list', wire: 'none' },
   { namespace: 'userQuestions', method: 'answer', wire: { names: ['agentId', 'callId', 'answer'] } },
   { namespace: 'userQuestions', method: 'attachWait', wire: { names: ['agentId', 'callId'] } },
   { namespace: 'pluginInventory', method: 'list', wire: 'none' },

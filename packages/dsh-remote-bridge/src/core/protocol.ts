@@ -17,6 +17,8 @@ export const METHOD_SESSION_PERMISSIONS = 'session.permissions'
 export const METHOD_SESSION_SET_PERMISSION = 'session.setPermission'
 export const METHOD_SESSION_MODELS = 'session.models'
 export const METHOD_SESSION_SET_MODEL = 'session.setModel'
+export const METHOD_SESSION_CREATE = 'session.create'
+export const METHOD_PRESETS_LIST = 'presets.list'
 export const METHOD_PAIR_BEGIN = 'pair.begin'
 export const METHOD_PAIR_FINISH = 'pair.finish'
 export const METHOD_APPROVAL_RESOLVE = 'approval.resolve'
@@ -85,6 +87,19 @@ export const CAP_SUBAGENT_THREAD = 'subagent.thread.v1'
 export const CAP_JOBS = 'jobs.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to read the host's
+ * Agent presets and to instantiate one as a session.
+ *
+ * Declaring it is what makes `presets.list` and `session.create` part of that
+ * client's protocol at all: a client that does not declare it — including every
+ * client written before this channel existed — is refused both as unknown
+ * methods, exactly as those frames were refused before. Neither method is
+ * called on a connection's behalf either, so a client that never asks sends the
+ * host no request.
+ */
+export const CAP_AGENTS = 'agents.v1'
+
+/**
  * Capability a client declares in `hello`'s `cap` array to be answered with
  * byte-level increments instead of the whole roster or the whole board.
  *
@@ -143,6 +158,8 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_APPROVAL_RESOLVE,
   METHOD_QUESTION_ANSWER,
   METHOD_JOBS_LIST,
+  METHOD_PRESETS_LIST,
+  METHOD_SESSION_CREATE,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
@@ -181,7 +198,10 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
- * 5 when the roster stopped carrying archived sessions: behind
+ * 6 when the agent channel shipped: behind {@link CAP_AGENTS} `presets.list`
+ * forwards the host's Agent-preset roster and `session.create` hands the host
+ * one creation request, both verbatim. 5 when the roster stopped carrying
+ * archived sessions: behind
  * {@link CAP_ROSTER_OMITS_ARCHIVED} `session.list` names no session the host's
  * archive set holds, so a session archived between two listings arrives as a
  * removal and one restored as a change. 4 when byte-level increments shipped:
@@ -195,7 +215,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 5
+export const MINOR = 6
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -210,6 +230,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_QUESTIONS,
   CAP_SUBAGENT_THREAD,
   CAP_JOBS,
+  CAP_AGENTS,
   CAP_DELTA,
   CAP_ROSTER_OMITS_ARCHIVED,
 ]

@@ -27,6 +27,7 @@ import { scopeKey, type JobRoster, type JobsPayload } from './jobs.ts'
 import type { PairingService } from './pairing.ts'
 import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
 import {
+  CAP_AGENTS,
   CAP_DELTA,
   CAP_JOBS,
   CAP_QUESTIONS,
@@ -51,8 +52,10 @@ import {
   METHOD_JOBS_LIST,
   METHOD_PAIR_BEGIN,
   METHOD_PAIR_FINISH,
+  METHOD_PRESETS_LIST,
   METHOD_QUESTION_ANSWER,
   METHOD_SESSION_ATTACHMENT,
+  METHOD_SESSION_CREATE,
   METHOD_SESSION_HISTORY,
   METHOD_SESSION_INTERRUPT,
   METHOD_SESSION_LIST,
@@ -560,6 +563,12 @@ export class BridgeConnection {
     if (frame.m === METHOD_JOBS_LIST && !this.declares(CAP_JOBS)) {
       return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
+    // The agent channel is one capability: without `agents.v1` neither the preset
+    // roster nor session creation is part of this client's protocol, so a client
+    // that predates them is told what it was told before they existed.
+    if ((frame.m === METHOD_PRESETS_LIST || frame.m === METHOD_SESSION_CREATE) && !this.declares(CAP_AGENTS)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // Unconditional: a loopback Host buys nothing here. Without a device token
     // only the handshake and the two pairing steps run.
     if (!this.paired && !UNPAIRED_METHODS.has(frame.m)) return refusal(CODE_UNPAIRED, 'this connection is not paired')
@@ -586,6 +595,8 @@ export class BridgeConnection {
       case METHOD_APPROVAL_RESOLVE: return this.#approvalResolve(frame.p)
       case METHOD_QUESTION_ANSWER: return await this.#questionAnswer(frame.p)
       case METHOD_JOBS_LIST: return await this.#jobsList(frame.p)
+      case METHOD_PRESETS_LIST: return await this.#presetsList()
+      case METHOD_SESSION_CREATE: return await this.#sessionCreate(frame.p)
       default: return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
   }
@@ -1012,6 +1023,35 @@ export class BridgeConnection {
     const selected = isRecord(call.value) ? selectionOf(call.value.selected) : undefined
     if (selected === undefined) return refusal(CODE_INTERNAL, 'session/selectModel returned no selected model')
     return { ok: true, r: { ok: true, current: selected } }
+  }
+
+  /**
+   * Answer `presets.list`: the host's Agent-preset roster, forwarded verbatim.
+   *
+   * The bridge has no vocabulary of its own for a preset — a row is whatever
+   * `agentPresets/list` publishes, and that endpoint takes no request — so the
+   * answer crosses exactly as the host wrote it, down to the keys a client of
+   * this version does not read.
+   */
+  async #presetsList(): Promise<DispatchOutcome> {
+    const call = await this.#unary('agentPresets', 'list')
+    return call.ok ? { ok: true, r: call.value } : call
+  }
+
+  /**
+   * Answer `session.create`: hand the client's request to the host unchanged.
+   *
+   * A preset instantiated as an Agent is a host decision about a body this
+   * bridge does not model — the field names, the defaults and the refusals
+   * belong to `SessionCreateRequest` and to the host that validates it — so the
+   * payload and the answer cross verbatim. Nothing is required here, renamed, or
+   * defaulted: a request the host rejects is rejected with the host's own code
+   * and text.
+   * @param request - the host's `SessionCreateRequest`, exactly as the client wrote it.
+   */
+  async #sessionCreate(request: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const call = await this.#unary('session', 'create', request)
+    return call.ok ? { ok: true, r: call.value } : call
   }
 
   #approvalResolve(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
