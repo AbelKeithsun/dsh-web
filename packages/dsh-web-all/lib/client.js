@@ -22986,6 +22986,19 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return null;
 		}
 		/**
+		* Resolve the hero row's trailing options group. That group carries
+		* `margin-left: auto`, so every later sibling is pushed to the row's right
+		* edge: a chip appended after it would sit above the composer card's top-right
+		* corner instead of beside the agent-preset seat.
+		*/
+		function findHeroTrailingGroup(row) {
+			for (const child of Array.from(row.children)) {
+				if (!(child instanceof HTMLElement)) continue;
+				if ((child.getAttribute("class") ?? "").includes("heroOptions")) return child;
+			}
+			return null;
+		}
+		/**
 		* The git branch selector chip for blank sessions.
 		* @param props - the composed entry props of whichever seat it mounted in.
 		*/
@@ -23011,6 +23024,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			const [worktreeManageOpen, setWorktreeManageOpen] = (0, react.useState)(false);
 			const [heroRow, setHeroRow] = (0, react.useState)(null);
 			const anchorRef = (0, react.useRef)(null);
+			const chipRef = (0, react.useRef)(null);
 			(0, react.useLayoutEffect)(() => {
 				if (!heroSeat || repo === void 0 || repo === null) {
 					setHeroRow(null);
@@ -23032,6 +23046,27 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					observer.disconnect();
 				};
 			}, [heroSeat, repo !== void 0 && repo !== null]);
+			(0, react.useLayoutEffect)(() => {
+				if (!heroSeat || heroRow === null) return void 0;
+				const place = () => {
+					const anchor = chipRef.current;
+					if (anchor === null || anchor.parentElement !== heroRow) return;
+					const trailing = findHeroTrailingGroup(heroRow);
+					if (trailing === null || anchor.nextElementSibling === trailing) return;
+					heroRow.insertBefore(anchor, trailing);
+				};
+				place();
+				if (typeof MutationObserver === "undefined") return void 0;
+				const observer = new MutationObserver(place);
+				observer.observe(heroRow, { childList: true });
+				return () => {
+					observer.disconnect();
+				};
+			}, [
+				heroSeat,
+				heroRow,
+				repo
+			]);
 			const refetch = (0, react.useCallback)(() => {
 				let live = true;
 				props.repoStatus(sessionId).then((status) => {
@@ -23095,6 +23130,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 				setBranchOpen((open) => !open);
 			};
 			const chipNode = /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				ref: chipRef,
 				"data-gitgraph-chip-anchor": true,
 				"data-dsh-plugin": "git-graph",
 				"data-dsh-part": "chip",

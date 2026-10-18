@@ -3,8 +3,9 @@
  * context hole (`conversation.input.selector.context`) beside the official
  * workspace selector. On shells that dropped the hole, it uses
  * `conversation.input.dock` only for the blank-session hero phase and lifts
- * itself into the official hero chip row. It is intentionally absent while a
- * session is running.
+ * itself into the official hero chip row, immediately after the agent-preset
+ * seat and before the row's trailing options group. It is intentionally absent
+ * while a session is running.
  * @module dsh-git-graph/client/chips/BranchChip
  */
 
@@ -95,6 +96,20 @@ function findHeroRow(anchor: HTMLElement | null): HTMLElement | null {
 }
 
 /**
+ * Resolve the hero row's trailing options group. That group carries
+ * `margin-left: auto`, so every later sibling is pushed to the row's right
+ * edge: a chip appended after it would sit above the composer card's top-right
+ * corner instead of beside the agent-preset seat.
+ */
+function findHeroTrailingGroup(row: HTMLElement): HTMLElement | null {
+  for (const child of Array.from(row.children)) {
+    if (!(child instanceof HTMLElement)) continue
+    if ((child.getAttribute('class') ?? '').includes('heroOptions')) return child
+  }
+  return null
+}
+
+/**
  * The git branch selector chip for blank sessions.
  * @param props - the composed entry props of whichever seat it mounted in.
  */
@@ -130,6 +145,7 @@ export function BranchChip(props: BranchChipProps) {
   const [worktreeManageOpen, setWorktreeManageOpen] = useState(false)
   const [heroRow, setHeroRow] = useState<HTMLElement | null>(null)
   const anchorRef = useRef<HTMLDivElement | null>(null)
+  const chipRef = useRef<HTMLDivElement | null>(null)
 
   // Hero-phase placement: the rc.6 shell renders the dock as its own row
   // between the official hero chip row and the composer card. In the blank
@@ -152,6 +168,25 @@ export function BranchChip(props: BranchChipProps) {
     observer.observe(parent.parentElement ?? parent, { childList: true, subtree: true })
     return () => { observer.disconnect() }
   }, [heroSeat, repo !== undefined && repo !== null])
+
+  // The row ends with an options group that carries `margin-left: auto`, so an
+  // appended chip lands at the far right of the selector row. Keep the portaled
+  // chip immediately before that group: directly after the agent-preset seat.
+  useLayoutEffect(() => {
+    if (!heroSeat || heroRow === null) return undefined
+    const place = (): void => {
+      const anchor = chipRef.current
+      if (anchor === null || anchor.parentElement !== heroRow) return
+      const trailing = findHeroTrailingGroup(heroRow)
+      if (trailing === null || anchor.nextElementSibling === trailing) return
+      heroRow.insertBefore(anchor, trailing)
+    }
+    place()
+    if (typeof MutationObserver === 'undefined') return undefined
+    const observer = new MutationObserver(place)
+    observer.observe(heroRow, { childList: true })
+    return () => { observer.disconnect() }
+  }, [heroSeat, heroRow, repo])
 
   const refetch = useCallback(() => {
     let live = true
@@ -211,6 +246,7 @@ export function BranchChip(props: BranchChipProps) {
 
   const chipNode = (
     <div
+      ref={chipRef}
       data-gitgraph-chip-anchor
       data-dsh-plugin="git-graph"
       data-dsh-part="chip"

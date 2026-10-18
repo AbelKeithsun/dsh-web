@@ -293,6 +293,41 @@ describe('BranchChip', () => {
     }
   })
 
+  it('user sees the hero chip before the right-pinned options group, beside the preset seat', async () => {
+    const stack = document.createElement('div')
+    const heroRow = document.createElement('div')
+    heroRow.className = 'heroWorkspaceRow'
+    const preset = document.createElement('span')
+    preset.className = 'presetSeat'
+    // The shipped hero row ends with an options group carrying margin-left: auto,
+    // so a chip appended after it renders above the composer card's top-right
+    // corner instead of beside the agent-preset seat.
+    const options = document.createElement('div')
+    options.className = 'heroOptions'
+    heroRow.append(preset, options)
+    const outlet = document.createElement('div')
+    stack.append(heroRow, outlet)
+    document.body.append(stack)
+    try {
+      // Given a hero row whose trailing options group is pinned right by
+      // margin-left: auto, and a dock outlet after that row
+      bench({ blank: true, openState: 'open', container: outlet }, 'dock')
+      await waitFor(() => {
+        const chip = screen.getByRole('button', { name: '分支' })
+        const anchor = anchorOf(chip)
+
+        // When React appends the portaled chip at the end of the row
+        // Then it is re-ordered directly after the preset seat and before the
+        // options group, which would otherwise push it to the composer corner
+        expect(anchor.parentElement).toBe(heroRow)
+        expect(preset.nextElementSibling).toBe(anchor)
+        expect(anchor.nextElementSibling).toBe(options)
+      })
+    } finally {
+      stack.remove()
+    }
+  })
+
   it('hides the branch chip when the workspace is not a git repository', async () => {
     bench({ repoStatus: null })
     await new Promise(resolve => setTimeout(resolve, 50))
