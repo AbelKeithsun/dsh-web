@@ -32,6 +32,7 @@ import {
   CAP_FRAME_DEFLATE,
   CAP_JOBS,
   CAP_QUESTIONS,
+  CAP_ROSTER_COMPACT,
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_SESSION_SNAPSHOT_TRIM,
   CAP_SUBAGENT_THREAD,
@@ -295,6 +296,54 @@ function pageBudgetOf(value: unknown, method: string): { readonly ok: true; read
   return { ok: true, maxBytes }
 }
 
+/** The compact roster parameters one listing carried, when it carried any. */
+interface RosterCompact {
+  /** Rows per page; absent means every row. */
+  readonly maxRows?: number
+  /** Exclusive cursor: serve the rows after the row this id names. */
+  readonly after?: string
+  /** Whether each row carries the host's absolute `cwd`. */
+  readonly cwd: boolean
+}
+
+/**
+ * Read one listing's compact roster parameters.
+ *
+ * The parameters are the switch, not the capability: a listing that names none
+ * of them is answered today's body byte for byte, so declaring
+ * {@link CAP_ROSTER_COMPACT} alone can never change what a client is sent. The
+ * page size reuses {@link pageNumber} and is bounded by the same cap the roster
+ * delta window retains ({@link ROSTER_DELTA_MAX_ROWS}), so no second limit is
+ * invented here. A value that cannot be honoured — a page size of zero,
+ * negative, fractional or past that cap, an `after` that is not an id, a `cwd`
+ * that is not a boolean — is refused rather than clamped, so a caller never
+ * mistakes a silently reduced page for the one it asked for.
+ * @param payload - the request's `p`.
+ * @returns the parameters, or `ok` with no `compact` member when there are none.
+ */
+function rosterCompactOf(payload: Readonly<Record<string, unknown>>): { readonly ok: true; readonly compact?: RosterCompact } | CallFailure {
+  const { cwd: rawCwd, maxRows: rawRows, after: rawAfter } = payload
+  if (rawCwd === undefined && rawRows === undefined && rawAfter === undefined) return { ok: true }
+  if (rawCwd !== undefined && typeof rawCwd !== 'boolean') return refusal(CODE_INVALID_ARGS, 'session.list cwd must be a boolean')
+  let maxRows: number | undefined
+  if (rawRows !== undefined) {
+    maxRows = pageNumber(rawRows)
+    if (maxRows === undefined || maxRows < 1 || maxRows > ROSTER_DELTA_MAX_ROWS) {
+      return refusal(CODE_INVALID_ARGS, `session.list maxRows must be between 1 and ${ROSTER_DELTA_MAX_ROWS}`)
+    }
+  }
+  const after = rawAfter === undefined ? undefined : optionalText(rawAfter)
+  if (rawAfter !== undefined && after === undefined) return refusal(CODE_INVALID_ARGS, 'session.list after must be a non-empty session id')
+  return {
+    ok: true,
+    compact: {
+      ...(maxRows === undefined ? {} : { maxRows }),
+      ...(after === undefined ? {} : { after }),
+      cwd: rawCwd === true,
+    },
+  }
+}
+
 /**
  * Read the capability names a `hello` announced.
  *
@@ -452,6 +501,13 @@ export class BridgeConnection {
    * subscription the client never requested.
    */
   readonly #jobWatches = new Map<string, () => void>()
+  /**
+   * The `updatedAt` this connection already sent per session id, for the
+   * compact roster: a row whose value this client holds is answered without it.
+   * Pruned to the roster on every compact answer, so it is bounded by the set it
+   * describes rather than by every id the connection ever listed.
+   */
+  readonly #rosterUpdatedAt = new Map<string, number>()
   /** The last roster payload this connection received per scope key, for whole-set dedupe. */
   readonly #jobSeen = new Map<string, string>()
   /**
@@ -764,15 +820,37 @@ export class BridgeConnection {
   }
 
   /**
-   * Answer the roster as a whole set, or as the increment since a token.
+   * Answer the roster as a whole set, as one compact page, or as the increment
+   * since a token.
    *
    * `since` and the two answer modes exist only for a client that declared
    * {@link CAP_DELTA}: every other client is answered the roster it always was,
    * with `mode:"reset"` and an empty `token` beside it, and this connection
    * keeps no copy of a set that client cannot continue from.
-   * @param payload - `{since?}`.
+   *
+   * The compact form needs both halves: the capability, and at least one compact
+   * parameter in the request. Either one alone is today's answer, which is what
+   * keeps an older client — and a client that declared the name but asks for
+   * nothing — byte identical to protocol v1.
+   * @param payload - `{since?, cwd?, maxRows?, after?}`.
    */
   async #sessionList(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    if (this.declares(CAP_ROSTER_COMPACT)) {
+      const requested = rosterCompactOf(payload)
+      if (!requested.ok) return requested
+      const compact = requested.compact
+      if (compact !== undefined) {
+        // One answer is a whole page a client continues with `after`, the other
+        // is an increment it continues with `token`; a request naming both bases
+        // is refused rather than answered against one of them silently.
+        if (sinceOf(payload) !== undefined) {
+          return refusal(CODE_INVALID_ARGS, 'session.list cannot combine a compact page with a since token')
+        }
+        const compactRoster = await this.#readRoster()
+        if (!compactRoster.ok) return compactRoster
+        return { ok: true, r: this.#compactRoster(compactRoster.rows, compact) }
+      }
+    }
     const roster = await this.#readRoster()
     if (!roster.ok) return roster
     if (!this.declares(CAP_DELTA)) {
@@ -843,6 +921,67 @@ export class BridgeConnection {
   }
 
   /**
+   * Answer one compact roster page out of the roster just read.
+   *
+   * Rows are ordered most recent first, with the id as the tiebreak, because a
+   * cursor is only meaningful over an order that does not depend on the order
+   * the host happened to answer in. `after` is exclusive and names the last row
+   * the previous page carried; a cursor this roster no longer names is an
+   * unknown base and answers a first page again, the way a delta token this
+   * window never issued answers a reset, so the client continues from the page
+   * it is given instead of stalling on an id that no longer exists.
+   *
+   * Three members are what makes the body shorter: `cwd` is present only when
+   * the request asked for it, `updatedAt` only when this connection has not
+   * already sent this id that exact value (a client keeps the one it holds), and
+   * `nextAfter` only while the roster continues past this page. Every other
+   * field of the row is today's, under today's names, so a page is the same
+   * roster cut short rather than a second schema — and `compact:true` says which
+   * schema the rows are in, so a client whose bookkeeping drifted can tell an
+   * omitted `updatedAt` from one this bridge never had.
+   * @param rows - the roster as the host answered it.
+   * @param compact - the parameters this listing carried.
+   */
+  #compactRoster(rows: readonly SessionRow[], compact: RosterCompact): Record<string, unknown> {
+    const ordered = [...rows].sort((left, right) => (right.updatedAt - left.updatedAt)
+      || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    // A cursor that names no row of this roster resolves to -1, which is a first
+    // page: the honest answer to a base this bridge cannot place.
+    const from = compact.after === undefined ? 0 : ordered.findIndex(row => row.id === compact.after) + 1
+    const end = compact.maxRows === undefined ? ordered.length : Math.min(ordered.length, from + compact.maxRows)
+    const page = ordered.slice(from, end)
+    const sessions = page.map(row => {
+      const held = this.#rosterUpdatedAt.get(row.id) === row.updatedAt
+      this.#rosterUpdatedAt.set(row.id, row.updatedAt)
+      return {
+        id: row.id,
+        title: row.title,
+        ...(held ? {} : { updatedAt: row.updatedAt }),
+        agentRunning: row.agentRunning,
+        ...(compact.cwd && row.cwd !== undefined ? { cwd: row.cwd } : {}),
+        ...(row.parentSessionId === undefined ? {} : { parentSessionId: row.parentSessionId }),
+        ...(row.origin === undefined ? {} : { origin: row.origin }),
+        blank: row.blank,
+        ...(row.archived === undefined ? {} : { archived: row.archived }),
+      }
+    })
+    // Bounded by the set it describes: an id this roster no longer names is gone
+    // from the memory too, and a row that comes back simply carries its value.
+    const current = new Set(rows.map(row => row.id))
+    for (const id of this.#rosterUpdatedAt.keys()) {
+      if (!current.has(id)) this.#rosterUpdatedAt.delete(id)
+    }
+    const last = page[page.length - 1]?.id
+    return {
+      mode: 'reset',
+      token: '',
+      compact: true,
+      sessions,
+      ...(last === undefined || end >= ordered.length ? {} : { nextAfter: last }),
+    }
+  }
+
+  /**
    * Answer a batch of title lookups out of this process's title service.
    *
    * Every read is synchronous and in-process, so the batch bound is the whole
@@ -878,6 +1017,19 @@ export class BridgeConnection {
    * than a refusal, and `snapshot-too-large` cannot answer such a connection.
    * The oldest entry's own `seq` is the `before` cursor for the next, older
    * page; no second field restates it.
+   *
+   * The budget is measured on the WHOLE answer — `{turns, lastSeq, hasMore}`
+   * encoded as the `res` frame the client receives — and never per turn, so a
+   * turn of many small entries is cut like any other run of entries. What it
+   * does not bound is a single entry: `pageTurns` ends a page at an entry, never
+   * inside one, so when the newest entry alone is past the budget that entry IS
+   * the page and the answer is exactly as large as it is (measured: a 2.2 MB
+   * newest message answers a 2.2 MB page against a 512 KiB budget, while the
+   * same window of ordinary entries answers 513794 bytes). Trimming or splitting
+   * such an entry would hand the client something other than what the session
+   * says, and refusing it would take the session away from the very capability
+   * that exists to open big sessions, so this is a stated bound of the page
+   * budget rather than a defect to be closed by a smaller number elsewhere.
    * @param payload - `{sessionId, maxBytes?}`.
    * @param id - the request id the page budget is measured against.
    */

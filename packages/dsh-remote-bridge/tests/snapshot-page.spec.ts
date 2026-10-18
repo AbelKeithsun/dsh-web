@@ -139,6 +139,33 @@ describe('paged opening snapshots over protocol v1', () => {
     expect(page.hasMore).toBe(true)
   })
 
+  it('user declaring the page capability receives a page as large as its newest entry when that one entry is past the budget', async () => {
+    // Given a window of ordinary turns whose newest turn is one 2.2 MB message:
+    // the size two real `session.snapshot` replies measured on a relayed iPhone
+    // client on 2026-10-19 against this 512 KiB budget
+    const records = [...paddedTurns(4, 60 * 1024), ...paddedTurn(13, 2_200_000, 5)]
+    const paged = makeConnection({ paired: true })
+    await paged.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
+    // And the same window with that one turn left out
+    const control = makeConnection({ paired: true })
+    await control.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
+    // When both open their session
+    await openSession(paged, 2, records, 15)
+    await openSession(control, 2, paddedTurns(4, 60 * 1024), 12)
+    // Then the page is that one entry: nothing is trimmed, split or dropped,
+    // because a page ends at an entry and never inside one
+    const page = snapshotOf(paged, 2)
+    expect(answerOf(paged, 2).ok).toBe(true)
+    expect(seqsOf(page.turns)).toEqual([14])
+    expect(page.hasMore).toBe(true)
+    // And the answer is 2200221 bytes against a budget of 524288 — the budget is
+    // measured on the whole reply, which cannot bound a single entry — while the
+    // same window of ordinary entries answers inside it
+    expect(rawBytesOf(paged, 2)).toBe(2200221)
+    expect(HISTORY_PAGE_BYTES).toBe(512 * 1024)
+    expect(rawBytesOf(control, 2)).toBeLessThanOrEqual(HISTORY_PAGE_BYTES)
+  })
+
   it('user not declaring the page capability receives the full window byte for byte and its budget is ignored', async () => {
     // Given two clients that did not declare the page capability, one asking for a tiny budget
     const plain = makeConnection({ paired: true })

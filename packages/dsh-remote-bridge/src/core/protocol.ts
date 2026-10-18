@@ -154,6 +154,22 @@ export const CAP_DELTA = 'delta.v1'
 export const CAP_ROSTER_OMITS_ARCHIVED = 'session.list.omit-archived.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to be answered a
+ * compact roster it can page.
+ *
+ * The declaration alone changes nothing: a listing that carries none of the
+ * compact parameters (`cwd`, `maxRows`, `after`) is answered exactly the body
+ * protocol v1 always served, so a client can opt into the name before it
+ * relies on any of it. Behind the parameters, a row drops its absolute `cwd`
+ * unless the request asks for it, drops its `updatedAt` when this connection
+ * already sent that id the same value, and a `maxRows`/`after` pair cuts the
+ * roster into pages ordered most recent first. The roster is the most repeated
+ * large reply on the link, so this is what lets a reconnect pay for the newest
+ * screenful plus a cursor instead of the whole list again.
+ */
+export const CAP_ROSTER_COMPACT = 'session.list.compact.v1'
+
+/**
  * Capability a client declares in `hello`'s `cap` array to be told that this
  * bridge can page a session's durable history down to its oldest entry.
  *
@@ -252,6 +268,10 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 9 when the compact roster shipped: behind {@link CAP_ROSTER_COMPACT} a
+ * `session.list` that names one of the compact parameters is answered a
+ * shorter row and may be cut into pages, so a client reads a new row schema
+ * off the wire and the number rises with it.
  * 8 when the outbound frame form became a capability: behind
  * {@link CAP_FRAME_DEFLATE} a declaring client may be answered in binary
  * frames carrying raw DEFLATE of the text, so the minor is raised for a change
@@ -278,7 +298,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 8
+export const MINOR = 9
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -298,6 +318,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_ROSTER_OMITS_ARCHIVED,
   CAP_SESSION_DEEP_HISTORY,
   CAP_FRAME_DEFLATE,
+  CAP_ROSTER_COMPACT,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'
