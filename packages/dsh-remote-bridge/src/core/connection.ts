@@ -22,9 +22,11 @@ import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, SpawnC
 import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
+import { scopeKey, type JobRoster, type JobsPayload } from './jobs.ts'
 import type { PairingService } from './pairing.ts'
 import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
 import {
+  CAP_JOBS,
   CAP_QUESTIONS,
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_SESSION_SNAPSHOT_TRIM,
@@ -32,6 +34,7 @@ import {
   CODE_APPROVAL_UNKNOWN,
   CODE_INTERNAL,
   CODE_INVALID_ARGS,
+  CODE_JOBS_UNAVAILABLE,
   CODE_NONCE_INVALID,
   CODE_PROTO_UNSUPPORTED,
   CODE_SESSION_NOT_FOLLOWABLE,
@@ -43,6 +46,7 @@ import {
   KNOWN_METHODS,
   METHOD_APPROVAL_RESOLVE,
   METHOD_HELLO,
+  METHOD_JOBS_LIST,
   METHOD_PAIR_BEGIN,
   METHOD_PAIR_FINISH,
   METHOD_QUESTION_ANSWER,
@@ -61,6 +65,7 @@ import {
   PROTO,
   SERVED_CAPABILITIES,
   SERVER_ID,
+  TOPIC_JOBS_CHANGED,
   TOPIC_SESSION_DELTA,
   UNPAIRED_METHODS,
 } from './protocol.ts'
@@ -96,6 +101,8 @@ export interface BridgeConnectionOptions {
   readonly approvals: ApprovalRegistry
   /** Pending user questions: the claims this bridge holds and the answer path back to the host. */
   readonly questions: QuestionClaims
+  /** The host's background jobs: the read-only projection and the scopes this connection watches. */
+  readonly jobs: JobRoster
   /** Process-local session metadata: live titles and the host's archive set. */
   readonly sessionMeta: SessionMeta
   /** Host-process permission presets, read and switched through their real service objects. */
@@ -383,6 +390,15 @@ export class BridgeConnection {
    * merely names it.
    */
   readonly #authorized = new Set<string>()
+  /**
+   * The job scopes this connection asked about, by {@link scopeKey}, with the
+   * disposer of each watch. A scope is watched exactly while this connection has
+   * listed it: that is what keeps a declared capability from turning into a
+   * subscription the client never requested.
+   */
+  readonly #jobWatches = new Map<string, () => void>()
+  /** The last roster payload this connection received per scope key, for whole-set dedupe. */
+  readonly #jobSeen = new Map<string, string>()
   #lineageRead = false
   #deviceId: string | undefined
   #nonce: { readonly value: string; readonly expiresAt: number } | undefined
@@ -491,6 +507,10 @@ export class BridgeConnection {
     }
     for (const subscription of this.#subscriptions.values()) subscription.controller.abort()
     this.#subscriptions.clear()
+    // A scope nobody left can read must stop costing the host a read per burst.
+    for (const dispose of this.#jobWatches.values()) dispose()
+    this.#jobWatches.clear()
+    this.#jobSeen.clear()
     // The bridge itself may be unloading with live sockets: the client is told
     // the endpoint is going away instead of being left on a dead protocol.
     this.#transport.close(1001, 'the bridge is going away')
@@ -507,6 +527,12 @@ export class BridgeConnection {
     // channel: without the capability it is an unknown method, which is exactly
     // what this frame was before the channel existed.
     if (frame.m === METHOD_QUESTION_ANSWER && !this.declares(CAP_QUESTIONS)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
+    // `jobs.list` is the whole of the job channel: without the capability the
+    // method does not exist, and without the method no scope is ever watched, so
+    // a client that never declared it can receive no `jobs.changed` either.
+    if (frame.m === METHOD_JOBS_LIST && !this.declares(CAP_JOBS)) {
       return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
     // Unconditional: a loopback Host buys nothing here. Without a device token
@@ -534,6 +560,7 @@ export class BridgeConnection {
       case METHOD_SESSION_SET_MODEL: return await this.#sessionSetModel(frame.p)
       case METHOD_APPROVAL_RESOLVE: return this.#approvalResolve(frame.p)
       case METHOD_QUESTION_ANSWER: return await this.#questionAnswer(frame.p)
+      case METHOD_JOBS_LIST: return await this.#jobsList(frame.p)
       default: return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
   }
@@ -944,6 +971,62 @@ export class BridgeConnection {
     }
     const reply = await this.#options.questions.answer(sessionId, callId, { answers })
     return reply.ok ? { ok: true, r: { ok: true } } : refusal(reply.code, reply.msg)
+  }
+
+  /**
+   * Answer one `jobs.list` and start watching that scope.
+   *
+   * The scope is the host registry's own: naming a session reads that session's
+   * fenced set (its own jobs plus every unowned one), naming none reads the
+   * unowned set. Neither is a global list, and this method never assembles one —
+   * a cross-session view would be a second source of truth the host does not
+   * have, and it would have to aggregate N fenced reads to fake it.
+   *
+   * Answering is also what subscribes: every later change of this scope arrives
+   * as `jobs.changed` carrying the same payload, and a scope that was never
+   * listed is never watched.
+   * @param payload - `{}` for the unowned scope, or `{sessionId}` for one session's.
+   */
+  async #jobsList(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const raw = payload.sessionId
+    if (raw !== undefined && (typeof raw !== 'string' || raw === '')) {
+      return refusal(CODE_INVALID_ARGS, 'jobs.list sessionId must be a non-empty string when present')
+    }
+    const sessionId = raw
+    if (sessionId !== undefined) {
+      // A job row names its owner and carries its label, so this read is fenced
+      // by the same rule as following the session it belongs to: a delegated
+      // child whose parent this connection may not read is not addressable here.
+      const unfollowable = await this.#unfollowable(sessionId)
+      if (unfollowable !== undefined) return refusal(CODE_SESSION_NOT_FOLLOWABLE, unfollowable)
+    }
+    const roster = this.#options.jobs.read(sessionId)
+    if (roster === undefined) {
+      return refusal(CODE_JOBS_UNAVAILABLE, 'this host composes no background job registry')
+    }
+    this.#watchJobs(sessionId, roster)
+    return { ok: true, r: roster }
+  }
+
+  /**
+   * Watch one job scope for this connection, once.
+   *
+   * The scope's first payload is the answer the client just received, so it is
+   * seeded as already seen: a change frame only ever carries a set that differs
+   * from the last one this connection was handed.
+   */
+  #watchJobs(sessionId: string | undefined, payload: JobsPayload): void {
+    const key = scopeKey(sessionId)
+    this.#jobSeen.set(key, JSON.stringify(payload.jobs))
+    if (this.#jobWatches.has(key)) return
+    const dispose = this.#options.jobs.watch(sessionId, (changed) => {
+      if (!this.declares(CAP_JOBS)) return
+      const encoded = JSON.stringify(changed.jobs)
+      if (this.#jobSeen.get(key) === encoded) return
+      this.#jobSeen.set(key, encoded)
+      this.#emit(TOPIC_JOBS_CHANGED, changed)
+    })
+    if (dispose !== undefined) this.#jobWatches.set(key, dispose)
   }
 
   /**

@@ -336,14 +336,16 @@ describe('subagent threads over protocol v1', () => {
     expect((answerOf(harness, 8).r as { lastSeq: number }).lastSeq).toBe(9)
   })
 
-  it('user sees the thread capability and minor version two in the handshake', async () => {
+  it('user sees the thread capability and a minor version at or above two in the handshake', async () => {
     // Given a paired connection that greets the bridge
     const harness = makeConnection({ paired: true })
     // When the handshake is answered
     await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, minor: 1, client: 'ios/0.1' }))
-    // Then it reports minor two and the capabilities this bridge serves
+    // Then it reports the capabilities this bridge serves, and a minor version
+    // that carries this channel. Later extensions raise the minor further, so
+    // this asserts what the thread channel needs instead of freezing the number.
     const payload = answerOf(harness, 1).r as { minor: number; capabilities: string[] }
-    expect(payload.minor).toBe(2)
+    expect(payload.minor).toBeGreaterThanOrEqual(2)
     expect(payload.capabilities).toContain('subagent.thread.v1')
   })
 })

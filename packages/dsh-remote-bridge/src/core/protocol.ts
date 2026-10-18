@@ -21,11 +21,13 @@ export const METHOD_PAIR_BEGIN = 'pair.begin'
 export const METHOD_PAIR_FINISH = 'pair.finish'
 export const METHOD_APPROVAL_RESOLVE = 'approval.resolve'
 export const METHOD_QUESTION_ANSWER = 'question.answer'
+export const METHOD_JOBS_LIST = 'jobs.list'
 
 /** Server-pushed topics of protocol v1. */
 export const TOPIC_SESSION_DELTA = 'session.delta'
 export const TOPIC_APPROVAL_REQUEST = 'approval.request'
 export const TOPIC_QUESTION_REQUEST = 'question.request'
+export const TOPIC_JOBS_CHANGED = 'jobs.changed'
 
 /**
  * Capability a client declares in `hello`'s `cap` array to ask for a trimmed
@@ -70,6 +72,19 @@ export const CAP_QUESTIONS = 'questions.v1'
 export const CAP_SUBAGENT_THREAD = 'subagent.thread.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to see the host's
+ * background jobs and to be told when the set changes.
+ *
+ * Declaring it is what makes `jobs.list` reachable, and `jobs.list` is the only
+ * thing that opens a roster: a connection that declares this capability but
+ * never asks for a scope receives no `jobs.changed` at all. A client that does
+ * not declare it — including every client written before this channel existed —
+ * receives no such event, and its `jobs.list` is refused as an unknown method,
+ * exactly as that frame was refused before.
+ */
+export const CAP_JOBS = 'jobs.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.
@@ -98,6 +113,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_PAIR_FINISH,
   METHOD_APPROVAL_RESOLVE,
   METHOD_QUESTION_ANSWER,
+  METHOD_JOBS_LIST,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
@@ -122,6 +138,12 @@ export const CODE_QUESTION_UNKNOWN = 'question-unknown'
  */
 export const CODE_SESSION_NOT_FOLLOWABLE = 'session-not-followable'
 export const CODE_SNAPSHOT_UNAVAILABLE = 'snapshot-unavailable'
+/**
+ * This host composes no job registry, so it has no background jobs to publish.
+ * The capability stays advertised — it is a fact about this bridge, not about
+ * what a particular host mounts — and only a call that needs the registry fails.
+ */
+export const CODE_JOBS_UNAVAILABLE = 'jobs-unavailable'
 export const CODE_SNAPSHOT_TOO_LARGE = 'snapshot-too-large'
 export const CODE_INTERNAL = 'internal'
 
@@ -130,14 +152,15 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
- * 2 when the subagent thread shipped: a client learns from it that a
- * `user-message` delta may carry an `actor` and that a `subagent` delta exists
+ * 3 when the background-job channel shipped: behind {@link CAP_JOBS} a client
+ * may call `jobs.list` and receive `jobs.changed`. 2 was the subagent thread —
+ * a `user-message` delta may carry an `actor` and a `subagent` delta exists
  * behind {@link CAP_SUBAGENT_THREAD}. 1 was the extension seam — a mounted
  * plugin may answer methods outside {@link KNOWN_METHODS} once the client
- * declares the capability that plugin requires. Neither addition changed the
- * major version, a frozen field, a method name or a topic name.
+ * declares the capability that plugin requires. No addition changed the major
+ * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 2
+export const MINOR = 3
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -151,6 +174,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_QUESTIONS,
   CAP_SUBAGENT_THREAD,
+  CAP_JOBS,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'

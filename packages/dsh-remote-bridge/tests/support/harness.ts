@@ -12,6 +12,7 @@ import { BridgeConnection, type BridgeConnectionOptions, type BridgeTransport, t
 import { ApprovalRegistry } from '../../src/core/approvals.ts'
 import { DeviceRoster } from '../../src/core/devices.ts'
 import { RemoteBridgeRegistry } from '../../src/core/extension.ts'
+import { inScope, JobRoster, type JobEventLike, type JobEventFilterLike, type JobRegistryFace, type JobViewLike } from '../../src/core/jobs.ts'
 import { BridgeHub } from '../../src/core/hub.ts'
 import { createOwnerPeer } from '../../src/core/owner-peer.ts'
 import { PairingService } from '../../src/core/pairing.ts'
@@ -108,6 +109,61 @@ export class FakeGateway implements BridgeGateway {
 }
 
 /**
+ * A job registry a test drives directly.
+ *
+ * It implements the two members the bridge actually reads — the fenced `list`
+ * and the event stream — and nothing else, which is what the structural face is
+ * for. `list` applies the host's own fence, so a test cannot accidentally
+ * assert a scope the host would not serve.
+ */
+export class FakeJobRegistry implements JobRegistryFace {
+  readonly #rows: JobViewLike[] = []
+  readonly listeners = new Set<(event: JobEventLike) => void>()
+  /** How many times a stream was subscribed; the bridge must unsubscribe when nothing watches. */
+  subscriptions = 0
+
+  readonly events = {
+    subscribe: (filter: JobEventFilterLike, listener: (event: JobEventLike) => void): (() => void) => {
+      this.subscriptions += 1
+      this.listeners.add(listener)
+      return () => { this.listeners.delete(listener) }
+    },
+  }
+
+  /** Replace the registry's whole content. */
+  set(rows: readonly JobViewLike[]): this {
+    this.#rows.splice(0, this.#rows.length, ...rows)
+    return this
+  }
+
+  /** Add one job. */
+  add(row: JobViewLike): this {
+    this.#rows.push(row)
+    return this
+  }
+
+  list(caller?: string): readonly JobViewLike[] {
+    return this.#rows.filter(row => inScope(row.owner, caller))
+  }
+
+  /** Announce one lifecycle commit, as the host registry does after every commit. */
+  emit(event: JobEventLike): this {
+    // A copy, because a listener may unsubscribe while this one dispatch runs
+    // (a connection disposed mid-burst), and the assertion is about the set.
+    for (const listener of Array.from(this.listeners)) listener(event)
+    return this
+  }
+
+  /** Announce one output append: it moves no row, so no roster frame may follow. */
+  emitOutput(id: string, owner: string | undefined, total: number): this {
+    // The host's `output` event carries only the id and the new total, which is
+    // exactly why a roster can never be driven by it.
+    const append = { type: 'output', id, total, ...(owner === undefined ? {} : { owner }) }
+    return this.emit(append as JobEventLike)
+  }
+}
+
+/**
  * A follow stream a test drives one frame at a time.
  *
  * Aborting the signal ends the stream, which is how the suites prove that a
@@ -193,6 +249,10 @@ export interface HarnessOptions {
   readonly sessionMeta?: SessionMeta
   /** Permission presets source; the default models a host with no such service mounted. */
   readonly permissions?: SessionPermissions
+  /** Job registry source; the default models a host with no job plugin mounted. */
+  readonly jobs?: JobRegistryFace
+  /** Coalescing window of the job roster; the default is the production one. */
+  readonly jobsFlushMs?: number
   readonly heartbeatMs?: number
   /** Id source for the call ids the question channel mints; the default is random. */
   readonly questionIds?: (byteLength: number) => string
@@ -239,6 +299,16 @@ export function titlesDouble(table: Record<string, string>, live: readonly strin
   }
 }
 
+/** The job roster one harness mounts, over the registry the caller supplied (or none). */
+function jobsOf(options: HarnessOptions, log: (message: string) => void): JobRoster {
+  const registry = options.jobs
+  return new JobRoster({
+    faces: () => ({ jobs: registry }),
+    log,
+    ...(options.jobsFlushMs === undefined ? {} : { flushMs: options.jobsFlushMs }),
+  })
+}
+
 /** Build one connection over the recording carrier. */
 export function makeConnection(options: HarnessOptions = {}): ConnectionHarness {
   const transport = new RecordingTransport()
@@ -264,6 +334,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     questions,
     sessionMeta: metaOf(options, message => { logs.push(message) }),
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
+    jobs: jobsOf(options, message => { logs.push(message) }),
     ownerPeer,
     now: () => Date.now(),
     clientTimeZone: () => 'Asia/Shanghai',
@@ -286,6 +357,20 @@ export function requestFrame(id: number, method: string, payload: Record<string,
  */
 export async function settle(rounds = 50): Promise<void> {
   for (let index = 0; index < rounds; index += 1) await Promise.resolve()
+}
+
+/**
+ * Wait out one job-roster coalescing window.
+ *
+ * The roster folds a burst into one publish with a timer, and a `setImmediate`
+ * turn never reaches the timers phase that timer belongs to. This waits on a
+ * timer queued after the roster's own, so it resumes only once that flush has
+ * run; on a window of 0 ms it resumes at the next timers phase, which is exactly
+ * when a suite that asserts an absence has to look. An ordering primitive, not a
+ * sleep: nothing here waits for a duration.
+ */
+export async function settleJobs(): Promise<void> {
+  await new Promise<void>(resolve => { setTimeout(resolve, 0) })
 }
 
 /**
@@ -351,6 +436,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     questions,
     sessionMeta: metaOf(options, message => { logs.push(message) }),
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
+    jobs: jobsOf(options, message => { logs.push(message) }),
     ownerPeer,
     now: () => Date.now(),
     clientTimeZone: () => undefined,

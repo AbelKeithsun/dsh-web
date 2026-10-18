@@ -39,6 +39,7 @@ import { ApprovalRegistry } from './core/approvals.ts'
 import type { ConnectionAuth } from './core/connection.ts'
 import { DeviceRoster } from './core/devices.ts'
 import { createRemoteBridgeFace, RemoteBridgeRegistry, REMOTE_BRIDGE_SERVICE } from './core/extension.ts'
+import { JobRoster, type JobRegistryFace } from './core/jobs.ts'
 import { BridgeHub } from './core/hub.ts'
 import { createOwnerPeer } from './core/owner-peer.ts'
 import { PairingService } from './core/pairing.ts'
@@ -152,6 +153,23 @@ function permissionFaces(ctx: Context) {
 }
 
 /**
+ * Resolve the host's job registry, now.
+ *
+ * Read per call, never captured at mount, for the reason the metadata faces
+ * are: `jobs` is not in this plugin's `inject` list, so a host that composes
+ * no job plugin still serves protocol v1 — `jobs.list` answers
+ * `jobs-unavailable` instead of the bridge failing to start. The face is
+ * structural: this package imports no part of the registry's own types.
+ * @param ctx - the plugin's context.
+ * @returns the job faces as they stand right now.
+ */
+function jobFaces(ctx: Context) {
+  return {
+    jobs: ctx.get('jobs') as JobRegistryFace | undefined,
+  }
+}
+
+/**
  * Mount the bridge.
  * @param ctx - the plugin's context, carrying the gateway and web server.
  */
@@ -165,6 +183,9 @@ export function apply(ctx: Context): void {
   // it is gated by the bridge's own pairing check (see core/owner-peer.ts).
   const ownerPeer = createOwnerPeer(ctx)
   const questions = new QuestionClaims({ gateway: ctx.typertGateway, peer: ownerPeer, log })
+  // One roster per mount, shared by every connection: a background job is a fact
+  // about the host, not about the device that asked about it.
+  const jobs = new JobRoster({ faces: () => jobFaces(ctx), log })
   const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
   const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
   // The extension seam publishes no protocol vocabulary of its own: another
@@ -178,6 +199,7 @@ export function apply(ctx: Context): void {
     roster,
     approvals,
     questions,
+    jobs,
     sessionMeta,
     permissions,
     ownerPeer,
@@ -205,6 +227,7 @@ export function apply(ctx: Context): void {
       disposeUpgrade()
       disposeRoute()
       hub.dispose()
+      jobs.dispose()
     }
   }, 'remote-bridge: protocol v1 routes')
 

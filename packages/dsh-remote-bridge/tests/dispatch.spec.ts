@@ -12,7 +12,7 @@ describe('protocol v1 authorization and dispatch', () => {
     // Then the handshake answers with this bridge's identity and the unpaired state
     expect(answerOf(harness, 1)).toEqual({
       ok: true,
-      r: { proto: 1, minor: 2, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1'], resume: 'snapshot', auth: 'unpaired' },
+      r: { proto: 1, minor: 3, server: 'dsh-remote-bridge', capabilities: ['session.snapshot.trim.v1', 'session.snapshot.page.v1', 'questions.v1', 'subagent.thread.v1', 'jobs.v1'], resume: 'snapshot', auth: 'unpaired' },
     })
   })
 
