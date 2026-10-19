@@ -20,7 +20,7 @@ Status: implemented
       name: '@linxin666/dsh-client-ui-task-board'
 ```
 
-`scripts/aggregate.mjs` 直接输出子包自己的包名，loader 因此从该包自己的 entry 下发它的浏览器半区。没有任何东西被内联：`lib/client.js` 只剩 compat 补丁层，22,714 字节；只有启用某一行时，页面才会下载那个家族的界面。行 id 仍是 `web-ui-*`，profile 里已有的逐行覆盖继续命中。
+`scripts/aggregate.mjs` 直接输出子包自己的包名，loader 因此从该包自己的 entry 下发它的浏览器半区。没有任何东西被内联：`lib/client.js` 只剩 compat 补丁层，22,714 字节；只有启用某一行时，页面才会下载那个家族的界面。行 id 仍是 `web-ui-*`，profile 里已有的逐行覆盖仍按 id 命中；但同时带 `name:` 的行，在 bundle 那一行的名字改过之后会被 include 的补丁语义整行跳过——插件管理器在下次启动时修复这些行名（[记录](../bug-fix/2026-10-19-profile-row-name-repair.zh.md)）。
 
 compat 行变成 issue 要的那个东西——只在需要打补丁的场景才开的一层。它保留语义 DOM 钩子（`data-pane` / `data-dsh-frame`）、响应式契约与启动遮罩，并且不再出现在 `LOCKED_ENTRY_IDS`（`packages/dsh-plugin-manager/src/host/state.ts`）：它当初被锁定，是因为停用它会让页面变白而宿主行照旧运行——这个前提已经不成立。
 
@@ -40,6 +40,7 @@ compat 行变成 issue 要的那个东西——只在需要打补丁的场景才
 
 ## Consequences
 
+- 带旧 `name:` 的 profile 行会被 include 的补丁语义整行跳过：它的配置与 `disabled` 都不再生效，loader 只在启动日志里说一句。插件管理器在下次启动时修复这些行名（[记录](../bug-fix/2026-10-19-profile-row-name-repair.zh.md)）。
 - 家族插件 import 或启动失败会重新回滚 loader 组，这正是壳当初要挡的事。这是 issue 要求的、有意识的取舍：每个页面都背一份全部家族界面，换来的是容纳一次罕见故障，而 loader 的事务式 boot 本就是宿主记载的行为。将来 loader 提供 `continueOnError`，就能在不内联任何东西的前提下恢复隔离。
 - 设置面变简单而非变样：家族行现在直接编辑家族包自己的 `Config` schema，而不是壳的 `z.any().volatile()` 替身再转发给 `ctx.plugin()`。包拒绝的字段在写入时就被那份 schema 拒绝——壳从来做不到这一点。
 - 插件列表里的行标题来自各个包，而不是 `web-all/<family>`；家族子路径导出与它们的 `shell-metadata` 为仍记录这些名字的 profile 保留。

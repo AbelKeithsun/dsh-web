@@ -20,7 +20,7 @@ Every family row mounts its real package:
       name: '@linxin666/dsh-client-ui-task-board'
 ```
 
-`scripts/aggregate.mjs` emits the child's own package name, so the loader serves that package's browser half from its own entry. Nothing is inlined: `lib/client.js` is the compat patch layer alone, 22,714 bytes, and a page downloads a family UI only when that family's row is enabled. Row ids stay `web-ui-*`, so per-row overrides already in a profile keep applying.
+`scripts/aggregate.mjs` emits the child's own package name, so the loader serves that package's browser half from its own entry. Nothing is inlined: `lib/client.js` is the compat patch layer alone, 22,714 bytes, and a page downloads a family UI only when that family's row is enabled. Row ids stay `web-ui-*`, so per-row overrides already in a profile keep matching their row by id. A row that also carries a `name:`, however, is skipped whole by the include patch semantics once the bundle's own row name changes; the plugin manager repairs those names on the next boot ([record](../bug-fix/2026-10-19-profile-row-name-repair.md)).
 
 The compat row becomes what the issue asked for — an optional layer for the scenarios that need patches. It keeps the semantic DOM hooks (`data-pane` / `data-dsh-frame`), the responsive contract and the boot splash, and it is no longer in `LOCKED_ENTRY_IDS` (`packages/dsh-plugin-manager/src/host/state.ts`): it used to be locked because disabling it blanked the page while the host rows kept running, which is no longer true.
 
@@ -40,6 +40,7 @@ Compatibility is preserved on the host side only. Every former family subpath (`
 
 ## Consequences
 
+- A profile row that carries the old `name:` is skipped whole by the include patch semantics: its configuration and its `disabled` flag both stop applying, and the loader only says so in a boot log line. The plugin manager repairs those names on the next boot ([record](../bug-fix/2026-10-19-profile-row-name-repair.md)).
 - A family plugin that fails to import or start now rolls back the loader group again, which is exactly what the shell was built to prevent. This is the deliberate trade the issue asked for: one copy of every family UI on every page was the price of containing a failure that is rare, and the loader's own transactional boot is the host's documented behavior. A future loader-level `continueOnError` restores isolation without inlining anything.
 - The settings surface is simpler rather than different: a family row now edits the family package's own `Config` schema directly, instead of the shell's `z.any().volatile()` stand-in forwarding fields to `ctx.plugin()`. A field the package refuses is refused at write time by that package's schema, which the shell could never do.
 - Row titles in the plugin inventory come from each package instead of `web-all/<family>`; the family subpath exports and their `shell-metadata` stay for profiles that still record them.

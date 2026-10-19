@@ -98,4 +98,22 @@ function applyImpl(ctx: Context): void {
       for (const dispose of disposers) dispose()
     }
   }, 'plugin-manager: gateway routes')
+
+  // A bundle that renamed a row's package leaves every profile row that named
+  // the old one dead (issue #1901 moved the aggregate's family rows from the
+  // `@linxin666/dsh-web-all/<family>` subpath to the real package, and the
+  // loader skips a row whose name does not match the inserted row). The repair
+  // runs once the boot settled, so the rewrite cannot race the composition,
+  // and it writes only when a row actually changed.
+  ctx.effect(() => {
+    const timer = setTimeout(() => {
+      void gateway.repairProfileRowNames().then((repaired) => {
+        if (repaired.length === 0) return
+        console.warn('[plugin-manager] 已修复 profile 中失效的行名：' + repaired.map(row => `${row.id}（${row.from} → ${row.to}）`).join('、'))
+      }).catch((error: unknown) => {
+        console.error('[plugin-manager] profile 行名修复失败：' + (error instanceof Error ? error.message : String(error)))
+      })
+    }, 1500)
+    return () => { clearTimeout(timer) }
+  }, 'plugin-manager: stale row name repair')
 }
