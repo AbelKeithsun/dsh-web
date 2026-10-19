@@ -112,6 +112,7 @@ export interface WireRow {
 export const WIRE_TABLE: readonly WireRow[] = [
   { namespace: 'session', method: 'list', wire: '_request' },
   { namespace: 'session', method: 'create', wire: 'request' },
+  { namespace: 'session', method: 'fork', wire: 'request' },
   { namespace: 'session', method: 'page', wire: 'request' },
   { namespace: 'session', method: 'follow', wire: 'request' },
   { namespace: 'session', method: 'prompt', wire: 'request' },

@@ -19,6 +19,7 @@ export const METHOD_SESSION_SET_PERMISSION = 'session.setPermission'
 export const METHOD_SESSION_MODELS = 'session.models'
 export const METHOD_SESSION_SET_MODEL = 'session.setModel'
 export const METHOD_SESSION_CREATE = 'session.create'
+export const METHOD_SESSION_FORK = 'session.fork'
 export const METHOD_PRESETS_LIST = 'presets.list'
 export const METHOD_PAIR_BEGIN = 'pair.begin'
 export const METHOD_PAIR_FINISH = 'pair.finish'
@@ -166,6 +167,22 @@ export const CAP_ROSTER_OMITS_ARCHIVED = 'session.list.omit-archived.v1'
 export const CAP_SESSION_DEEP_HISTORY = 'session.deep-history.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to fork a session.
+ *
+ * Declaring it is what makes `session.fork` part of that client's protocol at
+ * all: a client that does not declare it — including every client written
+ * before this channel existed — is refused `unknown-method`, and no fork is
+ * asked of the host on its behalf. Behind the name the bridge forwards one
+ * `SessionForkRequest` to the host's `session/fork` and hands back the host's
+ * own `SessionForkValue`, so what a fork point means stays the host's: an
+ * `atSeq` is the source event seq the fork includes, an omitted one is the
+ * newest finished turn, and a cut the host opens itself is closed by the host's
+ * own synthetic finishing event. Nothing about a fork is modelled or
+ * re-derived here.
+ */
+export const CAP_SESSION_FORK = 'session.fork.v1'
+
+/**
  * Methods an unpaired connection may still call: the handshake itself and the
  * two pairing steps. Everything else answers `unpaired` — a caller can pair
  * without a device token, but cannot touch a session without one.
@@ -198,6 +215,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_JOBS_LIST,
   METHOD_PRESETS_LIST,
   METHOD_SESSION_CREATE,
+  METHOD_SESSION_FORK,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
@@ -236,6 +254,14 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 8 when the fork channel shipped: behind {@link CAP_SESSION_FORK} a client may
+ * call {@link METHOD_SESSION_FORK} and receive the host's own fork answer, so a
+ * phone branches a session that inherits the context of the one it forked. The
+ * number is this branch's one step over the 7 it was cut from: a concurrent
+ * append cut from the same 7 also answers 8, and whichever of the two merges
+ * second is the one that steps over — the minor counts additions to this
+ * protocol, not the order the branches were written in, and a client reads
+ * capabilities rather than the number to learn what a bridge serves.
  * 7 when the two channels met: the agent channel and the durable history
  * channel each raised 5 to 6 on its own branch, so the protocol that carries
  * both is 7. 6 when the agent channel shipped: behind {@link CAP_AGENTS}
@@ -258,7 +284,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 7
+export const MINOR = 8
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -277,6 +303,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_DELTA,
   CAP_ROSTER_OMITS_ARCHIVED,
   CAP_SESSION_DEEP_HISTORY,
+  CAP_SESSION_FORK,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'
