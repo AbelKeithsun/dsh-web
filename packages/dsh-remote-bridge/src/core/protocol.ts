@@ -51,6 +51,26 @@ export const CAP_SESSION_SNAPSHOT_TRIM = 'session.snapshot.trim.v1'
 export const CAP_SESSION_SNAPSHOT_PAGE = 'session.snapshot.page.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to have
+ * `session.snapshot` answer a reconnect with only what it missed.
+ *
+ * The declaration and the request's `sinceSeq` are what it takes together: a
+ * snapshot that carries no `sinceSeq` is answered, byte for byte, the body
+ * protocol v1 always served, whether or not the client declared this. Behind
+ * both, the client names the durable `lastSeq` of a snapshot it already holds
+ * and the answer is either that same reply in an incremental form —
+ * `{turns, lastSeq, mode:"since", reset:false}` carrying only the entries above
+ * that watermark — or a full baseline with `mode:"full"` and `reset:true`,
+ * which is the one answer that tells a client to throw its copy away. The
+ * estimate is only served when the bridge can PROVE nothing was lost: the
+ * current follow window's oldest entry must sit at or below `sinceSeq + 1`, so a
+ * window that has already scrolled past the watermark answers the baseline
+ * instead of a delta with a hole in it. It exists because a reconnect on the
+ * phone re-paid 0.86-1.06 s of baseline five times in one measured run.
+ */
+export const CAP_SESSION_SNAPSHOT_SINCE = 'session.snapshot.since.v1'
+
+/**
  * Capability a client declares in `hello`'s `cap` array to be shown the
  * host's pending user questions and to answer them with `question.answer`.
  *
@@ -268,6 +288,11 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 10 when the snapshot became incremental on request: behind
+ * {@link CAP_SESSION_SNAPSHOT_SINCE} a `session.snapshot` that names `sinceSeq`
+ * is answered either the entries above that watermark or a full baseline
+ * carrying `mode` and `reset`, so a client reads a new reply shape off the
+ * wire and the number rises with it.
  * 9 when the compact roster shipped: behind {@link CAP_ROSTER_COMPACT} a
  * `session.list` that names one of the compact parameters is answered a
  * shorter row and may be cut into pages, so a client reads a new row schema
@@ -298,7 +323,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 9
+export const MINOR = 10
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -319,6 +344,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_SESSION_DEEP_HISTORY,
   CAP_FRAME_DEFLATE,
   CAP_ROSTER_COMPACT,
+  CAP_SESSION_SNAPSHOT_SINCE,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'

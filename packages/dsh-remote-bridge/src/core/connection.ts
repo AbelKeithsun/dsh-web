@@ -19,7 +19,7 @@
 import type { ApprovalRegistry } from './approvals.ts'
 import type { DeviceRoster } from './devices.ts'
 import { ROSTER_DELTA_MAX_ROWS, RemoteBridgeDeltas, type DeltaRow } from './delta.ts'
-import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, SpawnCallIndex, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
+import { deltaOfFollowFrame, MessageIndex, oldestEntrySeq, pageTurns, readFollowBaseline, SpawnCallIndex, ToolCallIndex, trimUnrenderedEntries, turnsAbove, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
 import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
@@ -34,6 +34,7 @@ import {
   CAP_QUESTIONS,
   CAP_ROSTER_COMPACT,
   CAP_SESSION_SNAPSHOT_PAGE,
+  CAP_SESSION_SNAPSHOT_SINCE,
   CAP_SESSION_SNAPSHOT_TRIM,
   CAP_SUBAGENT_THREAD,
   CODE_APPROVAL_UNKNOWN,
@@ -204,6 +205,16 @@ interface CallFailure {
 }
 
 type DispatchOutcome = { readonly ok: true; readonly r: unknown } | CallFailure
+
+/**
+ * One snapshot baseline answer, typed rather than opaque so the incremental
+ * fallback can extend the very payload protocol v1 serves instead of rebuilding
+ * it. `hasMore` is present exactly for a connection that declared the page
+ * capability.
+ */
+type BaselineAnswer =
+  | { readonly ok: true; readonly r: { readonly turns: readonly SnapshotTurn[]; readonly lastSeq: number; readonly hasMore?: boolean } }
+  | CallFailure
 
 /** One session-list row as the protocol publishes it. */
 interface SessionRow extends DeltaRow {
@@ -1030,7 +1041,16 @@ export class BridgeConnection {
    * says, and refusing it would take the session away from the very capability
    * that exists to open big sessions, so this is a stated bound of the page
    * budget rather than a defect to be closed by a smaller number elsewhere.
-   * @param payload - `{sessionId, maxBytes?}`.
+   * A client that declared {@link CAP_SESSION_SNAPSHOT_SINCE} and named
+   * `sinceSeq` is answered incrementally instead: only the entries above that
+   * durable watermark, in the same turn shape, with `mode:"since"` and
+   * `reset:false`. When the bridge cannot PROVE the chain is unbroken — the
+   * window's oldest entry has scrolled past the watermark — the answer is the
+   * baseline below, carrying `mode:"full"` and `reset:true` so the client knows
+   * to throw its copy away. Nothing else about this method moves: a request
+   * without `sinceSeq`, or from a connection that never declared the capability,
+   * is answered exactly the bytes protocol v1 answered before.
+   * @param payload - `{sessionId, sinceSeq?, maxBytes?}`.
    * @param id - the request id the page budget is measured against.
    */
   async #sessionSnapshot(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {
@@ -1043,19 +1063,100 @@ export class BridgeConnection {
     // A client that declared the trim capability chooses what it is sent, never
     // which turns it gets: the projection is trimmed inside each turn first, and
     // only then does any frame or page budget apply.
-    const projection = this.#projectionOf(opening.baseline.records)
+    const window = turnsOfRecords(opening.baseline.records)
+    const projection = this.#trimmedFor(window)
+    const lastSeq = opening.baseline.cursor
+    // An incremental answer takes two declarations: the capability in the
+    // handshake AND the watermark in this request. Every other request keeps
+    // protocol v1's own answer, byte for byte, so a client can adopt the name
+    // before it relies on any of it.
+    if (payload.sinceSeq !== undefined && this.#capabilities.has(CAP_SESSION_SNAPSHOT_SINCE)) {
+      const sinceSeq = pageNumber(payload.sinceSeq)
+      if (sinceSeq === undefined) return refusal(CODE_INVALID_ARGS, 'session.snapshot sinceSeq must be a non-negative integer')
+      // A connection that declared the page capability declared the budget its
+      // requests must carry, and an incremental request is one of its requests:
+      // an unusable budget is refused here, so whether this reply ends up being
+      // the increment or the baseline that spends the budget never decides it.
+      if (this.#capabilities.has(CAP_SESSION_SNAPSHOT_PAGE)) {
+        const budget = pageBudgetOf(payload.maxBytes, METHOD_SESSION_SNAPSHOT)
+        if (!budget.ok) return budget
+      }
+      const incremental = this.#sinceAnswer(projection, window, sinceSeq, lastSeq, id)
+      if (incremental !== undefined) return { ok: true, r: incremental }
+      const baseline = this.#baselineAnswer(sessionId, projection, lastSeq, payload, id)
+      if (!baseline.ok) return baseline
+      return { ok: true, r: { ...baseline.r, mode: 'full', reset: true } }
+    }
+    return this.#baselineAnswer(sessionId, projection, lastSeq, payload, id)
+  }
+
+  /**
+   * The answer protocol v1 has always served: the whole window, or the newest
+   * page of it for a connection that declared {@link CAP_SESSION_SNAPSHOT_PAGE}.
+   *
+   * One home for that answer, so an incremental request that has to fall back to
+   * a full baseline is sent exactly the bytes it would have been sent without
+   * asking — plus the two fields that say the client must reset.
+   * @param sessionId - the session this baseline is of; the refusal names it.
+   * @param projection - this connection's projection of the opening window.
+   * @param lastSeq - the harness cursor the answer reports.
+   * @param payload - the request, read only for `maxBytes`.
+   * @param id - the request id any page budget is measured against.
+   */
+  #baselineAnswer(
+    sessionId: string,
+    projection: readonly SnapshotTurn[],
+    lastSeq: number,
+    payload: Readonly<Record<string, unknown>>,
+    id: number,
+  ): BaselineAnswer {
     if (!this.#capabilities.has(CAP_SESSION_SNAPSHOT_PAGE)) {
       // Not declared: the whole window, shrunk by whole turns, unchanged.
-      const fitted = this.#fitTurns(projection, opening.baseline.cursor, id)
+      const fitted = this.#fitTurns(projection, lastSeq, id)
       if (fitted === undefined) return refusal(CODE_SNAPSHOT_TOO_LARGE, `session ${sessionId} does not fit one ${MAX_FRAME_BYTES} byte frame`)
       return { ok: true, r: { turns: fitted.turns, lastSeq: fitted.lastSeq } }
     }
     const budget = pageBudgetOf(payload.maxBytes, METHOD_SESSION_SNAPSHOT)
     if (!budget.ok) return budget
-    const lastSeq = opening.baseline.cursor
     const page = pageTurns(projection, undefined, budget.maxBytes, (turns, _nextBefore, hasMore) =>
       Buffer.byteLength(JSON.stringify(responseFrame(id, { turns, lastSeq, hasMore })), 'utf8'))
     return { ok: true, r: { turns: page.turns, lastSeq, hasMore: page.hasMore } }
+  }
+
+  /**
+   * Answer a snapshot that named a watermark, or hand back undefined when this
+   * request has to be answered with the full baseline instead.
+   *
+   * The continuity proof is the whole contract, and it reads the WINDOW rather
+   * than the trimmed projection: an entry the client never renders is still an
+   * entry the window holds, and continuing past a watermark below it would hand
+   * the client a view it cannot attach to what it already has. Only the window's
+   * own oldest entry can say whether anything between that watermark and this
+   * window is missing, and `oldest <= sinceSeq + 1` is the one case where nothing
+   * is; an empty window proves it trivially, because there is nothing to lose. A
+   * reset is always correct, so an unprovable window takes the safe answer.
+   *
+   * The bound this form still carries is the frame cap: a delta that cannot
+   * cross one frame answers the baseline instead of a refusal, because the
+   * client's recovery from a hole is the `reset` flag, not a failed request.
+   * @param projection - the projection the incremental turns are cut from.
+   * @param window - the same window before trimming, read for its oldest entry.
+   * @param sinceSeq - the durable watermark the client already holds.
+   * @param lastSeq - the harness cursor the answer reports.
+   * @param id - the request id the frame cap is measured against.
+   */
+  #sinceAnswer(
+    projection: readonly SnapshotTurn[],
+    window: readonly SnapshotTurn[],
+    sinceSeq: number,
+    lastSeq: number,
+    id: number,
+  ): { readonly turns: readonly SnapshotTurn[]; readonly lastSeq: number; readonly mode: 'since'; readonly reset: false } | undefined {
+    const oldest = oldestEntrySeq(window)
+    if (oldest !== undefined && oldest > sinceSeq + 1) return undefined
+    const answer = { turns: turnsAbove(projection, sinceSeq), lastSeq, mode: 'since' as const, reset: false as const }
+    if (Buffer.byteLength(JSON.stringify(responseFrame(id, answer)), 'utf8') > MAX_FRAME_BYTES) return undefined
+    return answer
   }
 
   /**
@@ -1208,9 +1309,13 @@ export class BridgeConnection {
   }
 
   /** The projection a baseline is served with: trimmed only for a client that asked for it. */
-  #projectionOf(records: readonly unknown[]): SnapshotTurn[] {
-    const projected = turnsOfRecords(records)
-    return this.#capabilities.has(CAP_SESSION_SNAPSHOT_TRIM) ? trimUnrenderedEntries(projected) : projected
+  #projectionOf(records: readonly unknown[]): readonly SnapshotTurn[] {
+    return this.#trimmedFor(turnsOfRecords(records))
+  }
+
+  /** Drop the bookkeeping entries only for a client that declared the trim capability. */
+  #trimmedFor(turns: readonly SnapshotTurn[]): readonly SnapshotTurn[] {
+    return this.#capabilities.has(CAP_SESSION_SNAPSHOT_TRIM) ? trimUnrenderedEntries(turns) : turns
   }
 
   async #sessionPrompt(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
