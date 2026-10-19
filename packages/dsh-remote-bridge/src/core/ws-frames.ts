@@ -27,6 +27,15 @@ export const CLOSE_PROTOCOL_ERROR = 1002
 export const CLOSE_UNSUPPORTED_DATA = 1003
 /** Close code for a message past the size this bridge will carry. */
 export const CLOSE_TOO_LARGE = 1009
+/**
+ * Close code for a peer that stopped answering: a liveness ping went out and no
+ * frame at all came back before its deadline.
+ *
+ * It is an application-range code (4000-4999), so a client can tell a peer that
+ * went silent from a protocol fault, from a frame this bridge will not carry,
+ * and from the ordinary 1001 teardown of a bridge that is unloading.
+ */
+export const CLOSE_LIVENESS_TIMEOUT = 4000
 
 /** @returns the `Sec-WebSocket-Accept` value for a client's key. */
 export function webSocketAccept(secWebSocketKey: string): string {
@@ -113,6 +122,11 @@ export function encodeServerFrame(opcode: number, payload: Buffer, fin = true): 
 /** Encode one text message. */
 export function encodeTextFrame(text: string): Buffer {
   return encodeServerFrame(OPCODE_TEXT, Buffer.from(text, 'utf8'))
+}
+
+/** Encode one binary message: already-encoded payload bytes, never a text frame. */
+export function encodeBinaryFrame(payload: Buffer): Buffer {
+  return encodeServerFrame(OPCODE_BINARY, payload)
 }
 
 /** Encode one close frame with a code and a short reason. */

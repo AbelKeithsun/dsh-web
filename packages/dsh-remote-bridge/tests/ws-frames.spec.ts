@@ -3,6 +3,7 @@ import {
   CLOSE_TOO_LARGE,
   OPCODE_CONTINUATION,
   OPCODE_TEXT,
+  encodeBinaryFrame,
   encodeCloseFrame,
   encodeServerFrame,
   encodeTextFrame,
@@ -96,6 +97,19 @@ describe('WebSocket framing', () => {
     expect(shortHeader).toEqual([0x81, 2])
     expect(short.subarray(2).toString('utf8')).toBe('hi')
     expect(longHeader).toEqual([0x81, 126, 300])
+    expect(long.length).toBe(304)
+  })
+
+  it('operator sends a binary frame and it carries the payload bytes under the binary opcode', () => {
+    // Given already-encoded bytes, a short payload and one past the 7-bit length form
+    const payload = Buffer.from([0xcb, 0x2a, 0x4d, 0x00])
+    const long = encodeBinaryFrame(Buffer.alloc(300, 0x7f))
+    // When they are framed
+    const frame = encodeBinaryFrame(payload)
+    // Then each is one unmasked binary frame whose header only states the length
+    expect([frame[0], frame[1]]).toEqual([0x82, payload.length])
+    expect(frame.subarray(2)).toEqual(payload)
+    expect([long[0], long[1], long.readUInt16BE(2)]).toEqual([0x82, 126, 300])
     expect(long.length).toBe(304)
   })
 

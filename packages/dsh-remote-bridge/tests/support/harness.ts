@@ -41,9 +41,15 @@ export interface RecordedCall {
 export class RecordingTransport implements BridgeTransport {
   readonly sent: string[] = []
   closed: { code: number; reason: string } | undefined
+  /** The last `frame.deflate.v1` declaration the connection reported; undefined until a hello. */
+  deflate: boolean | undefined
 
   send(text: string): void {
     this.sent.push(text)
+  }
+
+  frameDeflate(declared: boolean): void {
+    this.deflate = declared
   }
 
   close(code: number, reason: string): void {

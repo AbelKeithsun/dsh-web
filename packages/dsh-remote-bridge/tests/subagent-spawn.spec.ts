@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { CAP_SESSION_SNAPSHOT_TRIM, CAP_SUBAGENT_THREAD } from '../src/core/protocol.ts'
+import { CAP_SESSION_SNAPSHOT_SINCE, CAP_SESSION_SNAPSHOT_TRIM, CAP_SUBAGENT_THREAD } from '../src/core/protocol.ts'
 import { ControllableStream, answerOf, makeConnection, requestFrame, settle, type ConnectionHarness, type WireFrame } from './support/harness.ts'
 
 /** One follow record as DSH writes it. */
@@ -227,6 +227,30 @@ describe('the catalog entry in a trimmed baseline', () => {
       label: 'Thread probe',
       callId: 'call-run',
     })
+  })
+
+  it('operator reconnecting with a watermark receives only what it missed, still carrying the spawn call', async () => {
+    // Given a session whose spawn result and catalog both sit above the watermark
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: [CAP_SESSION_SNAPSHOT_TRIM, CAP_SUBAGENT_THREAD, CAP_SESSION_SNAPSHOT_SINCE] }))
+    const follow = new ControllableStream()
+    harness.gateway.follow = call => follow.attach(call.signal).iterable()
+    const records = [
+      record('turn/start', 1, { turn: 1 }),
+      toolCall(2, 'call-run', 'run_code'),
+      catalog(3, 'child-9'),
+      toolResult(4, 'call-run', activationHandle('child-9')),
+    ]
+    // When the reconnecting phone names the watermark it already holds
+    const pending = harness.connection.handleText(requestFrame(2, 'session.snapshot', { sessionId: 's-1', sinceSeq: 1 }))
+    follow.push({ type: 'snapshot', header: {}, cursor: 4, hasMore: false, projections: {}, records })
+    await pending
+    // Then the answer is the increment, and the catalog it carries still names the spawn call
+    const answer = answerOf(harness, 2).r as { mode: string; turns: { entries: WireEntry[] }[] }
+    expect(answer.mode).toBe('since')
+    const entry = catalogEntryOf(answer.turns.flatMap(turn => turn.entries), 'child-9')
+    expect(entry?.data.callId).toBe('call-run')
+    expect(entry?.data).toMatchObject({ version: 0, childId: 'child-9', mode: 'continuable', label: 'Thread probe' })
   })
 
   it('operator on a client without trim receives the same catalog entry including the spawn call', async () => {

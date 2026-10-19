@@ -19,7 +19,7 @@
 import type { ApprovalRegistry } from './approvals.ts'
 import type { DeviceRoster } from './devices.ts'
 import { ROSTER_DELTA_MAX_ROWS, RemoteBridgeDeltas, type DeltaRow } from './delta.ts'
-import { deltaOfFollowFrame, MessageIndex, pageTurns, readFollowBaseline, SpawnCallIndex, ToolCallIndex, trimUnrenderedEntries, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
+import { deltaOfFollowFrame, MessageIndex, oldestEntrySeq, pageTurns, readFollowBaseline, SpawnCallIndex, ToolCallIndex, trimUnrenderedEntries, turnsAbove, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
 import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
 import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
@@ -29,10 +29,13 @@ import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
 import {
   CAP_AGENTS,
   CAP_DELTA,
+  CAP_FRAME_DEFLATE,
   CAP_JOBS,
   CAP_QUESTIONS,
+  CAP_ROSTER_COMPACT,
   CAP_SESSION_FORK,
   CAP_SESSION_SNAPSHOT_PAGE,
+  CAP_SESSION_SNAPSHOT_SINCE,
   CAP_SESSION_SNAPSHOT_TRIM,
   CAP_SUBAGENT_THREAD,
   CODE_APPROVAL_UNKNOWN,
@@ -82,9 +85,20 @@ import { TITLES_MAX_IDS, type SessionMeta } from './session-meta.ts'
 import type { SessionPermissions } from './session-permissions.ts'
 import type { BridgeGateway, GatewayPeer } from './wire.ts'
 import { CODE_SUBAGENT_ADDRESS_REQUIRED, sessionAddress, subagentAddress, wireArgs, type SessionAddress } from './wire.ts'
+import { CLOSE_LIVENESS_TIMEOUT } from './ws-frames.ts'
 
 /** Protocol-level heartbeat period: a frame is sent after this long without one. */
 export const IDLE_PING_MS = 20_000
+/**
+ * Deadline behind one liveness ping: a peer that sends no frame at all within
+ * this long of the ping is torn down.
+ *
+ * It only ever exists because a ping was sent — a connection the host has not
+ * pinged has no deadline — so a quiet client is never closed for being quiet,
+ * only for failing to answer. The measured one-way path over the relay is about
+ * 410 ms (2026-10-19), so this is more than an order of magnitude of slack.
+ */
+export const LIVENESS_TIMEOUT_MS = 10_000
 /** How long `session.snapshot` waits for its follow stream's opening frame. */
 export const SNAPSHOT_OPEN_TIMEOUT_MS = 10_000
 /** Largest turn window one snapshot asks DSH for. */
@@ -115,6 +129,14 @@ export const PROMPT_ATTACHMENT_MAX_BYTES = 6 * 1024 * 1024
 export interface BridgeTransport {
   send(text: string): void
   close(code: number, reason: string): void
+  /**
+   * Optional: whether the peer declared `frame.deflate.v1`, reported once the
+   * `hello` that declares it has been recorded. The capability is the client's
+   * declaration and the wire form is the carrier's, so this is the one fact that
+   * has to cross between them. A carrier with no socket to compress — a
+   * recording double, for one — omits the member and keeps writing text.
+   */
+  frameDeflate?(declared: boolean): void
 }
 
 export interface BridgeConnectionOptions {
@@ -185,6 +207,16 @@ interface CallFailure {
 }
 
 type DispatchOutcome = { readonly ok: true; readonly r: unknown } | CallFailure
+
+/**
+ * One snapshot baseline answer, typed rather than opaque so the incremental
+ * fallback can extend the very payload protocol v1 serves instead of rebuilding
+ * it. `hasMore` is present exactly for a connection that declared the page
+ * capability.
+ */
+type BaselineAnswer =
+  | { readonly ok: true; readonly r: { readonly turns: readonly SnapshotTurn[]; readonly lastSeq: number; readonly hasMore?: boolean } }
+  | CallFailure
 
 /** One session-list row as the protocol publishes it. */
 interface SessionRow extends DeltaRow {
@@ -283,6 +315,54 @@ function pageBudgetOf(value: unknown, method: string): { readonly ok: true; read
     return refusal(CODE_INVALID_ARGS, `${method} maxBytes must be between 1 and ${MAX_FRAME_BYTES}`)
   }
   return { ok: true, maxBytes }
+}
+
+/** The compact roster parameters one listing carried, when it carried any. */
+interface RosterCompact {
+  /** Rows per page; absent means every row. */
+  readonly maxRows?: number
+  /** Exclusive cursor: serve the rows after the row this id names. */
+  readonly after?: string
+  /** Whether each row carries the host's absolute `cwd`. */
+  readonly cwd: boolean
+}
+
+/**
+ * Read one listing's compact roster parameters.
+ *
+ * The parameters are the switch, not the capability: a listing that names none
+ * of them is answered today's body byte for byte, so declaring
+ * {@link CAP_ROSTER_COMPACT} alone can never change what a client is sent. The
+ * page size reuses {@link pageNumber} and is bounded by the same cap the roster
+ * delta window retains ({@link ROSTER_DELTA_MAX_ROWS}), so no second limit is
+ * invented here. A value that cannot be honoured — a page size of zero,
+ * negative, fractional or past that cap, an `after` that is not an id, a `cwd`
+ * that is not a boolean — is refused rather than clamped, so a caller never
+ * mistakes a silently reduced page for the one it asked for.
+ * @param payload - the request's `p`.
+ * @returns the parameters, or `ok` with no `compact` member when there are none.
+ */
+function rosterCompactOf(payload: Readonly<Record<string, unknown>>): { readonly ok: true; readonly compact?: RosterCompact } | CallFailure {
+  const { cwd: rawCwd, maxRows: rawRows, after: rawAfter } = payload
+  if (rawCwd === undefined && rawRows === undefined && rawAfter === undefined) return { ok: true }
+  if (rawCwd !== undefined && typeof rawCwd !== 'boolean') return refusal(CODE_INVALID_ARGS, 'session.list cwd must be a boolean')
+  let maxRows: number | undefined
+  if (rawRows !== undefined) {
+    maxRows = pageNumber(rawRows)
+    if (maxRows === undefined || maxRows < 1 || maxRows > ROSTER_DELTA_MAX_ROWS) {
+      return refusal(CODE_INVALID_ARGS, `session.list maxRows must be between 1 and ${ROSTER_DELTA_MAX_ROWS}`)
+    }
+  }
+  const after = rawAfter === undefined ? undefined : optionalText(rawAfter)
+  if (rawAfter !== undefined && after === undefined) return refusal(CODE_INVALID_ARGS, 'session.list after must be a non-empty session id')
+  return {
+    ok: true,
+    compact: {
+      ...(maxRows === undefined ? {} : { maxRows }),
+      ...(after === undefined ? {} : { after }),
+      cwd: rawCwd === true,
+    },
+  }
 }
 
 /**
@@ -442,6 +522,13 @@ export class BridgeConnection {
    * subscription the client never requested.
    */
   readonly #jobWatches = new Map<string, () => void>()
+  /**
+   * The `updatedAt` this connection already sent per session id, for the
+   * compact roster: a row whose value this client holds is answered without it.
+   * Pruned to the roster on every compact answer, so it is bounded by the set it
+   * describes rather than by every id the connection ever listed.
+   */
+  readonly #rosterUpdatedAt = new Map<string, number>()
   /** The last roster payload this connection received per scope key, for whole-set dedupe. */
   readonly #jobSeen = new Map<string, string>()
   /**
@@ -454,6 +541,8 @@ export class BridgeConnection {
   #deviceId: string | undefined
   #nonce: { readonly value: string; readonly expiresAt: number } | undefined
   #heartbeat: NodeJS.Timeout | undefined
+  /** The deadline armed by the liveness ping currently outstanding, if any. */
+  #liveness: NodeJS.Timeout | undefined
   #lastSendAt = 0
   #disposed = false
 
@@ -500,7 +589,11 @@ export class BridgeConnection {
     if (this.#heartbeat !== undefined) return
     const period = this.#options.heartbeatMs ?? IDLE_PING_MS
     this.#heartbeat = setInterval(() => {
-      if (this.#options.now() - this.#lastSendAt >= period) this.#send({ t: 'ping', ts: this.#options.now() })
+      if (this.#options.now() - this.#lastSendAt < period) return
+      this.#send({ t: 'ping', ts: this.#options.now() })
+      // The ping is out, so the peer now owes an answer: a peer that went
+      // silent without closing its socket is exactly what this deadline finds.
+      this.#armLivenessDeadline()
     }, period)
     this.#heartbeat.unref?.()
   }
@@ -518,6 +611,9 @@ export class BridgeConnection {
    */
   async handleText(text: string): Promise<void> {
     if (this.#disposed) return
+    // Any frame at all proves the peer is alive, so it satisfies the deadline
+    // behind the outstanding ping — a pong that answers no ping included.
+    this.#clearLivenessDeadline()
     const outcome = decodeClientFrame(text)
     if (!outcome.ok) {
       this.#send(errorFrame(outcome.id, outcome.code, outcome.msg))
@@ -548,10 +644,15 @@ export class BridgeConnection {
    * Tear the connection down: stop the heartbeat, abort every follow stream it
    * owns, and tell the carrier to go away. Idempotent, and safe to call from a
    * socket error handler — a carrier whose socket already closed ignores it.
+   * @param close - the close frame to send instead of the bridge-unloading one.
+   *   Only the liveness deadline passes it, so a client can tell a peer that
+   *   stopped answering from an ordinary teardown; every other caller leaves it
+   *   out and keeps the same code and reason as before.
    */
-  dispose(): void {
+  dispose(close?: { readonly code: number; readonly reason: string }): void {
     if (this.#disposed) return
     this.#disposed = true
+    this.#clearLivenessDeadline()
     if (this.#heartbeat !== undefined) {
       clearInterval(this.#heartbeat)
       this.#heartbeat = undefined
@@ -567,7 +668,27 @@ export class BridgeConnection {
     this.#deltas.clear()
     // The bridge itself may be unloading with live sockets: the client is told
     // the endpoint is going away instead of being left on a dead protocol.
-    this.#transport.close(1001, 'the bridge is going away')
+    this.#transport.close(close?.code ?? 1001, close?.reason ?? 'the bridge is going away')
+  }
+
+  /** Arm the deadline behind one liveness ping, replacing any earlier one. */
+  #armLivenessDeadline(): void {
+    this.#clearLivenessDeadline()
+    this.#liveness = setTimeout(() => {
+      this.#options.log(`connection closed on the liveness deadline: no frame within ${LIVENESS_TIMEOUT_MS} ms of a liveness ping`)
+      this.dispose({
+        code: CLOSE_LIVENESS_TIMEOUT,
+        reason: `no frame within ${LIVENESS_TIMEOUT_MS} ms of a liveness ping`,
+      })
+    }, LIVENESS_TIMEOUT_MS)
+    this.#liveness.unref?.()
+  }
+
+  /** Drop the deadline: the peer answered, or the connection is already gone. */
+  #clearLivenessDeadline(): void {
+    if (this.#liveness === undefined) return
+    clearTimeout(this.#liveness)
+    this.#liveness = undefined
   }
 
   async #dispatch(frame: ReqFrame): Promise<DispatchOutcome> {
@@ -668,6 +789,9 @@ export class BridgeConnection {
   #hello(payload: Readonly<Record<string, unknown>>): DispatchOutcome {    const proto = payload.proto
     if (proto !== PROTO) return refusal(CODE_PROTO_UNSUPPORTED, `this bridge speaks protocol ${PROTO}`)
     this.#capabilities = capabilitiesOf(payload.cap)
+    // The frame form is decided where the frame is written, so the carrier is
+    // told the one thing it cannot read for itself: what this peer can inflate.
+    this.#transport.frameDeflate?.(this.#capabilities.has(CAP_FRAME_DEFLATE))
     // The hub replays anything this client can now receive but missed: a phone
     // that connected after a question was raised has no other way to learn of it.
     this.#options.onDeclare?.(this)
@@ -724,15 +848,37 @@ export class BridgeConnection {
   }
 
   /**
-   * Answer the roster as a whole set, or as the increment since a token.
+   * Answer the roster as a whole set, as one compact page, or as the increment
+   * since a token.
    *
    * `since` and the two answer modes exist only for a client that declared
    * {@link CAP_DELTA}: every other client is answered the roster it always was,
    * with `mode:"reset"` and an empty `token` beside it, and this connection
    * keeps no copy of a set that client cannot continue from.
-   * @param payload - `{since?}`.
+   *
+   * The compact form needs both halves: the capability, and at least one compact
+   * parameter in the request. Either one alone is today's answer, which is what
+   * keeps an older client — and a client that declared the name but asks for
+   * nothing — byte identical to protocol v1.
+   * @param payload - `{since?, cwd?, maxRows?, after?}`.
    */
   async #sessionList(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    if (this.declares(CAP_ROSTER_COMPACT)) {
+      const requested = rosterCompactOf(payload)
+      if (!requested.ok) return requested
+      const compact = requested.compact
+      if (compact !== undefined) {
+        // One answer is a whole page a client continues with `after`, the other
+        // is an increment it continues with `token`; a request naming both bases
+        // is refused rather than answered against one of them silently.
+        if (sinceOf(payload) !== undefined) {
+          return refusal(CODE_INVALID_ARGS, 'session.list cannot combine a compact page with a since token')
+        }
+        const compactRoster = await this.#readRoster()
+        if (!compactRoster.ok) return compactRoster
+        return { ok: true, r: this.#compactRoster(compactRoster.rows, compact) }
+      }
+    }
     const roster = await this.#readRoster()
     if (!roster.ok) return roster
     if (!this.declares(CAP_DELTA)) {
@@ -803,6 +949,67 @@ export class BridgeConnection {
   }
 
   /**
+   * Answer one compact roster page out of the roster just read.
+   *
+   * Rows are ordered most recent first, with the id as the tiebreak, because a
+   * cursor is only meaningful over an order that does not depend on the order
+   * the host happened to answer in. `after` is exclusive and names the last row
+   * the previous page carried; a cursor this roster no longer names is an
+   * unknown base and answers a first page again, the way a delta token this
+   * window never issued answers a reset, so the client continues from the page
+   * it is given instead of stalling on an id that no longer exists.
+   *
+   * Three members are what makes the body shorter: `cwd` is present only when
+   * the request asked for it, `updatedAt` only when this connection has not
+   * already sent this id that exact value (a client keeps the one it holds), and
+   * `nextAfter` only while the roster continues past this page. Every other
+   * field of the row is today's, under today's names, so a page is the same
+   * roster cut short rather than a second schema — and `compact:true` says which
+   * schema the rows are in, so a client whose bookkeeping drifted can tell an
+   * omitted `updatedAt` from one this bridge never had.
+   * @param rows - the roster as the host answered it.
+   * @param compact - the parameters this listing carried.
+   */
+  #compactRoster(rows: readonly SessionRow[], compact: RosterCompact): Record<string, unknown> {
+    const ordered = [...rows].sort((left, right) => (right.updatedAt - left.updatedAt)
+      || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    // A cursor that names no row of this roster resolves to -1, which is a first
+    // page: the honest answer to a base this bridge cannot place.
+    const from = compact.after === undefined ? 0 : ordered.findIndex(row => row.id === compact.after) + 1
+    const end = compact.maxRows === undefined ? ordered.length : Math.min(ordered.length, from + compact.maxRows)
+    const page = ordered.slice(from, end)
+    const sessions = page.map(row => {
+      const held = this.#rosterUpdatedAt.get(row.id) === row.updatedAt
+      this.#rosterUpdatedAt.set(row.id, row.updatedAt)
+      return {
+        id: row.id,
+        title: row.title,
+        ...(held ? {} : { updatedAt: row.updatedAt }),
+        agentRunning: row.agentRunning,
+        ...(compact.cwd && row.cwd !== undefined ? { cwd: row.cwd } : {}),
+        ...(row.parentSessionId === undefined ? {} : { parentSessionId: row.parentSessionId }),
+        ...(row.origin === undefined ? {} : { origin: row.origin }),
+        blank: row.blank,
+        ...(row.archived === undefined ? {} : { archived: row.archived }),
+      }
+    })
+    // Bounded by the set it describes: an id this roster no longer names is gone
+    // from the memory too, and a row that comes back simply carries its value.
+    const current = new Set(rows.map(row => row.id))
+    for (const id of this.#rosterUpdatedAt.keys()) {
+      if (!current.has(id)) this.#rosterUpdatedAt.delete(id)
+    }
+    const last = page[page.length - 1]?.id
+    return {
+      mode: 'reset',
+      token: '',
+      compact: true,
+      sessions,
+      ...(last === undefined || end >= ordered.length ? {} : { nextAfter: last }),
+    }
+  }
+
+  /**
    * Answer a batch of title lookups out of this process's title service.
    *
    * Every read is synchronous and in-process, so the batch bound is the whole
@@ -838,7 +1045,29 @@ export class BridgeConnection {
    * than a refusal, and `snapshot-too-large` cannot answer such a connection.
    * The oldest entry's own `seq` is the `before` cursor for the next, older
    * page; no second field restates it.
-   * @param payload - `{sessionId, maxBytes?}`.
+   *
+   * The budget is measured on the WHOLE answer — `{turns, lastSeq, hasMore}`
+   * encoded as the `res` frame the client receives — and never per turn, so a
+   * turn of many small entries is cut like any other run of entries. What it
+   * does not bound is a single entry: `pageTurns` ends a page at an entry, never
+   * inside one, so when the newest entry alone is past the budget that entry IS
+   * the page and the answer is exactly as large as it is (measured: a 2.2 MB
+   * newest message answers a 2.2 MB page against a 512 KiB budget, while the
+   * same window of ordinary entries answers 513794 bytes). Trimming or splitting
+   * such an entry would hand the client something other than what the session
+   * says, and refusing it would take the session away from the very capability
+   * that exists to open big sessions, so this is a stated bound of the page
+   * budget rather than a defect to be closed by a smaller number elsewhere.
+   * A client that declared {@link CAP_SESSION_SNAPSHOT_SINCE} and named
+   * `sinceSeq` is answered incrementally instead: only the entries above that
+   * durable watermark, in the same turn shape, with `mode:"since"` and
+   * `reset:false`. When the bridge cannot PROVE the chain is unbroken — the
+   * window's oldest entry has scrolled past the watermark — the answer is the
+   * baseline below, carrying `mode:"full"` and `reset:true` so the client knows
+   * to throw its copy away. Nothing else about this method moves: a request
+   * without `sinceSeq`, or from a connection that never declared the capability,
+   * is answered exactly the bytes protocol v1 answered before.
+   * @param payload - `{sessionId, sinceSeq?, maxBytes?}`.
    * @param id - the request id the page budget is measured against.
    */
   async #sessionSnapshot(payload: Readonly<Record<string, unknown>>, id: number): Promise<DispatchOutcome> {
@@ -851,19 +1080,100 @@ export class BridgeConnection {
     // A client that declared the trim capability chooses what it is sent, never
     // which turns it gets: the projection is trimmed inside each turn first, and
     // only then does any frame or page budget apply.
-    const projection = this.#projectionOf(opening.baseline.records)
+    const window = turnsOfRecords(opening.baseline.records)
+    const projection = this.#trimmedFor(window)
+    const lastSeq = opening.baseline.cursor
+    // An incremental answer takes two declarations: the capability in the
+    // handshake AND the watermark in this request. Every other request keeps
+    // protocol v1's own answer, byte for byte, so a client can adopt the name
+    // before it relies on any of it.
+    if (payload.sinceSeq !== undefined && this.#capabilities.has(CAP_SESSION_SNAPSHOT_SINCE)) {
+      const sinceSeq = pageNumber(payload.sinceSeq)
+      if (sinceSeq === undefined) return refusal(CODE_INVALID_ARGS, 'session.snapshot sinceSeq must be a non-negative integer')
+      // A connection that declared the page capability declared the budget its
+      // requests must carry, and an incremental request is one of its requests:
+      // an unusable budget is refused here, so whether this reply ends up being
+      // the increment or the baseline that spends the budget never decides it.
+      if (this.#capabilities.has(CAP_SESSION_SNAPSHOT_PAGE)) {
+        const budget = pageBudgetOf(payload.maxBytes, METHOD_SESSION_SNAPSHOT)
+        if (!budget.ok) return budget
+      }
+      const incremental = this.#sinceAnswer(projection, window, sinceSeq, lastSeq, id)
+      if (incremental !== undefined) return { ok: true, r: incremental }
+      const baseline = this.#baselineAnswer(sessionId, projection, lastSeq, payload, id)
+      if (!baseline.ok) return baseline
+      return { ok: true, r: { ...baseline.r, mode: 'full', reset: true } }
+    }
+    return this.#baselineAnswer(sessionId, projection, lastSeq, payload, id)
+  }
+
+  /**
+   * The answer protocol v1 has always served: the whole window, or the newest
+   * page of it for a connection that declared {@link CAP_SESSION_SNAPSHOT_PAGE}.
+   *
+   * One home for that answer, so an incremental request that has to fall back to
+   * a full baseline is sent exactly the bytes it would have been sent without
+   * asking — plus the two fields that say the client must reset.
+   * @param sessionId - the session this baseline is of; the refusal names it.
+   * @param projection - this connection's projection of the opening window.
+   * @param lastSeq - the harness cursor the answer reports.
+   * @param payload - the request, read only for `maxBytes`.
+   * @param id - the request id any page budget is measured against.
+   */
+  #baselineAnswer(
+    sessionId: string,
+    projection: readonly SnapshotTurn[],
+    lastSeq: number,
+    payload: Readonly<Record<string, unknown>>,
+    id: number,
+  ): BaselineAnswer {
     if (!this.#capabilities.has(CAP_SESSION_SNAPSHOT_PAGE)) {
       // Not declared: the whole window, shrunk by whole turns, unchanged.
-      const fitted = this.#fitTurns(projection, opening.baseline.cursor, id)
+      const fitted = this.#fitTurns(projection, lastSeq, id)
       if (fitted === undefined) return refusal(CODE_SNAPSHOT_TOO_LARGE, `session ${sessionId} does not fit one ${MAX_FRAME_BYTES} byte frame`)
       return { ok: true, r: { turns: fitted.turns, lastSeq: fitted.lastSeq } }
     }
     const budget = pageBudgetOf(payload.maxBytes, METHOD_SESSION_SNAPSHOT)
     if (!budget.ok) return budget
-    const lastSeq = opening.baseline.cursor
     const page = pageTurns(projection, undefined, budget.maxBytes, (turns, _nextBefore, hasMore) =>
       Buffer.byteLength(JSON.stringify(responseFrame(id, { turns, lastSeq, hasMore })), 'utf8'))
     return { ok: true, r: { turns: page.turns, lastSeq, hasMore: page.hasMore } }
+  }
+
+  /**
+   * Answer a snapshot that named a watermark, or hand back undefined when this
+   * request has to be answered with the full baseline instead.
+   *
+   * The continuity proof is the whole contract, and it reads the WINDOW rather
+   * than the trimmed projection: an entry the client never renders is still an
+   * entry the window holds, and continuing past a watermark below it would hand
+   * the client a view it cannot attach to what it already has. Only the window's
+   * own oldest entry can say whether anything between that watermark and this
+   * window is missing, and `oldest <= sinceSeq + 1` is the one case where nothing
+   * is; an empty window proves it trivially, because there is nothing to lose. A
+   * reset is always correct, so an unprovable window takes the safe answer.
+   *
+   * The bound this form still carries is the frame cap: a delta that cannot
+   * cross one frame answers the baseline instead of a refusal, because the
+   * client's recovery from a hole is the `reset` flag, not a failed request.
+   * @param projection - the projection the incremental turns are cut from.
+   * @param window - the same window before trimming, read for its oldest entry.
+   * @param sinceSeq - the durable watermark the client already holds.
+   * @param lastSeq - the harness cursor the answer reports.
+   * @param id - the request id the frame cap is measured against.
+   */
+  #sinceAnswer(
+    projection: readonly SnapshotTurn[],
+    window: readonly SnapshotTurn[],
+    sinceSeq: number,
+    lastSeq: number,
+    id: number,
+  ): { readonly turns: readonly SnapshotTurn[]; readonly lastSeq: number; readonly mode: 'since'; readonly reset: false } | undefined {
+    const oldest = oldestEntrySeq(window)
+    if (oldest !== undefined && oldest > sinceSeq + 1) return undefined
+    const answer = { turns: turnsAbove(projection, sinceSeq), lastSeq, mode: 'since' as const, reset: false as const }
+    if (Buffer.byteLength(JSON.stringify(responseFrame(id, answer)), 'utf8') > MAX_FRAME_BYTES) return undefined
+    return answer
   }
 
   /**
@@ -1016,9 +1326,13 @@ export class BridgeConnection {
   }
 
   /** The projection a baseline is served with: trimmed only for a client that asked for it. */
-  #projectionOf(records: readonly unknown[]): SnapshotTurn[] {
-    const projected = turnsOfRecords(records)
-    return this.#capabilities.has(CAP_SESSION_SNAPSHOT_TRIM) ? trimUnrenderedEntries(projected) : projected
+  #projectionOf(records: readonly unknown[]): readonly SnapshotTurn[] {
+    return this.#trimmedFor(turnsOfRecords(records))
+  }
+
+  /** Drop the bookkeeping entries only for a client that declared the trim capability. */
+  #trimmedFor(turns: readonly SnapshotTurn[]): readonly SnapshotTurn[] {
+    return this.#capabilities.has(CAP_SESSION_SNAPSHOT_TRIM) ? trimUnrenderedEntries(turns) : turns
   }
 
   async #sessionPrompt(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {

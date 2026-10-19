@@ -770,6 +770,43 @@ export function pageTurns(
   }
 }
 
+/**
+ * Durable seq of a projection's oldest entry, or undefined when it carries none.
+ *
+ * The oldest entry is the first entry of the first turn that has one: a trimmed
+ * turn may keep no entry at all, so the scan skips those rather than reading
+ * `turns[0].entries[0]` and calling an empty-leading view an empty window.
+ * @param turns - the projection to read, in order.
+ */
+export function oldestEntrySeq(turns: readonly SnapshotTurn[]): number | undefined {
+  for (const turn of turns) {
+    const first = turn.entries[0]
+    if (first !== undefined) return first.seq
+  }
+  return undefined
+}
+
+/**
+ * Cut a projection at a durable watermark, keeping what is strictly above it.
+ *
+ * This is the forward twin of {@link pageTurns}' own slice: the same
+ * entry-level rule (`seq` is a durable watermark, not an index), the same
+ * turn rebuild, so an incremental snapshot carries turns shaped exactly like
+ * the baseline it continues — a turn whose remaining entries are fewer keeps
+ * its own `seq`, `endSeq`, `reason` and `time`.
+ * @param turns - the projection to cut, in order.
+ * @param watermark - exclusive durable watermark; entries at or below it are dropped.
+ */
+export function turnsAbove(turns: readonly SnapshotTurn[], watermark: number): SnapshotTurn[] {
+  const kept: { readonly turn: SnapshotTurn; readonly entry: SnapshotEntry }[] = []
+  for (const turn of turns) {
+    for (const entry of turn.entries) {
+      if (entry.seq > watermark) kept.push({ turn, entry })
+    }
+  }
+  return groupEntries(kept)
+}
+
 /** Rebuild the turn list around one contiguous run of entries. */
 function groupEntries(items: readonly { readonly turn: SnapshotTurn; readonly entry: SnapshotEntry }[]): SnapshotTurn[] {
   const page: SnapshotTurn[] = []

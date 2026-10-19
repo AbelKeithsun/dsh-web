@@ -154,7 +154,7 @@ describe('session.fork.v1', () => {
     await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, client: 'ios/0.1' }))
     // Then the announcement carries the minor this channel raised and lists it last
     const hello = answerOf(harness, 1).r as { minor: number; capabilities: string[] }
-    expect(hello.minor).toBe(8)
+    expect(hello.minor).toBe(11)
     expect(hello.capabilities).toEqual([...SERVED_CAPABILITIES])
     expect(hello.capabilities[hello.capabilities.length - 1]).toBe(CAP_SESSION_FORK)
   })

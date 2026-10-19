@@ -52,6 +52,26 @@ export const CAP_SESSION_SNAPSHOT_TRIM = 'session.snapshot.trim.v1'
 export const CAP_SESSION_SNAPSHOT_PAGE = 'session.snapshot.page.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to have
+ * `session.snapshot` answer a reconnect with only what it missed.
+ *
+ * The declaration and the request's `sinceSeq` are what it takes together: a
+ * snapshot that carries no `sinceSeq` is answered, byte for byte, the body
+ * protocol v1 always served, whether or not the client declared this. Behind
+ * both, the client names the durable `lastSeq` of a snapshot it already holds
+ * and the answer is either that same reply in an incremental form —
+ * `{turns, lastSeq, mode:"since", reset:false}` carrying only the entries above
+ * that watermark — or a full baseline with `mode:"full"` and `reset:true`,
+ * which is the one answer that tells a client to throw its copy away. The
+ * estimate is only served when the bridge can PROVE nothing was lost: the
+ * current follow window's oldest entry must sit at or below `sinceSeq + 1`, so a
+ * window that has already scrolled past the watermark answers the baseline
+ * instead of a delta with a hole in it. It exists because a reconnect on the
+ * phone re-paid 0.86-1.06 s of baseline five times in one measured run.
+ */
+export const CAP_SESSION_SNAPSHOT_SINCE = 'session.snapshot.since.v1'
+
+/**
  * Capability a client declares in `hello`'s `cap` array to be shown the
  * host's pending user questions and to answer them with `question.answer`.
  *
@@ -155,6 +175,22 @@ export const CAP_DELTA = 'delta.v1'
 export const CAP_ROSTER_OMITS_ARCHIVED = 'session.list.omit-archived.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to be answered a
+ * compact roster it can page.
+ *
+ * The declaration alone changes nothing: a listing that carries none of the
+ * compact parameters (`cwd`, `maxRows`, `after`) is answered exactly the body
+ * protocol v1 always served, so a client can opt into the name before it
+ * relies on any of it. Behind the parameters, a row drops its absolute `cwd`
+ * unless the request asks for it, drops its `updatedAt` when this connection
+ * already sent that id the same value, and a `maxRows`/`after` pair cuts the
+ * roster into pages ordered most recent first. The roster is the most repeated
+ * large reply on the link, so this is what lets a reconnect pay for the newest
+ * screenful plus a cursor instead of the whole list again.
+ */
+export const CAP_ROSTER_COMPACT = 'session.list.compact.v1'
+
+/**
  * Capability a client declares in `hello`'s `cap` array to be told that this
  * bridge can page a session's durable history down to its oldest entry.
  *
@@ -181,6 +217,22 @@ export const CAP_SESSION_DEEP_HISTORY = 'session.deep-history.v1'
  * re-derived here.
  */
 export const CAP_SESSION_FORK = 'session.fork.v1'
+
+/**
+ * Capability a client declares in `hello`'s `cap` array to be sent frames
+ * compressed instead of as plain text.
+ *
+ * Declaring it is what allows the host to compress at all: a frame whose JSON
+ * text is at least 1024 UTF-8 bytes crosses as one WebSocket binary frame
+ * carrying raw DEFLATE (RFC 1951) of exactly that text, and a frame that does
+ * not get smaller still crosses as the text frame it always was. A client that
+ * does not declare it — including every client written before this capability
+ * existed — receives byte for byte the text frames protocol v1 always wrote.
+ *
+ * The direction is one way: a client still sends text frames only, and the
+ * 10 MiB frame cap stays measured on the text, before inflation.
+ */
+export const CAP_FRAME_DEFLATE = 'frame.deflate.v1'
 
 /**
  * Methods an unpaired connection may still call: the handshake itself and the
@@ -254,14 +306,26 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
- * 8 when the fork channel shipped: behind {@link CAP_SESSION_FORK} a client may
+ * 11 when the fork channel shipped: behind {@link CAP_SESSION_FORK} a client may
  * call {@link METHOD_SESSION_FORK} and receive the host's own fork answer, so a
- * phone branches a session that inherits the context of the one it forked. The
- * number is this branch's one step over the 7 it was cut from: a concurrent
- * append cut from the same 7 also answers 8, and whichever of the two merges
- * second is the one that steps over — the minor counts additions to this
- * protocol, not the order the branches were written in, and a client reads
- * capabilities rather than the number to learn what a bridge serves.
+ * phone branches a session that inherits the context of the one it forked. This
+ * is the second of two appends cut from 9 — the snapshot-`since` channel took
+ * 10 on the integration branch first — so the number steps over the one already
+ * on `dev`: the minor counts additions to this protocol, and a later landing
+ * steps over the earlier one instead of reusing its number.
+ * 10 when the snapshot became incremental on request: behind
+ * {@link CAP_SESSION_SNAPSHOT_SINCE} a `session.snapshot` that names `sinceSeq`
+ * is answered either the entries above that watermark or a full baseline
+ * carrying `mode` and `reset`, so a client reads a new reply shape off the
+ * wire and the number rises with it.
+ * 9 when the compact roster shipped: behind {@link CAP_ROSTER_COMPACT} a
+ * `session.list` that names one of the compact parameters is answered a
+ * shorter row and may be cut into pages, so a client reads a new row schema
+ * off the wire and the number rises with it.
+ * 8 when the outbound frame form became a capability: behind
+ * {@link CAP_FRAME_DEFLATE} a declaring client may be answered in binary
+ * frames carrying raw DEFLATE of the text, so the minor is raised for a change
+ * a client reads off the wire rather than for a name alone.
  * 7 when the two channels met: the agent channel and the durable history
  * channel each raised 5 to 6 on its own branch, so the protocol that carries
  * both is 7. 6 when the agent channel shipped: behind {@link CAP_AGENTS}
@@ -284,7 +348,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 8
+export const MINOR = 11
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -303,6 +367,9 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_DELTA,
   CAP_ROSTER_OMITS_ARCHIVED,
   CAP_SESSION_DEEP_HISTORY,
+  CAP_FRAME_DEFLATE,
+  CAP_ROSTER_COMPACT,
+  CAP_SESSION_SNAPSHOT_SINCE,
   CAP_SESSION_FORK,
 ]
 /** `server` field of the hello response. */
