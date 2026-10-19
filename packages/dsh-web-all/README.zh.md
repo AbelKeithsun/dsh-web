@@ -17,13 +17,13 @@
   <em>自动化任务看板 · 手机远程控制 · SSH 终端运维 · Git 图谱与 Worktree 隔离 · 会话归档 · 用量统计 · 主题皮肤</em>
 </p>
 
-DeepSeek Harness（DSH）Web UI 与官方桌面客户端全家桶聚合插件：一键安装家族的全部功能插件（任务看板 / Git 图谱 / 桌面宠物 / 移动端远程 / SSH 运维 / 会话归档 / 皮肤中心 / 设置区 / 社区插件，完整清单以本包 `aggregate.yml` 为准）。compat 桥接层已并入本包（`src/client`），因此无需独立的 compat npm 包。
+DeepSeek Harness（DSH）Web UI 与官方桌面客户端全家桶聚合插件：一键安装家族的全部功能插件（任务看板 / Git 图谱 / 桌面宠物 / 移动端远程 / 远程桥接 / SSH 运维 / 会话归档 / 皮肤中心 / 设置区 / 社区插件，完整清单以本包 `aggregate.yml` 为准）。compat 桥接层已并入本包（`src/client`），因此无需独立的 compat npm 包。
 
 > 注（alpha 分支，2026-09-17）：本分支不内置任何外部插件。
 
 ## 是什么
 
-- **一次安装、全部到位**：其 dependencies 引入家族的全部子插件包（任务看板 / Git 图谱 / 宠物 / 移动端远程 / SSH / 皮肤 / 设置区 / 社区插件 等，完整清单以 `aggregate.yml` 为准），且本分支不内置任何外部 npm 插件。`@mlgbnb/dsh-archive-manager`（社区归档管理：按项目分组、搜索筛选、预览对话、一键恢复与删除）未内置——其上游构建仍 import 已移除的 `@deepseek-ai/dsh-client-runtime` 面。
+- **一次安装、全部到位**：其 dependencies 引入家族的全部子插件包（任务看板 / Git 图谱 / 宠物 / 移动端远程 / 远程桥接 / SSH / 皮肤 / 设置区 / 社区插件 等，完整清单以 `aggregate.yml` 为准），且本分支不内置任何外部 npm 插件。`@mlgbnb/dsh-archive-manager`（社区归档管理：按项目分组、搜索筛选、预览对话、一键恢复与删除）未内置——其上游构建仍 import 已移除的 `@deepseek-ai/dsh-client-runtime` 面。
 - **聚合载具**：`cordis.patch.yml` 汇总各子插件的 `insert` 行与外部插件行，经 dsh 插件 profile 机制挂载。外部 profile bundle 由生成器展开：其 patch 行变成可导入的聚合行，bundle 自身的 harness-row patch 原样保留；标记了 `"inactive": true` 的外部行会在产物之后统一追加 `disabled: true` 覆盖行，未主动启用前不会挂载。
 - **故障隔离（shell 壳）**：DSH loader 把全部 patch 行作为一个事务组挂载——任何一个插件 import 或启动失败都会回滚整组并中止 `dsh web`。因此聚合包让每个家族插件都挂在永不失败的 shell 模块（本包 main 入口）之后：行 `name` 指向按家族划分的子路径导出 `@linxin666/dsh-web-all/<family>`，行 `config` 携带真插件包名。子路径即官方插件列表（设置 → 插件列表）展示的名称——每行一个独立的 `web-all/<family>` 标题（与宿主自带 `web-app/startup` 行的多条目惯例一致），而全部子路径都解析到同一个共享 shell 再导出模块，隔离语义完全不变。坏插件现在只降级自身（记录日志，并可经仅限 loopback 的健康路由 `GET /api/dsh-web-all/degraded` 查询），其余插件照常挂载。外部行（家族之外的 npm 包）仍直接挂载；`dsh-i18n` 直挂（宿主半区为空）。
 - **插件列表里的自有图标**：本包内置 `icon.svg` 并在 `package.json` 顶层声明 `icon`——官方插件列表（设置 → 插件列表）读取的展示元信息字段，因此已安装卡片与详情页在明暗两种主题下都显示家族鲸鱼，而不是默认插画；家族每个包都带同一份素材，单独安装某一个也会显示。DSH 0.2.1 起子路径元信息经导出资源读取，因此聚合的每个家族行导出 `<family>/icon` 与本地化 `locale/*.json`，在 `web-all/<family>` 标题旁显示同一份家族图标。
