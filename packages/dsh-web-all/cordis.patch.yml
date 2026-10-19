@@ -66,6 +66,13 @@
       config:
         plugin: '@linxin666/dsh-update'
 
+# from ../dsh-remote-bridge
+- insert:
+    - id: web-ui-remote-bridge
+      name: '@linxin666/dsh-web-all/remote-bridge'
+      config:
+        plugin: '@linxin666/dsh-remote-bridge'
+
 # from ../dsh-ssh
 - insert:
     - id: web-ui-ssh

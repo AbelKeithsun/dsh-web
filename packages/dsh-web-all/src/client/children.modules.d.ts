@@ -44,6 +44,11 @@ declare module '@linxin666/dsh-update/client' {
   export const inject: readonly string[] | undefined
 }
 
+declare module '@linxin666/dsh-remote-bridge/client' {
+  export const apply: unknown
+  export const inject: readonly string[] | undefined
+}
+
 declare module '@linxin666/dsh-ssh/client' {
   export const apply: unknown
   export const inject: readonly string[] | undefined

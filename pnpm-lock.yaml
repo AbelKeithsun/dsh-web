@@ -1297,6 +1297,9 @@ importers:
       '@linxin666/dsh-pet':
         specifier: ^0.4.7
         version: 0.4.7(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@linxin666/dsh-remote-bridge':
+        specifier: workspace:*
+        version: link:../dsh-remote-bridge
       '@linxin666/dsh-remote-web-ui':
         specifier: workspace:*
         version: link:../dsh-remote-web-ui

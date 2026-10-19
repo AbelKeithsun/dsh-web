@@ -240,7 +240,7 @@ pnpm install && pnpm -r build
 dsh plugin --profile web add link:$(pwd)/packages/dsh-remote-bridge
 ```
 
-The family aggregate package `@linxin666/dsh-web-all` installs this plugin together with the rest of the family. Restart `dsh web` after installing or updating — the host half registers its routes when the plugin row mounts, so the running host is what serves them — then reload the Web GUI page, which is when the browser half's sidebar-foot trigger appears.
+This plugin is a family member: the aggregate bundle `@linxin666/dsh-web-all` installs it as its `remote-bridge` row together with the rest of the family, so adding the bundle is enough. Installing this package on its own stays supported, and remains the route for following this plugin's own version instead of the bundle's. Both routes load the same npm package, so a profile that carries both rows at once still registers the host half exactly once — `/ios/v1` and the token route belong to whichever source mounts first, and the family's single-instance guard replays a refused mount when that owner is torn down while the host keeps running. Restart `dsh web` after installing or updating — the host half registers its routes when the plugin row mounts, so the running host is what serves them — then reload the Web GUI page, which is when the browser half's sidebar-foot trigger appears.
 
 ## Configuration
 

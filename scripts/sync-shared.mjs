@@ -120,6 +120,7 @@ const MANIFEST = [
     targets: [
       'packages/dsh-ssh/src/mount-once.ts',
       'packages/dsh-remote-web-ui/src/mount-once.ts',
+      'packages/dsh-remote-bridge/src/mount-once.ts',
       'packages/dsh-liangshen/src/mount-once.ts',
       'packages/dsh-task-board/src/mount-once.ts',
       'packages/dsh-task-board-github/src/mount-once.ts',

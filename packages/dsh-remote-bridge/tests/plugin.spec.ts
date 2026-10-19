@@ -32,6 +32,9 @@ interface FakeHost {
   readonly listeners: Map<string, unknown>
 }
 
+/** Every host this file is currently running, newest last. */
+const mountedHosts: FakeHost[] = []
+
 /**
  * A minimal `ctx`: the two services the plugin injects, the effect registry, and
  * the event bus. Nothing is patched or spied on — the plugin is mounted exactly as
@@ -63,8 +66,10 @@ function mountPlugin(): FakeHost {
     effect: (callback: () => () => void) => { disposers.push(callback()); return () => undefined },
     on: (name: string, listener: unknown) => { listeners.set(name, listener); return () => undefined },
   } as unknown as Context
+  const host: FakeHost = { routes, upgrades, disposers, listeners }
+  mountedHosts.push(host)
   apply(ctx)
-  return { routes, upgrades, disposers, listeners }
+  return host
 }
 
 /** @returns the one registered upgrade handler, or throws. */
@@ -138,7 +143,12 @@ describe('the mounted plugin', () => {
     process.env.DSH_HOME = home
   })
 
-  afterEach(() => { delete process.env.DSH_HOME })
+  afterEach(() => {
+    // Newest first: a queued mount must die before the owner releases the package
+    // name, or the release replays it into a context this suite is tearing down.
+    for (const host of mountedHosts.splice(0).reverse()) for (const dispose of host.disposers) dispose()
+    delete process.env.DSH_HOME
+  })
 
   it('operator mounts the plugin and finds exactly the two frozen routes', () => {
     // Given the plugin mounted on a fake host
@@ -210,6 +220,30 @@ describe('the mounted plugin', () => {
     expect(() => { pair.socket.emit('error', new Error('aborted')) }).not.toThrow()
     expect(pair.serverBytes().toString('latin1').startsWith('HTTP/1.1 400')).toBe(true)
     expect(pair.socket.listenerCount('error')).toBeGreaterThan(0)
+  })
+
+  it('operator mounts a second source of the same package and only the first registers routes', () => {
+    // Given a first source whose two routes are registered on the host
+    const first = mountPlugin()
+    expect([...first.upgrades.map(route => route.path), ...first.routes.map(route => route.path)].sort()).toEqual([PAIR_TOKEN_PATH, WS_PATH].sort())
+    // When the same package is mounted again from a second source (the aggregate row beside a standalone install)
+    const second = mountPlugin()
+    // Then that mount is a no-op: the host half stays registered exactly once
+    expect(second.upgrades).toEqual([])
+    expect(second.routes).toEqual([])
+  })
+
+  it('operator disposes the owning mount and the waiting second source takes the routes over', async () => {
+    // Given a second source queued behind the first, with nothing registered on its own host
+    const first = mountPlugin()
+    const second = mountPlugin()
+    expect(second.upgrades).toEqual([])
+    expect(second.routes).toEqual([])
+    // When the owning source disposes
+    for (const dispose of first.disposers) dispose()
+    await nextTurn()
+    // Then the queued mount was replayed and both routes are live on the second host
+    expect([...second.upgrades.map(route => route.path), ...second.routes.map(route => route.path)].sort()).toEqual([PAIR_TOKEN_PATH, WS_PATH].sort())
   })
 
   it('operator unmounts the plugin and both routes are gone', () => {
