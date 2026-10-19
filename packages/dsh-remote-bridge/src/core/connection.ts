@@ -33,6 +33,7 @@ import {
   CAP_JOBS,
   CAP_QUESTIONS,
   CAP_ROSTER_COMPACT,
+  CAP_SESSION_FORK,
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_SESSION_SNAPSHOT_SINCE,
   CAP_SESSION_SNAPSHOT_TRIM,
@@ -59,6 +60,7 @@ import {
   METHOD_QUESTION_ANSWER,
   METHOD_SESSION_ATTACHMENT,
   METHOD_SESSION_CREATE,
+  METHOD_SESSION_FORK,
   METHOD_SESSION_HISTORY,
   METHOD_SESSION_HISTORY_DEEP,
   METHOD_SESSION_INTERRUPT,
@@ -286,6 +288,14 @@ function optionalText(value: unknown): string | undefined {
 /** @returns a non-negative safe integer page argument, or undefined. */
 function pageNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+/**
+ * @param value - a request's event-seq member, or undefined.
+ * @returns the seq, or undefined when it is not a positive safe integer.
+ */
+function seqNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 ? value : undefined
 }
 
 /**
@@ -706,6 +716,12 @@ export class BridgeConnection {
     if ((frame.m === METHOD_PRESETS_LIST || frame.m === METHOD_SESSION_CREATE) && !this.declares(CAP_AGENTS)) {
       return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
+    // Forking one session into another exists only for a client that declared
+    // the fork channel: without it the method is what it was before the channel
+    // existed, and the host is asked nothing on that client's behalf.
+    if (frame.m === METHOD_SESSION_FORK && !this.declares(CAP_SESSION_FORK)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // Unconditional: a loopback Host buys nothing here. Without a device token
     // only the handshake and the two pairing steps run.
     if (!this.paired && !UNPAIRED_METHODS.has(frame.m)) return refusal(CODE_UNPAIRED, 'this connection is not paired')
@@ -735,6 +751,7 @@ export class BridgeConnection {
       case METHOD_JOBS_LIST: return await this.#jobsList(frame.p)
       case METHOD_PRESETS_LIST: return await this.#presetsList()
       case METHOD_SESSION_CREATE: return await this.#sessionCreate(frame.p)
+      case METHOD_SESSION_FORK: return await this.#sessionFork(frame.p)
       default: return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
   }
@@ -1495,6 +1512,34 @@ export class BridgeConnection {
    */
   async #sessionCreate(request: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
     const call = await this.#unary('session', 'create', request)
+    return call.ok ? { ok: true, r: call.value } : call
+  }
+
+  /**
+   * Answer `session.fork`: branch one session into another that inherits it.
+   *
+   * Only the two keys protocol v1 names are read here. `sessionId` is required
+   * and `atSeq` is the host's inclusive source-event cut, so a caller that
+   * omitted it must not have one invented for it: the host reads an absent
+   * `atSeq` as the newest finished turn, and a zero or a fractional number is
+   * not a seq at all, which is refused here rather than forwarded for the host
+   * to reject with a shape this bridge could have caught. Everything else —
+   * whether this host forks at all, what the new session is called, which
+   * synthetic events close an open cut — belongs to `session/fork`, so a host
+   * refusal crosses with its own code and text.
+   * @param payload - `{sessionId, atSeq?}`.
+   */
+  async #sessionFork(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.fork requires sessionId')
+    const atSeq = payload.atSeq === undefined ? undefined : seqNumber(payload.atSeq)
+    if (payload.atSeq !== undefined && atSeq === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'session.fork atSeq must be a positive integer')
+    }
+    const call = await this.#unary('session', 'fork', {
+      sessionId,
+      ...(atSeq === undefined ? {} : { atSeq }),
+    })
     return call.ok ? { ok: true, r: call.value } : call
   }
 

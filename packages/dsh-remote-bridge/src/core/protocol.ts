@@ -19,6 +19,7 @@ export const METHOD_SESSION_SET_PERMISSION = 'session.setPermission'
 export const METHOD_SESSION_MODELS = 'session.models'
 export const METHOD_SESSION_SET_MODEL = 'session.setModel'
 export const METHOD_SESSION_CREATE = 'session.create'
+export const METHOD_SESSION_FORK = 'session.fork'
 export const METHOD_PRESETS_LIST = 'presets.list'
 export const METHOD_PAIR_BEGIN = 'pair.begin'
 export const METHOD_PAIR_FINISH = 'pair.finish'
@@ -202,6 +203,22 @@ export const CAP_ROSTER_COMPACT = 'session.list.compact.v1'
 export const CAP_SESSION_DEEP_HISTORY = 'session.deep-history.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to fork a session.
+ *
+ * Declaring it is what makes `session.fork` part of that client's protocol at
+ * all: a client that does not declare it — including every client written
+ * before this channel existed — is refused `unknown-method`, and no fork is
+ * asked of the host on its behalf. Behind the name the bridge forwards one
+ * `SessionForkRequest` to the host's `session/fork` and hands back the host's
+ * own `SessionForkValue`, so what a fork point means stays the host's: an
+ * `atSeq` is the source event seq the fork includes, an omitted one is the
+ * newest finished turn, and a cut the host opens itself is closed by the host's
+ * own synthetic finishing event. Nothing about a fork is modelled or
+ * re-derived here.
+ */
+export const CAP_SESSION_FORK = 'session.fork.v1'
+
+/**
  * Capability a client declares in `hello`'s `cap` array to be sent frames
  * compressed instead of as plain text.
  *
@@ -250,6 +267,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_JOBS_LIST,
   METHOD_PRESETS_LIST,
   METHOD_SESSION_CREATE,
+  METHOD_SESSION_FORK,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
@@ -288,6 +306,13 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 11 when the fork channel shipped: behind {@link CAP_SESSION_FORK} a client may
+ * call {@link METHOD_SESSION_FORK} and receive the host's own fork answer, so a
+ * phone branches a session that inherits the context of the one it forked. This
+ * is the second of two appends cut from 9 — the snapshot-`since` channel took
+ * 10 on the integration branch first — so the number steps over the one already
+ * on `dev`: the minor counts additions to this protocol, and a later landing
+ * steps over the earlier one instead of reusing its number.
  * 10 when the snapshot became incremental on request: behind
  * {@link CAP_SESSION_SNAPSHOT_SINCE} a `session.snapshot` that names `sinceSeq`
  * is answered either the entries above that watermark or a full baseline
@@ -323,7 +348,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 10
+export const MINOR = 11
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -345,6 +370,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_FRAME_DEFLATE,
   CAP_ROSTER_COMPACT,
   CAP_SESSION_SNAPSHOT_SINCE,
+  CAP_SESSION_FORK,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'
