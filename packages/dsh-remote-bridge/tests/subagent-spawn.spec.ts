@@ -217,8 +217,8 @@ describe('the catalog entry in a trimmed baseline', () => {
     ])
     // When the phone reads the baseline
     const entry = catalogEntryOf(entries, 'child-9')
-    // Then the entry survived the trim, and every field the host wrote is byte for byte
-    expect(entry).toBeDefined()
+    // Then the entry survived the trim, still at the sequence the host wrote for it
+    expect(entry?.seq).toBe(3)
     expect(entry?.data).toEqual({
       version: 0,
       childId: 'child-9',
