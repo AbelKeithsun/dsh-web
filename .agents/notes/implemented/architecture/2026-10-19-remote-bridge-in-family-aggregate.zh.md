@@ -26,7 +26,7 @@ Status: implemented
 
 - 聚合包从此要为桥接的浏览器半区负责重建：聚合内联仓库内子插件的客户端源码，改动后需 `pnpm build` 加 `pnpm libs:write` 刷新 `packages/dsh-web-all/lib`。
 - 同时带着聚合行与独立 link 行的 profile 仍能工作，但两行就是同一个插件：第二个在第一个 dispose 之前是空操作，同时开启除了让行列表更慢之外没有收益。
-- 独立安装的包本身不带 `icon.svg`，所以它自己的插件卡片显示默认插画；聚合家族行不受影响，因为 `./remote-bridge/icon` 指向聚合包自己的图标。
+- 包自带展示元信息，这正是挂裸包名的行所渲染的内容：`icon.svg`（家族素材的字节拷贝，所以每张家族卡片都是同一头鲸鱼）与携带 `meta.title`、`meta.description` 的 `locale/{en,ru,zh}.json`，两者都在 `files` 白名单里，因此 npm tarball 会带上它们。`locale` 那些键是承重的而非装饰：宿主读取器经包的 export map 解析每种语言，所以只有 `locale/` 目录而没有对应 `exports` 条目时会被静默忽略，行退回包名与 npm 描述。聚合包的 `shell-metadata` 目录仍然只是 `web-ui-*` compat 子路径的展示来源；把桥接文案复制过去会让同一个插件有两个互相矛盾的展示来源。
 
 ## Testing
 

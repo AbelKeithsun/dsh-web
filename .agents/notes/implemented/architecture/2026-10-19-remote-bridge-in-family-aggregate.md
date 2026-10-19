@@ -26,7 +26,7 @@ The local desktop profile drops its standalone `link:` entry and its `dsh.profil
 
 - The bundle now owes the bridge's browser half a rebuild whenever it changes, because the aggregate inlines repository-internal client sources; `pnpm build` plus `pnpm libs:write` refresh `packages/dsh-web-all/lib`.
 - A profile carrying both the aggregate row and a standalone link keeps working, but the two rows are one plugin: the second one is a no-op until the first disposes, so enabling both buys nothing beyond a slower row list.
-- The standalone package ships no `icon.svg`, so its own plugin card shows the default artwork; the aggregate family row is unaffected because `./remote-bridge/icon` points at the aggregate's own icon.
+- The package carries its own display metadata, and that is what a row mounting the bare package name renders: `icon.svg` (a byte copy of the family asset, so every family card shows one whale) and `locale/{en,ru,zh}.json` carrying `meta.title` and `meta.description`, both inside the `files` whitelist so the npm tarball ships them. The `locale` keys are load-bearing rather than cosmetic: the host reader resolves each language through the package's export map, so a `locale/` directory without matching `exports` entries is silently ignored and the row falls back to the package name and the npm description. The aggregate's `shell-metadata` tree stays the display source for the `web-ui-*` compat subpaths only; copying the bridge's text there would give one plugin two disagreeing display sources.
 
 ## Testing
 
