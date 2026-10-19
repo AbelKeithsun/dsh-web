@@ -115,10 +115,13 @@ describe('gateway restart route', () => {
     expect(startHelper).toHaveBeenCalledTimes(1)
   })
 
-  it('user on a packaged Desktop host: the route answers shell and nothing is spawned', async () => {
-    // Given a host the Desktop shell owns
+  it('user on a packaged Desktop host whose shell replaces a stopped host: the route answers shell and nothing is spawned', async () => {
+    // Given a host the Desktop shell owns and promises to respawn
     const startHelper = vi.fn(() => true)
-    const handler = restartRoute(launch({ desktop: true }), { startHelper })
+    const handler = restartRoute(
+      launch({ desktop: true, env: { DSH_SHELL_RESTARTS_HOST: '1' } }),
+      { startHelper },
+    )
     const captured = response()
 
     // When the restart route is called
@@ -127,6 +130,21 @@ describe('gateway restart route', () => {
     // Then no helper runs and the mode is the shell's own restart
     expect(captured.status()).toBe(202)
     expect(captured.body()).toEqual({ restart: { mode: 'shell' } })
+    expect(startHelper).not.toHaveBeenCalled()
+  })
+
+  it('user on a packaged Desktop host whose shell only reports a stopped host: the route answers manual and the host keeps serving', async () => {
+    // Given a host the Desktop shell owns but does not respawn
+    const startHelper = vi.fn(() => true)
+    const handler = restartRoute(launch({ desktop: true }), { startHelper })
+    const captured = response()
+
+    // When the restart route is called
+    await handler(request(), captured.res)
+
+    // Then the host declines to stop itself: no helper, no shell exit
+    expect(captured.status()).toBe(202)
+    expect(captured.body()).toEqual({ restart: { mode: 'manual' } })
     expect(startHelper).not.toHaveBeenCalled()
   })
 

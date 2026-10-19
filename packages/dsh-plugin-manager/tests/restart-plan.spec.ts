@@ -28,27 +28,56 @@ function facts(overrides: Partial<RestartFacts> = {}): RestartFacts {
 }
 
 describe('restart planning', () => {
-  it('operator on a packaged Desktop host: the shell that owns the process tree carries the restart', () => {
-    // Given a host the packaged Desktop launcher booted
+  it('operator on a packaged Desktop host whose shell replaces a stopped host: the shell carries the restart', () => {
+    // Given a host the packaged Desktop launcher booted, with the shell's
+    // restart guarantee in the environment
+    const launch = facts({ desktop: true, env: { DSH_SHELL_RESTARTS_HOST: '1' } })
+
+    // When the restart is planned
+    const plan = planRestart(launch)
+
+    // Then this process only stops: the shell brings a fresh host back
+    expect(plan.mode).toBe('shell')
+    expect(plan.command).toBeUndefined()
+  })
+
+  it('operator on a packaged Desktop host without the restart guarantee: the host keeps serving', () => {
+    // Given a packaged Desktop host whose shell only reports a stopped host
     const launch = facts({ desktop: true })
 
     // When the restart is planned
     const plan = planRestart(launch)
 
-    // Then this process only stops: Electron offers its own relaunch
-    expect(plan.mode).toBe('shell')
+    // Then nothing stops: a self-exit here would leave a dead window with no
+    // host, which is worse than deferring the restart to the user
+    expect(plan.mode).toBe('manual')
     expect(plan.command).toBeUndefined()
   })
 
-  it('operator on an Electron-spawned host without the desktop fact gets the shell restart', () => {
-    // Given a host whose environment marks it as an Electron child
-    const launch = facts({ env: { ELECTRON_RUN_AS_NODE: '1' }, interactive: false })
+  it('operator on an Electron-spawned host with the restart guarantee gets the shell restart', () => {
+    // Given a host whose environment marks it as an Electron child of a shell
+    // that replaces a stopped host
+    const launch = facts({
+      env: { ELECTRON_RUN_AS_NODE: '1', DSH_SHELL_RESTARTS_HOST: '1' },
+      interactive: false,
+    })
 
     // When the restart is planned
     const plan = planRestart(launch)
 
     // Then the shell owns it, not a detached respawn
     expect(plan.mode).toBe('shell')
+  })
+
+  it('operator on an Electron-spawned host without the restart guarantee: the host keeps serving', () => {
+    // Given a host whose environment only marks it as an Electron child
+    const launch = facts({ env: { ELECTRON_RUN_AS_NODE: '1' }, interactive: false })
+
+    // When the restart is planned
+    const plan = planRestart(launch)
+
+    // Then it does not stop itself for a shell that never promised a respawn
+    expect(plan.mode).toBe('manual')
   })
 
   it('operator on a terminal launch: the host re-executes its own command line', () => {
