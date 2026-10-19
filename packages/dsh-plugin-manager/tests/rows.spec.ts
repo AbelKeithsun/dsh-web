@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bareRowEnabled, bareRowId, claimedIdsOf, declaredRowIds, overrideRowId, parsePatch, pruneOrphanRowOverrides, rowDefaultEnabledOf, setRowEnabled } from '../src/host/rows.ts'
+import { bareRowEnabled, bareRowId, claimedIdsOf, declaredRowIds, overrideRowId, parsePatch, pruneOrphanRowOverrides, repairStaleRowNames, rowDefaultEnabledOf, setRowEnabled } from '../src/host/rows.ts'
 
 const SAMPLE = `[
   # a top-level comment that must survive every edit
@@ -290,6 +290,108 @@ describe('pruneOrphanRowOverrides', () => {
     expect(overrideRowId(noFlag)).toBeUndefined()
     expect(overrideRowId(extraKey)).toBeUndefined()
     expect(overrideRowId(insertWrapper)).toBeUndefined()
+  })
+})
+
+describe('repairStaleRowNames', () => {
+  it('operator: points a row at the package that now carries its entry id', () => {
+    // Given a profile layer whose row still names the package the aggregate
+    // mounted for that id before issue #1901
+    const text = [
+      '- id: web-ui-task-board-github',
+      '  name: "@linxin666/dsh-web-all/task-board-github"',
+      '  config:',
+      '    repositories: []',
+      '',
+    ].join('\n')
+
+    // When the repair runs against the live name of that id
+    const live = new Map([['web-ui-task-board-github', '@linxin666/dsh-client-ui-task-board-github']])
+    const { text: next, repaired } = repairStaleRowNames(text, 'p', live)
+
+    // Then the row names the live package and keeps its configuration
+    expect(repaired).toEqual([{
+      id: 'web-ui-task-board-github',
+      from: '@linxin666/dsh-web-all/task-board-github',
+      to: '@linxin666/dsh-client-ui-task-board-github',
+    }])
+    expect(next).toContain('name: "@linxin666/dsh-client-ui-task-board-github"')
+    expect(next).toContain('repositories: []')
+  })
+
+  it('operator: repairs an enablement override whose name went stale too', () => {
+    // Given an override row that still names the retired package
+    const text = [
+      '- id: web-ui-ssh',
+      '  name: "@linxin666/dsh-web-all/ssh"',
+      '  disabled: true',
+      '',
+    ].join('\n')
+
+    // When the repair runs against the live name of that id
+    const live = new Map([['web-ui-ssh', '@linxin666/dsh-ssh']])
+    const { text: next, repaired } = repairStaleRowNames(text, 'p', live)
+
+    // Then the override keeps disabling the row and names the live package
+    expect(repaired).toEqual([{ id: 'web-ui-ssh', from: '@linxin666/dsh-web-all/ssh', to: '@linxin666/dsh-ssh' }])
+    expect(next).toContain('name: "@linxin666/dsh-ssh"')
+    expect(next).toContain('disabled: true')
+  })
+
+  it('operator: leaves a row no live bundle claims alone', () => {
+    // Given a row whose id no installed bundle claims
+    const text = [
+      '- id: some-other-row',
+      '  name: "@example/whatever"',
+      '  config:',
+      '    x: 1',
+      '',
+    ].join('\n')
+
+    // When the repair runs with a live map that does not carry that id
+    const { text: next, repaired } = repairStaleRowNames(text, 'p', new Map([['web-ui-pet', '@linxin666/dsh-pet']]))
+
+    // Then nothing is rewritten and the caller is handed its own text back
+    expect(repaired).toEqual([])
+    expect(next).toBe(text)
+  })
+
+  it('operator: changes nothing on a layer whose rows already name the live packages', () => {
+    // Given a layer whose rows already name the live packages
+    const text = [
+      '- id: web-ui-pet',
+      '  name: "@linxin666/dsh-pet"',
+      '  disabled: true',
+      '- id: web-ui-ssh',
+      '  name: "@linxin666/dsh-ssh"',
+      '  disabled: true',
+      '',
+    ].join('\n')
+
+    // When the repair runs against the live names
+    const live = new Map([['web-ui-pet', '@linxin666/dsh-pet'], ['web-ui-ssh', '@linxin666/dsh-ssh']])
+    const { text: next, repaired } = repairStaleRowNames(text, 'p', live)
+
+    // Then the file is not rewritten at all
+    expect(repaired).toEqual([])
+    expect(next).toBe(text)
+  })
+
+  it('operator: leaves a row without a name alone', () => {
+    // Given a nameless row, which the loader applies to its id whatever the
+    // package is called
+    const text = [
+      '- id: web-ui-pet',
+      '  disabled: true',
+      '',
+    ].join('\n')
+
+    // When the repair runs
+    const { text: next, repaired } = repairStaleRowNames(text, 'p', new Map([['web-ui-pet', '@linxin666/dsh-pet']]))
+
+    // Then nothing is rewritten
+    expect(repaired).toEqual([])
+    expect(next).toBe(text)
   })
 })
 

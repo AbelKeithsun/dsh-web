@@ -23,7 +23,7 @@ import type { ControlChange } from '../core/conflict.ts'
 import { diffLayer, overlappingIds, significantChanges, type LayerChange, type LayerSnapshot } from '../core/patch-diff.ts'
 import { duplicateMountBundles } from './bundle-guard.ts'
 import { readProfileManifest, reorderProfileBundle, stripProfileBundles, type ProfileFacts } from './profile.ts'
-import { declaredRowIds, insertRowsOf, parsePatch, bareRowEnabled, bareRowId, pruneOrphanRowOverrides, writePatchAtomic, type PrunedOverrides } from './rows.ts'
+import { declaredRowIds, insertRowsOf, parsePatch, bareRowEnabled, bareRowId, pruneOrphanRowOverrides, repairStaleRowNames, writePatchAtomic, type PrunedOverrides, type RepairedRowNames } from './rows.ts'
 import { buildPluginRow, claimedEntryIdsOf } from './state.ts'
 import { createOutputCapture, type OutputCapture } from './console-output.ts'
 
@@ -1614,6 +1614,82 @@ export class CliGateway {
   }
 
   /**
+   * The entry names the installed bundles' own rows carry, by entry id.
+   *
+   * The loader inserts one row per id and takes that row's name from the
+   * bundle's own patch file, so this map is the very fact the loader composes:
+   * a profile row naming something else is a row the loader skips.
+   *
+   * @returns the live names, or undefined when a bundle's patch cannot be read
+   *   (which proves nothing either way and must leave the profile alone).
+   */
+  private async liveEntryNames(): Promise<Map<string, string> | undefined> {
+    const names = new Map<string, string>()
+    let manifest
+    try {
+      manifest = await readProfileManifest(this.facts.packageJsonPath)
+    } catch {
+      return undefined
+    }
+    for (const name of manifest.bundles) {
+      const dir = join(this.facts.profileDir, 'node_modules', ...name.split('/'))
+      let text: string
+      try {
+        text = await readFile(join(dir, 'cordis.patch.yml'), 'utf8')
+      } catch (error) {
+        // A plain plugin bundle declares no rows of its own; any other read
+        // failure leaves its declarations unknown.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+        return undefined
+      }
+      for (const row of insertRowsOf(text)) {
+        if (row.id === undefined || row.name === undefined) continue
+        names.set(row.id, row.name)
+      }
+    }
+    return names
+  }
+
+  /**
+   * Point the profile's own rows at the packages that now carry those entry ids.
+   *
+   * A bundle that renames a row's package leaves every profile row that named
+   * the old one dead: the include patch semantics skip a row whose name does
+   * not match the inserted row, and the skip takes the whole row with it — a
+   * config row stops configuring and a `disabled` override stops disabling,
+   * both without a word in the browser. Issue #1901 moved the aggregate's
+   * family rows from the `@linxin666/dsh-web-all/<family>` subpath to the
+   * real package, so every profile row written before that upgrade went dead
+   * with it.
+   *
+   * The repair is idempotent and writes only when a row actually changed, so a
+   * healthy profile is never rewritten.
+   *
+   * @returns the repaired rows, in file order.
+   */
+  async repairProfileRowNames(): Promise<Array<{ id: string; from: string; to: string }>> {
+    const names = await this.liveEntryNames()
+    if (names === undefined || names.size === 0) return []
+    let text: string
+    try {
+      text = await readFile(this.facts.patchPath, 'utf8')
+    } catch {
+      return []
+    }
+    let repaired: RepairedRowNames
+    try {
+      repaired = repairStaleRowNames(text, this.facts.patchPath, names)
+    } catch {
+      // A patch file this gateway cannot parse is not its to repair: the CLI
+      // owns that file and reports its own parse error.
+      return []
+    }
+    if (repaired.repaired.length === 0) return []
+    await writePatchAtomic(this.facts.patchPath, repaired.text)
+    return repaired.repaired
+  }
+
+  /**
    * Post-update orphan guard: drop this package's own enablement overrides
    * whose entry id neither the composed *target* profile nor any bundle layer
    * still declares. The composition is the loader's own after the update
@@ -1640,6 +1716,17 @@ export class CliGateway {
     if (composed === undefined) return []
     const live = await this.liveOverrideIds(composed)
     if (live === undefined) return []
+    // A row whose package was renamed is dead until its name follows the
+    // rename, so the names are repaired before the orphan pass decides what to
+    // drop: a row that names a live package again is not an orphan.
+    try {
+      const repaired = await this.repairProfileRowNames()
+      if (repaired.length > 0) {
+        console.warn('[plugin-manager] 已修复 profile 中失效的行名：' + repaired.map(row => `${row.id}（${row.from} → ${row.to}）`).join('、'))
+      }
+    } catch (error) {
+      console.warn('[plugin-manager] profile 行名修复失败：' + (error instanceof Error ? error.message : String(error)))
+    }
     let text: string
     try {
       text = await readFile(this.facts.patchPath, 'utf8')

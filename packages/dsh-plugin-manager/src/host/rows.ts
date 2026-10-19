@@ -410,3 +410,52 @@ export function pruneOrphanRowOverrides(text: string, filename: string, composed
 function appendComment(first: string, second: string | null | undefined): string {
   return second === undefined || second === null || second === '' ? first : `${first}\n${second}`
 }
+
+/** The live entry names by id, and the rows this manager repaired. */
+export interface RepairedRowNames {
+  /** The new file text; the original text when nothing was repaired. */
+  readonly text: string
+  /** The repaired rows, in file order. */
+  readonly repaired: Array<{ id: string; from: string; to: string }>
+}
+
+/**
+ * Point the profile's own rows at the packages that now carry those entry ids.
+ *
+ * The include patch semantics skip a row whose `name` does not match the name
+ * of the row a bundle inserted under that id, and the skip takes the whole row
+ * with it: a config row stops configuring anything and a `disabled` override
+ * stops disabling anything, both without a word in the browser. A package that
+ * changes its name — the aggregate's family rows moved from the
+ * `@linxin666/dsh-web-all/<family>` subpath to the real package in issue
+ * #1901 — therefore leaves every profile row that named it dead.
+ *
+ * The live names come from the installed bundles' own patch files, which is
+ * where the loader takes the row it inserts, so a repaired row names exactly
+ * the package the loader mounts under that id. A row whose id no bundle claims
+ * is left alone: its package may still be carried by a layer this manager
+ * cannot see, and a name it cannot prove is a name it must not write.
+ *
+ * @param text - current patch file text.
+ * @param filename - absolute path (diagnostics only).
+ * @param liveNames - the live entry names, by entry id.
+ * @returns the rewritten text and the repaired rows.
+ */
+export function repairStaleRowNames(text: string, filename: string, liveNames: ReadonlyMap<string, string>): RepairedRowNames {
+  const { document, root } = parsePatch(text, filename)
+  const repaired: Array<{ id: string; from: string; to: string }> = []
+  for (const item of root.items) {
+    if (!isBareRow(item)) continue
+    const id = bareRowId(item)
+    const from = bareRowName(item)
+    if (id === undefined || from === undefined) continue
+    const to = liveNames.get(id)
+    if (to === undefined || to === from) continue
+    item.set('name', document.createNode(to))
+    repaired.push({ id, from, to })
+  }
+  if (repaired.length === 0) return { text, repaired }
+  const serialized = document.toString({ lineWidth: 0 })
+  const body = serialized.endsWith('\n') ? serialized.slice(0, -1) : serialized
+  return { text: `${body}${text.endsWith('\n') ? '\n' : ''}`, repaired }
+}
