@@ -63,15 +63,23 @@ export const USER_MESSAGE_MEMORY = 512
 
 /**
  * The durable entry types a protocol v1 client renders — `user/message`,
- * `assistant/message`, `tool/call` and `tool/result`. Everything else in a
- * turn's entries is the harness's own bookkeeping, which the client can only
- * count as unknown, so a client that asks for a trimmed baseline is not sent it.
+ * `assistant/message`, `tool/call`, `tool/result` and `subagent/catalog`.
+ * Everything else in a turn's entries is the harness's own bookkeeping, which
+ * the client can only count as unknown, so a client that asks for a trimmed
+ * baseline is not sent it.
+ *
+ * The catalog entry is here because it is the baseline half of the subagent
+ * thread: a phone that opens a session after children were spawned has no other
+ * way to learn that they exist, their labels, their modes or the call that
+ * spawned them. Without it the thread header can only be inferred from agent
+ * messages, and every field the catalog carries is lost.
  */
 export const RENDERED_ENTRY_TYPES: ReadonlySet<string> = new Set([
   'user/message',
   'assistant/message',
   'tool/call',
   'tool/result',
+  'subagent/catalog',
 ])
 
 /** One raw durable event inside a snapshot turn. */
@@ -173,21 +181,116 @@ export class MessageIndex {
 }
 
 /**
+ * The child sessions one `tool/result` payload names as spawned.
+ *
+ * A spawn answers with a handle, and the handle is the only place a durable
+ * record ties a child id to the call that made it: the catalog event names the
+ * child but not the call. Two shapes are written by this harness and both are
+ * read here, verbatim from a real session log —
+ *
+ *   - the activation handle the `subagent` tool returns, alone or nested in the
+ *     object a `run_code` program returns:
+ *     `{"a":{"kind":"activation","subagentId":"b0a3a569-…"}}`;
+ *   - the plain notice the same tool prints when it runs without PTC:
+ *     `started subagent d605390b-66f6-474b-956d-0824ec2103e0`.
+ *
+ * Nothing else is accepted: a `list_agents` answer that happens to list a child
+ * (`[{"kind":"child","id":"…"}]`) carries neither signature, so it can never
+ * lend its own call id to a thread it did not spawn.
+ * @param data - one durable `tool/result` payload.
+ * @returns the child ids the payload names, in the order it names them.
+ */
+export function spawnedChildIdsOf(data: unknown): string[] {
+  const message = isRecord(data) ? data.message : undefined
+  const ids: string[] = []
+  for (const id of spawnIdsIn(textOfBlocks(isRecord(message) ? message.content : undefined))) {
+    if (!ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
+
+/** The spawn signatures above, as the two patterns that carry a child id. */
+const SPAWN_HANDLE_IDS = /"subagentId"\s*:\s*"([^"]+)"/g
+const SPAWN_NOTICE_IDS = /started subagent\s+([0-9A-Za-z][0-9A-Za-z_.-]{3,})/g
+
+/** @returns every child id one result's text names through a spawn signature. */
+function spawnIdsIn(text: string): string[] {
+  const ids: string[] = []
+  for (const pattern of [SPAWN_HANDLE_IDS, SPAWN_NOTICE_IDS]) {
+    for (const match of text.matchAll(pattern)) {
+      const id = match[1]
+      if (id !== undefined && id !== '' && !ids.includes(id)) ids.push(id)
+    }
+  }
+  return ids
+}
+
+/**
+ * The child-to-call evidence one session's records already carry.
+ *
+ * A spawn's result can be projected after the catalog it belongs to, so a
+ * baseline reads the whole record list for this evidence before it resolves any
+ * catalog entry: the snapshot is a session that has already happened, and the
+ * answer it gives a client must not depend on where in the list it stopped
+ * looking. The live subscription feeds the same evidence in as it arrives.
+ * @param records - durable follow records, oldest first.
+ * @returns every child id a `tool/result` names, with the call that produced it.
+ */
+export function spawnCallEvidence(records: readonly unknown[]): Map<string, string> {
+  const evidence = new Map<string, string>()
+  for (const record of records) {
+    const event = isRecord(record) ? record.event : undefined
+    if (!isRecord(event) || event.type !== 'tool/result') continue
+    const callId = toolResultCallIdOf(event.data)
+    if (callId === undefined) continue
+    for (const childId of spawnedChildIdsOf(event.data)) evidence.set(childId, callId)
+  }
+  return evidence
+}
+
+/** @returns the call id one durable `tool/result` payload belongs to. */
+function toolResultCallIdOf(data: unknown): string | undefined {
+  const message = isRecord(data) ? data.message : undefined
+  const callId = stringField(message, 'toolCallId')
+  return callId === undefined || callId === '' ? undefined : callId
+}
+
+/**
  * Correlates one `subagent/catalog` event to the tool call that spawned the
  * child it registers.
  *
- * The catalog event names the child but not the call, so the call is read off
- * the same stream: the nearest preceding `tool/call` of the same turn and step.
- * That is decidable only while one call is the whole story — a step that issued
- * several calls leaves two candidates, and a call that already produced a child
- * leaves one call behind two children; a guessed id would point a thread at the
- * wrong card. Both cases answer undefined instead of a guess.
+ * The catalog event names the child but not the call, so the call is read from
+ * two places, in this order:
+ *
+ *   1. the spawn's own `tool/result`, which names the child it started
+ *      ({@link spawnedChildIdsOf}). This is the decisive one: it survives a step
+ *      that issued several calls, and a step whose one call started a whole team
+ *      of children, because the payload says which child it is about.
+ *   2. the nearest preceding `tool/call` of the same turn and step, which is
+ *      decidable only while one call is the whole story. A step with several
+ *      calls leaves two candidates, and a call that already produced a child
+ *      leaves one call behind two children; a guessed id would point a thread at
+ *      the wrong card.
+ *
+ * Neither holds: undefined, and the wire carries no call id at all. The same
+ * index answers both paths — a subscription as it watches, and a baseline after
+ * reading the session's records — so the two can never disagree about which rule
+ * decides a given catalog.
  */
 export class SpawnCallIndex {
+  readonly #named: Map<string, string>
   #turn: number | undefined
   #step: number | undefined
   #calls: string[] = []
-  #correlated: string | undefined
+  readonly #correlated = new Set<string>()
+
+  /**
+   * @param evidence - child-to-call pairs already read from the session's
+   * results, for the baseline path; empty for a live subscription.
+   */
+  constructor(evidence: ReadonlyMap<string, string> = new Map()) {
+    this.#named = new Map(evidence)
+  }
 
   /**
    * Read one durable event into the correlation state.
@@ -201,14 +304,20 @@ export class SpawnCallIndex {
       this.#turn = numberOf(isRecord(data) ? data.turn : undefined)
       this.#step = undefined
       this.#calls = []
-      this.#correlated = undefined
+      this.#correlated.clear()
       return
     }
     if (type === 'step/start') {
       this.#turn = numberOf(isRecord(data) ? data.turn : undefined) ?? this.#turn
       this.#step = numberOf(isRecord(data) ? data.step : undefined)
       this.#calls = []
-      this.#correlated = undefined
+      this.#correlated.clear()
+      return
+    }
+    if (type === 'tool/result') {
+      const callId = toolResultCallIdOf(data)
+      if (callId === undefined) return
+      for (const childId of spawnedChildIdsOf(data)) this.#named.set(childId, callId)
       return
     }
     if (type !== 'tool/call') return
@@ -220,15 +329,21 @@ export class SpawnCallIndex {
   }
 
   /**
-   * The call that spawned the child this catalog event registered.
-   * @returns its call id, or undefined when the stream does not decide it.
+   * The call that spawned the child a catalog event registered.
+   * @param childId - the child that catalog event carries.
+   * @returns its call id, or undefined when nothing on the wire decides it.
    */
-  spawnCallId(): string | undefined {
+  spawnCallId(childId: string): string | undefined {
+    const named = this.#named.get(childId)
+    if (named !== undefined) {
+      this.#correlated.add(named)
+      return named
+    }
     if (this.#turn === undefined || this.#step === undefined) return undefined
     if (this.#calls.length !== 1) return undefined
     const callId = this.#calls[0]
-    if (callId === undefined || callId === this.#correlated) return undefined
-    this.#correlated = callId
+    if (callId === undefined || this.#correlated.has(callId)) return undefined
+    this.#correlated.add(callId)
     return callId
   }
 }
@@ -299,7 +414,7 @@ function subagentDelta(data: unknown, spawnCalls: SpawnCallIndex | undefined): S
   if (childId === undefined || childId === '') return undefined
   const label = textField(data, 'label')
   const mode = textField(data, 'mode')
-  const callId = spawnCalls?.spawnCallId()
+  const callId = spawnCalls?.spawnCallId(childId)
   return {
     kind: 'subagent',
     childId,
@@ -500,15 +615,26 @@ function numberOf(value: unknown): number | undefined {
 
 /**
  * Project a follow baseline's records into turns.
+ *
+ * A `subagent/catalog` entry leaves here carrying the call that spawned its
+ * child in `data.callId`, decided by the same {@link SpawnCallIndex} a live
+ * subscription uses — so the baseline half and the live half of the thread
+ * cannot answer differently about one catalog.
  * @param records - the baseline's durable records, oldest first.
  * @returns one turn per `turn/start`, plus a lead-in turn when records precede the first one.
  */
 export function turnsOfRecords(records: readonly unknown[]): SnapshotTurn[] {
   const turns: SnapshotTurn[] = []
+  // The spawn evidence is read from the whole list first: a spawn's result is
+  // projected after the catalog it belongs to, and a baseline that gave up at
+  // the catalog would lose the one record that names the call.
+  const spawns = new SpawnCallIndex(spawnCallEvidence(records))
   let current: { seq: number; time: number; endSeq: number; endTime: number; reason: string; entries: SnapshotEntry[] } | undefined
   for (const record of records) {
-    const entry = snapshotEntryOf(record)
-    if (entry === undefined) continue
+    const projected = snapshotEntryOf(record)
+    if (projected === undefined) continue
+    spawns.observe(projected.type, projected.data)
+    const entry = projected.type === 'subagent/catalog' ? catalogEntryWithCall(projected, spawns) : projected
     if (entry.type === 'turn/start' && current !== undefined && current.endSeq === 0) {
       // A previous turn never ended (an aborted resume): its tail stays with it.
       turns.push(current)
@@ -530,6 +656,26 @@ export function turnsOfRecords(records: readonly unknown[]): SnapshotTurn[] {
   }
   if (current !== undefined && current.entries.length > 0) turns.push(current)
   return turns
+}
+
+/**
+ * One `subagent/catalog` entry with the call that spawned its child, when the
+ * session decides it.
+ *
+ * Nothing else about the entry moves: the durable payload is copied as it
+ * arrived and `callId` is added beside it, exactly as the live `subagent`
+ * delta carries the same field under §13.3. A catalog whose spawning call is
+ * undecidable is passed through untouched rather than guessed at.
+ * @param entry - one projected catalog entry.
+ * @param spawns - the index holding this session's spawn evidence.
+ */
+function catalogEntryWithCall(entry: SnapshotEntry, spawns: SpawnCallIndex): SnapshotEntry {
+  if (!isRecord(entry.data)) return entry
+  const childId = stringField(entry.data, 'childId')
+  if (childId === undefined || childId === '') return entry
+  const callId = spawns.spawnCallId(childId)
+  if (callId === undefined) return entry
+  return { ...entry, data: { ...entry.data, callId } }
 }
 
 /**
