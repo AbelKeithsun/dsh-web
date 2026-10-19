@@ -48,6 +48,7 @@ import { WS_PATH } from './core/protocol.ts'
 import { SessionMeta, type ArchiveSetFace, type SessionStoreFace, type SessionTitleFace } from './core/session-meta.ts'
 import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
 import { dshHome } from './host/dsh-home.ts'
+import { mountOnce } from './mount-once.ts'
 import { makePairTokenRoute } from './host/routes.ts'
 import { isWebSocketUpgrade, presentedTokenOf, readSecWebSocketKey, refuseUpgrade, serveUpgrade } from './host/websocket.ts'
 
@@ -171,9 +172,16 @@ function jobFaces(ctx: Context) {
 
 /**
  * Mount the bridge.
+ *
+ * Guarded by the family's single-instance rule: the aggregate row
+ * (`web-ui-remote-bridge`) and a standalone install of this same package can
+ * both be live in one profile, and the second mount would otherwise register
+ * `/ios/v1` and the token route a second time. Whichever source mounts first
+ * owns the package name; the other is queued and replayed when that owner
+ * disposes.
  * @param ctx - the plugin's context, carrying the gateway and web server.
  */
-export function apply(ctx: Context): void {
+function applyImpl(ctx: Context): void {
   const log = (message: string): void => { console.log(`[remote-bridge] ${message}`) }
   const roster = new DeviceRoster({ file: join(dshHome(), ROSTER_PATH), log })
   const pairing = new PairingService()
@@ -239,3 +247,11 @@ export function apply(ctx: Context): void {
   // first answer settles it.
   ctx.on('user-questions/request', (request, next) => hub.question(request, next), { prepend: true })
 }
+
+/**
+ * The plugin's mount point: {@link applyImpl} behind the family's
+ * single-instance guard. The name is the npm package identity, which every
+ * install source of this plugin shares — the aggregate's `web-ui-remote-bridge`
+ * row and the standalone `remote-bridge` row alike.
+ */
+export const apply = mountOnce('@linxin666/dsh-remote-bridge', applyImpl)

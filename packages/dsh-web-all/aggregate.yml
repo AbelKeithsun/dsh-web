@@ -26,6 +26,13 @@ patchFrom:
   # dsh-update 紧邻 remote-web-ui：两者共用侧栏 footer action 席位，
   # 自更新行跟在远程访问行之后，观感顺序稳定。
   - ../dsh-update
+  # dsh-remote-bridge 排在远程访问面（remote-web-ui + update）之后：它是家族的第二条
+  # 远程面（原生手机端的协议 v1 通道），但 inject 只要官方的 typertGateway / webServer
+  # （浏览器半区 inject 官方的 locale / renderer / sidebar），不依赖任何家族行的席位
+  # 或服务，所以不插进 update 与 remote-web-ui 之间拆散那对共享侧栏 footer 席位的
+  # 相邻关系。行 id 派生为 web-ui-remote-bridge、家族子路径 remote-bridge，与官方行
+  # 名册和独立安装行 id（remote-bridge）都不相交，因此不需要 familyIds 覆盖。
+  - ../dsh-remote-bridge
   - ../dsh-ssh
   - ../dsh-liangshen
   - ../dsh-skill-explorer
@@ -49,6 +56,8 @@ deps:
   - ../dsh-git-graph
   - ../dsh-remote-web-ui
   - ../dsh-update
+  # 与 patchFrom 同序：桥的行紧跟在远程访问面之后，两份清单可逐行对照。
+  - ../dsh-remote-bridge
   - ../dsh-ssh
   - ../dsh-liangshen
   - ../dsh-skill-explorer
@@ -97,6 +106,7 @@ shellNotes:
   - {"id":"liangshen","zh":"新会话首页的梁神模式开关","en":"The Liangshen mode switch on the new-session home.","ru":"Переключатель режима «Ляншэнь» на главной новой сессии."}
   - {"id":"market","zh":"按需安装皮肤宠物与预设的商店","en":"Install skins, pets, and presets on demand from one store.","ru":"Установка скинов, питомцев и пресетов из одного магазина."}
   - {"id":"plugin-manager","zh":"逐行开关已装插件的管理页","en":"One page listing installed plugins with per-row switches.","ru":"Страница установленных плагинов с переключателем для каждой строки."}
+  - {"id":"remote-bridge","zh":"给原生手机端的会话与审批通道","en":"The native phone client's session and approval channel.","ru":"Канал сессий и подтверждений для нативного клиента на телефоне."}
   - {"id":"remote-web-ui","zh":"用配对码从手机或远程浏览器访问","en":"Reach this GUI from a phone or browser with a pairing code.","ru":"Доступ к интерфейсу с телефона или браузера по коду сопряжения."}
   - {"id":"session-archive","zh":"归档并批量清理旧会话","en":"Archive old sessions and clean them up in bulk.","ru":"Архивирование и массовая очистка старых сессий."}
   - {"id":"settings","zh":"家族统一的设置页与分组","en":"The family's shared settings pages and groups.","ru":"Общие страницы настроек семейства и их группы."}

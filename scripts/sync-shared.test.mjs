@@ -22,7 +22,7 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // the copy-count buckets below match on forward slashes.
   const entries = copyEntries().map(entry => ({ ...entry, target: entry.target.replaceAll('\\', '/') }))
   // The total is every generated copy in the manifest; the single-instance
-  // guard alone contributes one mount-once.ts per host half (13 today). The
+  // guard alone contributes one mount-once.ts per host half (14 today). The
   // buckets below split the same set by target location, and what neither
   // bucket holds is the package-root test setup (6 today) plus the per-package
   // http.ts and console-output.ts copies. The settings bucket is the card trio
@@ -46,7 +46,7 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // renders through the same chrome), which adds three client copies: the card
   // chrome, its form primitives, and the card stylesheet. It carries no
   // entry-bound form fallback, because it binds no Host settings namespace.
-  assert.equal(entries.length, 109)
+  assert.equal(entries.length, 110)
   const clientTrio = entries.filter(entry => entry.target.includes('/src/client/'))
   assert.equal(clientTrio.length, 46)
   const hostCopies = entries.filter(entry => entry.target.includes('/src/host/')
@@ -56,7 +56,7 @@ test('copies cover the settings trio for all consumers plus host and http helper
     || entry.target.includes('/src/pair-access.ts')
     || entry.target.includes('/src/agent/')
     || entry.target.endsWith('/packages/dsh-task-board/src/http.ts'))
-  assert.equal(hostCopies.length, 46)
+  assert.equal(hostCopies.length, 47)
 })
 
 test('checkSync detects drift and applySync repairs it', async () => {

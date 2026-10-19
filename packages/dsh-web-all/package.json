@@ -125,7 +125,12 @@
     "./task-board-github/locale/ru.json": "./shell-metadata/task-board-github/locale/ru.json",
     "./update/locale/ru.json": "./shell-metadata/update/locale/ru.json",
     "./usage/locale/ru.json": "./shell-metadata/usage/locale/ru.json",
-    "./win-bash/locale/ru.json": "./shell-metadata/win-bash/locale/ru.json"
+    "./win-bash/locale/ru.json": "./shell-metadata/win-bash/locale/ru.json",
+    "./remote-bridge": "./lib/shells/shell.js",
+    "./remote-bridge/icon": "./icon.svg",
+    "./remote-bridge/locale/en.json": "./shell-metadata/remote-bridge/locale/en.json",
+    "./remote-bridge/locale/ru.json": "./shell-metadata/remote-bridge/locale/ru.json",
+    "./remote-bridge/locale/zh.json": "./shell-metadata/remote-bridge/locale/zh.json"
   },
   "dsh": {
     "engines": {
@@ -189,6 +194,7 @@
     "@linxin666/dsh-client-ui-git-graph": "workspace:*",
     "@linxin666/dsh-remote-web-ui": "workspace:*",
     "@linxin666/dsh-update": "workspace:*",
+    "@linxin666/dsh-remote-bridge": "workspace:*",
     "@linxin666/dsh-ssh": "workspace:*",
     "@linxin666/dsh-liangshen": "workspace:*",
     "@linxin666/dsh-client-ui-skill-explorer": "workspace:*",
