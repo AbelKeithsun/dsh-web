@@ -21,6 +21,8 @@ Status: implemented
 - `nativeManagerRefusalCode()` 从已 resolve 的判定里读出管理器的失败码——就是 `nativeManagerFailure()` 渲染给人看的那个判定——于是更新路径可以按 `already-installed` 分支，而不是匹配文案。
 - 随后 `replaceInstalled()` 执行 `removeBundle(id)` 再执行 `installBundle(id@version)`。先移除才让安装成为可表达的：守卫读的是 profile，旧依赖消失后这个名字就是新依赖。`removeBundle` 在 pnpm 移除之前会先禁用该组合包并 reload，这也顺带通过了它的 `bundle-in-use` 检查。
 - 管理器拒绝移除时，更新以该拒绝结束且不再写入。第二阶段失败时，装回运行时 profile 原有的依赖 spec（`id@<原 spec>`），并在错误里同时写明两件事：拒绝原因，以及旧版本是否已装回、还是需要手动重装。
+- `bundle-in-use` 拒绝只应答一次，不重复抛出（issue #1905）。官方守卫是**先**取消勾选该组合包并 reload，**之后**才判定该组合包的行是否仍有活跃 fiber，所以拒绝到达时取消勾选已经落盘；`removeForReplacement()` 针对这个已稳定的状态再问一次，这也是批量更新能不重启继续的唯一路径。第二次仍被拒时，用 `setBundleEnabled` 把选择状态还原，并在报告里点名需要重启；两阶段替换绝不留下半应用的 profile。
+- 替换过程中组合包保持原有的层级位置。`removeBundle` 会把它从 `dsh.profile.bundles` 里删掉，而重装是把它追加到末尾，于是朴素的「先移除再安装」会把该组合包挪到所有原本在它之后的组合包后面——而 `dsh.profile.bundles` 正是 loader 套用 patch 的层级顺序。`restoreBundleIndex()` 把它放回原位，更新成功与回滚都走这一步。
 - 单次调用保留在最前，因此上游哪天接受原地更新，这条路径无需改动；其下的版本校验不变，替换后没有任何位移仍然是 `更新未生效`。
 
 在应用自有 profile 上官方管理器仍是唯一写入器，其他运行时仍由 CLI 唯一写入——这里没有任何地方直接写 `package.json` 或自行跑 pnpm。
@@ -39,7 +41,10 @@ Status: implemented
 - 失败报告的范围比以前宽：错误会指明是哪个阶段拒绝（`已安装版本无法移除（…）`），以及在替换失败后 `id@<原 spec>` 是否已装回、还是必须手动重装。用范围 spec（`^0.9.5`）回滚恢复的是依赖关系，不一定恢复当时安装的确切版本。
 - 第一次调用仍花在当前运行时必然拒绝的一次运行上：因为守卫在 pnpm 之前，不耗 pnpm 时间，但宿主安装状态流里会多出一个状态。
 - 所有非桌面运行时的更新不变：CLI 路径不会碰到这道守卫。
+- 批量更新结束时 profile 的组合包顺序与开始时一致，因此一连串更新中各行始终从同一批层级继承。
 
 ## Testing
 
-`packages/dsh-plugin-manager/tests/gateway-jobs.spec.ts` 用脚本化的官方管理器钉住三种结果：拒绝后成功移除并重装、替换失败后装回旧 spec、以及移除本身被拒。
+`packages/dsh-plugin-manager/tests/gateway-jobs.spec.ts` 用脚本化的官方管理器钉住这些结果：拒绝后成功移除并重装、替换失败后装回旧 spec、移除本身被拒、一次会话内两个插件都更新成功、应答 `bundle-in-use` 的那次单次重试、两次判定都被拒时报告点名重启并还原选择状态，以及更新后组合包保持的层级位置。
+
+#1905 的复现装置在 DSH checkout 里，不在本仓：`packages/boot/plugin-manager/tests/manager.spec.ts` 会启动真实的 profile Include、真实的 Loader 与真实的 `hmr` 服务，那是唯一能端到端观察官方守卫的地方。在那里把两阶段序列在一次会话里连跑两遍，第二个组合包会被正常移除，同时也暴露出本网关现在会纠正的层级重排。

@@ -65,6 +65,12 @@ packages/AGENTS.md 的全局/包级规则。
   装回运行前 profile 携带的 spec，并在错误里写明是「已装回」还是「需手动重装」。单次
   `installBundle` 仍排在最前，上游哪天接受原地更新就自动回到单次路径。见
   [记录](../../.agents/notes/implemented/bug-fix/2026-10-17-plugin-manager-native-update-two-phase.md)。
+- **两阶段替换不得改变层级顺序，`bundle-in-use` 只应答一次**（issue #1905）：`removeBundle` 会把
+  该包从 `dsh.profile.bundles` 删掉、重装再追加到末尾，而该数组就是 loader 套用 patch 的层级
+  顺序——批量更新会让整批行的继承顺序漂移，所以 `restoreBundleIndex()` 必须把包放回原位
+  （成功与回滚都要）。官方守卫是先取消勾选并 reload、**之后**才判定行是否仍有活跃 fiber，
+  因此 `removeForReplacement()` 针对这个已落盘状态重试一次；第二次仍被拒才用
+  `setBundleEnabled` 还原选择状态并点名重启。不要把这条重试改成「直接报错」或「循环重试」。
 - **官方管理器 resolve 不等于成功**：它的 `change()` 包装器把失败折叠进返回值
   （`application: 'failed'` / `'cancelled'`，附 `error.code` / `error.diagnostic`），而不是
   抛错。原生安装/更新/卸载必须先经 `nativeManagerFailure()` 读该判定再重读 profile，

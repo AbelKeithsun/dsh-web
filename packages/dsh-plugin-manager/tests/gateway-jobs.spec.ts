@@ -791,8 +791,171 @@ describe('CliGateway operations on an application-owned profile', () => {
     expect(readManifest(facts.profileDir).dependencies['dsh-memoir']).toBe('1.0.0')
   })
 
-  it('operator: learns the installed version could not be removed instead of a silent no-op', async () => {
+  /** The verdict a removal the official guard refuses with a still-running row carries. */
+  const bundleInUseRefusal = {
+    stage: 'remove',
+    target: 'dsh-memoir',
+    changed: false,
+    application: 'failed',
+    error: { code: 'bundle-in-use' },
+  }
+
+  /**
+   * A scripted official manager whose removal follows the official order: it
+   * deselects the bundle, applies the reload, and only then judges whether the
+   * bundle's rows still run. `loadedRows` is what the session holds at that
+   * point, so a case can make the first judgment refuse and the state it left
+   * on disk settle the second call.
+   */
+  function inUseManager(options: {
+    profileDir: string
+    calls: string[][]
+    loadedRows: () => boolean
+    /** What the guard's deselect step writes before it judges. */
+    deselect?: () => void
+  }): { installBundle: (spec: string) => Promise<unknown>, removeBundle: (name: string) => Promise<unknown>, setBundleEnabled: (name: string, enabled: boolean) => Promise<unknown> } {
+    return {
+      installBundle: async (spec: string) => {
+        options.calls.push(['install', spec])
+        if (readManifest(options.profileDir).dependencies['dsh-memoir'] !== undefined) return alreadyInstalledRefusal
+        installPackage(options.profileDir, 'dsh-memoir', { version: '1.1.0' })
+        return { stage: 'install', target: spec, changed: true, application: 'applied' }
+      },
+      removeBundle: async (name: string) => {
+        options.calls.push(['remove', name])
+        if (!options.loadedRows()) {
+          removePackage(options.profileDir, name)
+          return { stage: 'remove', target: name, changed: true, application: 'applied' }
+        }
+        options.deselect?.()
+        return { ...bundleInUseRefusal, target: name }
+      },
+      setBundleEnabled: async (name: string, enabled: boolean) => {
+        options.calls.push(['select', name, String(enabled)])
+        return { stage: 'enable', target: name, enabled, changed: false, application: 'applied' }
+      },
+    }
+  }
+
+  it('operator: updates the second plugin of one session after a first update reloaded the profile', async () => {
+    // Given two updatable bundles whose rows the session holds after the first
+    // update's reload, and a guard that judges the rows after its own reload
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' }, 'dsh-claude-style': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    const calls: string[][] = []
+    let reloaded = false
+    const refused = new Set<string>()
+    const gateway = new CliGateway(desktopFacts(facts), {} as NodeJS.ProcessEnv, {
+      spawnImpl: (() => { throw new Error('the CLI must not run for an application-owned profile') }) as never,
+      findBinary: () => '/fake/dsh',
+      nativeManager: () => ({
+        installBundle: async (spec: string) => {
+          calls.push(['install', spec])
+          const name = spec.split('@')[0] as string
+          // The official guard refuses the first call for an installed package.
+          if (!refused.has(name)) {
+            refused.add(name)
+            return { ...alreadyInstalledRefusal, target: spec }
+          }
+          installPackage(facts.profileDir, name, { version: '1.1.0' })
+          reloaded = true
+          return { stage: 'install', target: spec, changed: true, application: 'applied' }
+        },
+        removeBundle: async (name: string) => {
+          calls.push(['remove', name])
+          removePackage(facts.profileDir, name)
+          return { stage: 'remove', target: name, changed: true, application: 'applied' }
+        },
+      }),
+    })
+
+    // When both plugins are updated in one session
+    const first = await settle(gateway, gateway.update('dsh-memoir', '1.1.0').jobId)
+    const second = await settle(gateway, gateway.update('dsh-claude-style', '1.1.0').jobId)
+
+    // Then neither needs a restart between them: both landed their own version
+    expect(first.phase).toBe('done')
+    expect(first.plugin).toMatchObject({ id: 'dsh-memoir', version: '1.1.0' })
+    expect(second.phase).toBe('done')
+    expect(second.plugin).toMatchObject({ id: 'dsh-claude-style', version: '1.1.0' })
+    expect(reloaded).toBe(true)
+  })
+
+  it('operator: retries the removal once against the state the guard left, so the update lands', async () => {
+    // Given a guard whose first judgment still sees the bundle's rows but whose
+    // own deselect step is what the second call then finds settled
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    const calls: string[][] = []
+    let rowsLoaded = true
+    const gateway = new CliGateway(desktopFacts(facts), {} as NodeJS.ProcessEnv, {
+      spawnImpl: (() => { throw new Error('the CLI must not run for an application-owned profile') }) as never,
+      findBinary: () => '/fake/dsh',
+      nativeManager: () => inUseManager({
+        profileDir: facts.profileDir,
+        calls,
+        loadedRows: () => rowsLoaded,
+        deselect: () => { rowsLoaded = false },
+      }),
+    })
+
+    // When the update runs
+    const job = await settle(gateway, gateway.update('dsh-memoir', '1.1.0').jobId)
+
+    // Then the removal is asked again and the new version lands
+    expect(calls).toEqual([
+      ['install', 'dsh-memoir@1.1.0'],
+      ['remove', 'dsh-memoir'],
+      ['remove', 'dsh-memoir'],
+      ['install', 'dsh-memoir@1.1.0'],
+    ])
+    expect(job.phase).toBe('done')
+    expect(job.plugin).toMatchObject({ id: 'dsh-memoir', version: '1.1.0' })
+  })
+
+  it('operator: is told to restart, and keeps the plugin selected, when the rows really are still loaded', async () => {
+    // Given rows the reload cannot unload, so both judgments refuse
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    const calls: string[][] = []
+    let deselected = false
+    const gateway = new CliGateway(desktopFacts(facts), {} as NodeJS.ProcessEnv, {
+      spawnImpl: (() => { throw new Error('the CLI must not run for an application-owned profile') }) as never,
+      findBinary: () => '/fake/dsh',
+      nativeManager: () => inUseManager({
+        profileDir: facts.profileDir,
+        calls,
+        loadedRows: () => true,
+        deselect: () => {
+          deselected = true
+          const manifest = readManifest(facts.profileDir)
+          writePackageJson(facts.profileDir, manifest.dependencies, manifest.dsh.profile.bundles.filter(bundle => bundle !== 'dsh-memoir'))
+        },
+      }),
+    })
+
+    // When the update runs
+    const job = await settle(gateway, gateway.update('dsh-memoir', '1.1.0').jobId)
+
+    // Then nothing is installed, the selection the guard dropped comes back,
+    // and the report names the restart instead of a bare refusal code
+    expect(calls).toEqual([
+      ['install', 'dsh-memoir@1.1.0'],
+      ['remove', 'dsh-memoir'],
+      ['remove', 'dsh-memoir'],
+      ['select', 'dsh-memoir', 'true'],
+    ])
+    expect(deselected).toBe(true)
+    expect(job.phase).toBe('error')
+    expect(job.error).toContain('已安装版本无法移除')
+    expect(job.error).toContain('bundle-in-use')
+    expect(job.error).toContain('重启 DSH')
+    expect(readManifest(facts.profileDir).dependencies['dsh-memoir']).toBe('1.0.0')
+  })
+
+  it('operator: learns a removal that is not an in-use refusal without a pointless second call', async () => {
     // Given a manager that refuses the reinstall and then refuses the removal
+    // for a reason a retry cannot change
     const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
     tempDirs.push(dir)
     const calls: string[][] = []
@@ -806,20 +969,54 @@ describe('CliGateway operations on an application-owned profile', () => {
         },
         removeBundle: async (name: string) => {
           calls.push(['remove', name])
-          return { stage: 'remove', target: name, changed: false, application: 'failed', error: { code: 'bundle-in-use' } }
+          return { stage: 'remove', target: name, changed: false, application: 'failed', error: { code: 'management-required' } }
         },
       }),
     })
 
     // When the update runs
-    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
-    const job = await settle(gateway, jobId)
+    const job = await settle(gateway, gateway.update('dsh-memoir', '1.1.0').jobId)
 
-    // Then the removal refusal is reported and nothing is installed afterwards
+    // Then the refusal is reported as it came, nothing is installed, and no
+    // restart is suggested for a refusal a restart cannot clear
     expect(calls).toEqual([['install', 'dsh-memoir@1.1.0'], ['remove', 'dsh-memoir']])
     expect(job.phase).toBe('error')
     expect(job.error).toContain('已安装版本无法移除')
-    expect(job.error).toContain('bundle-in-use')
+    expect(job.error).toContain('management-required')
+    expect(job.error).not.toContain('重启 DSH')
+  })
+
+  it('operator: keeps the bundle where it sat in the layer order after an update', async () => {
+    // Given a bundle the profile lists between two others, so its patch layer
+    // overrides nothing that follows it
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' }, 'dsh-later': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    writePackageJson(facts.profileDir, { 'dsh-memoir': '1.0.0', 'dsh-later': '1.0.0' }, ['dsh-memoir', 'dsh-later'])
+    const calls: string[][] = []
+    const gateway = new CliGateway(desktopFacts(facts), {} as NodeJS.ProcessEnv, {
+      spawnImpl: (() => { throw new Error('the CLI must not run for an application-owned profile') }) as never,
+      findBinary: () => '/fake/dsh',
+      nativeManager: () => ({
+        installBundle: async (spec: string) => {
+          calls.push(['install', spec])
+          if (readManifest(facts.profileDir).dependencies['dsh-memoir'] !== undefined) return alreadyInstalledRefusal
+          installPackage(facts.profileDir, 'dsh-memoir', { version: '1.1.0' })
+          return { stage: 'install', target: spec, changed: true, application: 'applied' }
+        },
+        removeBundle: async (name: string) => {
+          calls.push(['remove', name])
+          removePackage(facts.profileDir, name)
+          return { stage: 'remove', target: name, changed: true, application: 'applied' }
+        },
+      }),
+    })
+
+    // When the update runs
+    const job = await settle(gateway, gateway.update('dsh-memoir', '1.1.0').jobId)
+
+    // Then it lands and the bundle still precedes the one that followed it
+    expect(job.phase).toBe('done')
+    expect(readManifest(facts.profileDir).dsh.profile.bundles).toEqual(['dsh-memoir', 'dsh-later'])
   })
 
   it('operator: sees the manager folded refusal on an install', async () => {

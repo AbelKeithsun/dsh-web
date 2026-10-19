@@ -644,6 +644,17 @@ export interface NativePluginManager {
    * re-reads the profile as well, but must read this first — a refusal resolves.
    */
   removeBundle(name: string): Promise<unknown>
+  /**
+   * Select or deselect a bundle layer while keeping the installed dependency.
+   * Present on every published manager (the official Plugins page drives it),
+   * and read here only to undo the deselection a refused removal leaves behind.
+   * Optional because the undo is best-effort: a manager without it still
+   * refuses the removal, and the report says what to do instead.
+   * @param name - installed bundle name.
+   * @param enabled - whether the bundle contributes its patch layer.
+   * @returns the manager's own verdict ({@link NativeManagerOutcome}).
+   */
+  setBundleEnabled?(name: string, enabled: boolean): Promise<unknown>
 }
 
 /**
@@ -1201,6 +1212,21 @@ export class CliGateway {
    * A failed second phase reinstalls the spec the profile carried before the run,
    * so an update that cannot land leaves a working plugin behind instead of an
    * empty slot; the report says which of the two happened.
+   *
+   * Two facts make the replacement safe to repeat in one session:
+   *
+   * - **The bundle keeps its layer index.** A removal drops the name from
+   *   `dsh.profile.bundles` and the reinstall appends it, so a plain
+   *   remove-then-install moves the bundle behind every bundle that followed it
+   *   and its patch layer starts overriding rows it never overrode
+   *   ({@link restoreBundleIndex} puts it back).
+   * - **A `bundle-in-use` refusal is answered once, not repeated.** The
+   *   official guard deselects the bundle and reloads before it checks whether
+   *   the bundle's rows still run, so a refusal means the session still holds
+   *   them: the update is retried exactly once against that settled state, and a
+   *   second refusal restores the selection and names the restart the person has
+   *   to do ({@link removeForReplacement}).
+   *
    * @param job - the update job whose spec is installed.
    * @param native - the official manager.
    * @param targetId - the installed bundle being replaced.
@@ -1214,14 +1240,129 @@ export class CliGateway {
     previousSpec: string | undefined,
   ): Promise<string | undefined> {
     if (previousSpec === undefined) return `${targetId} 不在 profile 依赖中，无法替换已安装版本`
-    const removalFailure = nativeManagerFailure(await native.removeBundle(targetId))
-    if (removalFailure !== undefined) return `已安装版本无法移除（${removalFailure}），本次更新未做改动`
+    // Read while the bundle is still in the list: the removal is what drops it.
+    const index = await this.bundleIndexOf(targetId)
+    const removal = await this.removeForReplacement(native, targetId)
+    if (removal.failure !== undefined) {
+      if (removal.deselected) await this.restoreBundleSelection(native, targetId)
+      return `已安装版本无法移除（${removal.failure}），本次更新未做改动${removal.remedy}`
+    }
     const refusal = nativeManagerFailure(await native.installBundle(job.spec, { enabled: true, requestId: job.id }))
-    if (refusal === undefined) return undefined
+    if (refusal === undefined) {
+      await this.restoreBundleIndex(targetId, previousSpec, index)
+      return undefined
+    }
     const restoreSpec = `${targetId}@${previousSpec}`
     const restoreFailure = nativeManagerFailure(await native.installBundle(restoreSpec, { enabled: true, requestId: job.id }))
-    if (restoreFailure === undefined) return `${refusal}；已装回 ${restoreSpec}`
-    return `${refusal}；装回 ${restoreSpec} 也失败：${restoreFailure}，请手动重新安装`
+    if (restoreFailure !== undefined) return `${refusal}；装回 ${restoreSpec} 也失败：${restoreFailure}，请手动重新安装`
+    // The rollback reinstalls the previous version at the end of the list too,
+    // so the same index has to be restored for a failed update as for a landed one.
+    await this.restoreBundleIndex(targetId, previousSpec, index)
+    return `${refusal}；已装回 ${restoreSpec}`
+  }
+
+  /**
+   * Where a bundle sits in the layer order, read before the removal drops it.
+   * @param name - the installed bundle name.
+   * @returns the index in `dsh.profile.bundles`, or undefined when the profile
+   * does not list it (nothing to restore in that case).
+   */
+  private async bundleIndexOf(name: string): Promise<number | undefined> {
+    try {
+      const manifest = await readProfileManifest(this.facts.packageJsonPath)
+      const index = manifest.bundles.indexOf(name)
+      return index < 0 ? undefined : index
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Put a replaced bundle back at the layer index it had before the removal.
+   *
+   * The loader applies one patch layer per entry of `dsh.profile.bundles`, in
+   * that order, so the index is behavior: a bundle that is removed and
+   * reinstalled without this lands behind every bundle that followed it, and
+   * whole rows start inheriting from a layer that used to come first. The write
+   * is the manifest's own backup + tmp + rename path, and nothing is written
+   * when the profile already lists the bundle where it belongs.
+   * @param name - the reinstalled bundle.
+   * @param spec - the dependency spec the reinstall recorded (unused when the bundle is absent).
+   * @param index - the position captured before the removal.
+   */
+  private async restoreBundleIndex(name: string, spec: string, index: number | undefined): Promise<void> {
+    if (index === undefined) return
+    try {
+      const manifest = await readProfileManifest(this.facts.packageJsonPath)
+      if (!Object.hasOwn(manifest.dependencies, name)) return
+      if (manifest.bundles.indexOf(name) === index) return
+      await reorderProfileBundle(this.facts.packageJsonPath, name, index)
+    } catch (error) {
+      // The plugin did land; a layer order this write could not correct is
+      // reported rather than turned into a failed update.
+      console.warn(`[plugin-manager] 未能恢复 ${name} 的 bundle 顺序（${spec}）：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * Remove a bundle for the two-phase replacement, answering the official
+   * manager's in-use refusal instead of repeating it.
+   *
+   * Read the official `removeBundle` guard in order: it deselects the bundle,
+   * reloads the profile, and only then checks whether the bundle's own rows
+   * still hold a running fiber, which it reports as `bundle-in-use`. The
+   * deselection is therefore already on disk when the refusal arrives — the
+   * guard re-reads the selection on entry, so asking once more after that
+   * settled state is idempotent and is the only way an update can continue
+   * without a restart. A second refusal means the rows really are still
+   * loaded, and the report then names the restart instead of a bare code.
+   * @param native - the official manager.
+   * @param name - the bundle to remove.
+   * @returns the refusal to report, whether the profile lost the selection on the
+   * way, and the remedy text for that refusal.
+   */
+  private async removeForReplacement(
+    native: NativePluginManager,
+    name: string,
+  ): Promise<{ failure?: string, deselected: boolean, remedy: string }> {
+    const first = await native.removeBundle(name)
+    const failure = nativeManagerFailure(first)
+    if (failure === undefined) return { deselected: false, remedy: '' }
+    // Any other refusal is final: a retry cannot change a management-owned
+    // bundle, a missing dependency or a failed pnpm run.
+    if (nativeManagerRefusalCode(first) !== 'bundle-in-use') {
+      return { failure, deselected: await this.bundleSelectionLost(name), remedy: '' }
+    }
+    // The guard deselected the bundle before refusing; a second call finds the
+    // selection it left and checks the rows once more.
+    const second = await native.removeBundle(name)
+    const retryFailure = nativeManagerFailure(second)
+    if (retryFailure === undefined) return { deselected: false, remedy: '' }
+    return {
+      failure: retryFailure,
+      deselected: await this.bundleSelectionLost(name),
+      remedy: '；该插件仍由当前 DSH 进程加载，重启 DSH 后再执行本次更新即可',
+    }
+  }
+
+  /** Whether a bundle is still an installed dependency but no longer selected. */
+  private async bundleSelectionLost(name: string): Promise<boolean> {
+    try {
+      const manifest = await readProfileManifest(this.facts.packageJsonPath)
+      return Object.hasOwn(manifest.dependencies, name) && !manifest.bundles.includes(name)
+    } catch {
+      return false
+    }
+  }
+
+  /** Put a selection back after a refused removal, so the profile is as it was found. */
+  private async restoreBundleSelection(native: NativePluginManager, name: string): Promise<void> {
+    if (native.setBundleEnabled === undefined) return
+    try {
+      await native.setBundleEnabled(name, true)
+    } catch (error) {
+      console.warn(`[plugin-manager] 未能恢复 ${name} 的 bundle 启用状态：${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   /** Start a deterministic legacy aggregate migration. */
