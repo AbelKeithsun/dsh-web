@@ -1,0 +1,5 @@
+# Bilingual-pair consistency record (docs/i18n.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with git hash-object.
+.agents/notes/implemented/bug-fix/2026-10-19-reverse-proxy-loopback-fence.md: 86b3063877e0030885e6b076d536705a4c8b1f9a
+.agents/notes/implemented/bug-fix/2026-10-19-reverse-proxy-loopback-fence.zh.md: cc0a093c863f3634dc1881dddb6157e838394c44

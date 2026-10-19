@@ -824,6 +824,79 @@ describe('/api/pair routes', () => {
     }
   })
 
+  it('operator behind a reverse proxy is refused the loopback-only control planes', async () => {
+    // Given a pairing server reached by a proxy that dials 127.0.0.1: the
+    // socket is loopback and the rewritten Host matches the upstream literal,
+    // which is exactly what a Cloudflare tunnel, frp or nginx produces.
+    const service = makeService()
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      const loopbackHost = '127.0.0.1:' + String(port)
+      // When the forwarded request reaches the control plane
+      const issueViaCf = await call(port, 'POST', '/api/pair/issue', {
+        host: loopbackHost,
+        body: {},
+        headers: { 'cf-connecting-ip': '203.0.113.7' },
+      })
+      const issueViaXff = await call(port, 'POST', '/api/pair/issue', {
+        host: loopbackHost,
+        body: {},
+        headers: { 'x-forwarded-for': '203.0.113.7' },
+      })
+      const stopViaXff = await call(port, 'POST', '/api/pair/stop', {
+        host: loopbackHost,
+        body: {},
+        headers: { 'x-forwarded-for': '203.0.113.7' },
+      })
+      // Then every one of them fails the loopback fence
+      expect(issueViaCf.status).toBe(403)
+      expect(issueViaCf.body).toMatchObject({ ok: false, code: 'forbidden' })
+      expect(issueViaXff.status).toBe(403)
+      expect(stopViaXff.status).toBe(403)
+      // And the same calls without a forwarding header still serve the desktop.
+      const direct = await call(port, 'POST', '/api/pair/issue', { host: loopbackHost, body: {} })
+      expect(direct.status).toBe(200)
+    } finally {
+      await close()
+    }
+  })
+
+  it('operator behind a reverse proxy never sees the desktop pairing snapshot', async () => {
+    // Given a running pairing service with a public base configured
+    const service = makeService()
+    service.setPublicBaseUrl('https://phone.example.com')
+    service.issue('ws-7', undefined)
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      const loopbackHost = '127.0.0.1:' + String(port)
+      // When a tunnel-forwarded caller that looks loopback asks for the status
+      const forwarded = await call(port, 'GET', '/api/pair/status', {
+        host: loopbackHost,
+        headers: { 'cf-connecting-ip': '203.0.113.7' },
+      })
+      // Then it is not the desktop: the Host it presents is the proxy's own
+      // upstream literal, which is no served authority, so the phone-facing
+      // fence refuses it instead of handing out the loopback snapshot.
+      expect(forwarded.status).toBe(403)
+      expect(forwarded.body).toMatchObject({ ok: false, code: 'forbidden' })
+      expect(forwarded.body).not.toHaveProperty('tokenExpiresAt')
+      // The direct desktop call still gets the full pairing-relevant view.
+      const direct = await call(port, 'GET', '/api/pair/status', { host: loopbackHost })
+      expect(direct.status).toBe(200)
+      expect(direct.body).toHaveProperty('tokenExpiresAt')
+      // A proxy that passes the public authority through keeps the LAN view.
+      const viaPublicHost = await call(port, 'GET', '/api/pair/status', {
+        host: 'phone.example.com',
+        headers: { 'cf-connecting-ip': '203.0.113.7' },
+      })
+      expect(viaPublicHost.status).toBe(200)
+      expect(viaPublicHost.body).toMatchObject({ ok: true, paired: false })
+      expect(viaPublicHost.body).not.toHaveProperty('tokenExpiresAt')
+    } finally {
+      await close()
+    }
+  })
+
   it('rejects non-GET/POST methods with 405', async () => {
     const service = makeService()
     const { port, close } = await serve(makeRoutes({ service }))
