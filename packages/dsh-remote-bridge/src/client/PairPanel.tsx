@@ -1,19 +1,29 @@
 /**
- * The protocol v1 pairing panel body: the QR symbol, the same secret in
- * plaintext, the 30 s countdown with its expiry state, the refresh action, and
- * the two facts the reader must not miss — the phone's origin is the public
- * relay (never this machine's loopback address), and the code is one-shot.
+ * The protocol v1 pairing panel: the QR symbol, the countdown with its expiry
+ * state, the one address fact the reader must not miss, and the two actions that
+ * keep a fresh code on screen.
  *
- * Pure presentation: every state and action arrives through props, and the
- * clock is a prop, so the expiry flip is deterministic instead of read from
- * `Date.now()` here.
+ * The shell is the official headless `Modal` and every action is the official
+ * `Button`, so the overlay, the mask, the card, the focus trap, the Escape
+ * command and the interaction states belong to the library. This file owns the
+ * information order and the state presentation only: every state and action
+ * arrives through props, and the clock is a prop, so the expiry flip is
+ * deterministic instead of read from `Date.now()` here.
  */
-import { memo } from 'react'
+import { memo, useLayoutEffect, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import {
+  Button, IconCheckOutlineRegular, IconCloseOutlineRegular, IconCopyOutlineRegular,
+  IconRefreshOutlineRegular, IconWarningOutlineRegular, Modal,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import { CheckIcon, CloseIcon, CopyIcon, RefreshIcon } from './icons.tsx'
-import { PART_COPY, PART_NOTICE, PART_PANEL, PART_QR, PART_REFRESH, PART_TOKEN, PLUGIN_ATTR, QR_VALUE_ATTR } from './semantic.ts'
+import {
+  EXPIRED_ATTR, PART_COPY, PART_NOTICE, PART_PANEL, PART_QR, PART_REFRESH, PLUGIN_ATTR, QR_VALUE_ATTR,
+} from './semantic.ts'
 import css from './panel.module.css'
+
+/** The custom property carrying the dialog's own enter keyframe name. */
+const EXIT_NAME_VAR = '--pair-exit-name'
 
 /** What the panel is currently showing. */
 export type PairPanelState =
@@ -45,9 +55,17 @@ export interface PairPanelProps {
   /** This page's own `host:port`, named in the origin warning. */
   host: string
   copy: PairCopyState
+  /** Whether the modal is mounted at all (the entry keeps it for the leave leg). */
+  showing: boolean
+  /** Whether the leave leg is running; the card stays mounted until it ends. */
+  closing: boolean
+  /** The panel element's id, so the seat trigger can name what it expands. */
+  id: string
   onClose(): void
+  /** The leave leg reported completion: the entry may unmount the modal now. */
+  onExited(): void
   onRefresh(): void
-  onCopy(token: string): void
+  onCopy(payload: string): void
 }
 
 /**
@@ -62,14 +80,9 @@ const PairQrCode = memo(function PairQrCode({ value, label }: { value: string; l
   return <QRCodeSVG value={value} size={184} level="M" marginSize={1} aria-label={label} />
 })
 
-/** One state notice: a title and, when there is one, the sentence explaining it. */
-function Notice({ tone, title, body }: { tone: 'plain' | 'warning' | 'alert'; title: string; body?: string }) {
-  return (
-    <div className={css.notice} data-dsh-part={PART_NOTICE} data-tone={tone} role={tone === 'plain' ? 'status' : 'alert'}>
-      <p className={css.noticeTitle}>{title}</p>
-      {body !== undefined && <p className={css.noticeBody}>{body}</p>}
-    </div>
-  )
+/** The one string the panel hands out: what the symbol encodes, what copy copies. */
+function payloadOf(state: PairPanelState): string {
+  return state.kind === 'ready' ? (state.pairingUrl ?? state.token) : ''
 }
 
 /**
@@ -77,107 +90,162 @@ function Notice({ tone, title, body }: { tone: 'plain' | 'warning' | 'alert'; ti
  * @param props - locale seat, view state, clock, page host and actions.
  * @returns the panel element tree.
  */
-export function PairPanel({ t, state, now, host, copy, onClose, onRefresh, onCopy }: PairPanelProps) {
-  const remainingMs = state.kind === 'ready' ? Math.max(0, state.expiresAt - now) : 0
-  const expired = state.kind === 'ready' && remainingMs <= 0
+export function PairPanel({
+  t, state, now, host, copy, showing, closing, id, onClose, onExited, onRefresh, onCopy,
+}: PairPanelProps) {
+  const panel = useRef<HTMLDivElement | null>(null)
+  const ready = state.kind === 'ready'
+  const remainingMs = ready ? Math.max(0, state.expiresAt - now) : 0
+  const expired = ready && remainingMs <= 0
   const seconds = Math.ceil(remainingMs / 1000)
-  const windowMs = state.kind === 'ready' ? Math.max(1, state.expiresAt - state.issuedAt) : 1
+  const windowMs = ready ? Math.max(1, state.expiresAt - state.issuedAt) : 1
   const percent = Math.min(100, Math.max(0, Math.round((remainingMs / windowMs) * 100)))
-  // What the QR encodes and what the copy button hands over: the same string,
-  // so a human can paste exactly what a camera would have read.
-  const payload = state.kind === 'ready' ? (state.pairingUrl ?? state.token) : ''
+  const payload = payloadOf(state)
+  const canCopy = ready && !expired && payload !== ''
+  // A refusal the host raised is retried; a live or expired code is minted again.
+  const primaryLabel = state.kind === 'failed' || state.kind === 'unreachable' ? t('action.retry') : t('pair.refresh')
+  const located = ready && state.pairingUrl !== null
+
+  // The library owns the enter animation and the bundler scopes its keyframe
+  // name, so the leave leg cannot name it in CSS. Read the mounted dialog's own
+  // animation at the moment closing starts and hand it to the card: the exit
+  // then plays that exact keyframe backwards (M2, same path reversed). Clearing
+  // it on reopen is what lets the same card come back to full opacity.
+  useLayoutEffect(() => {
+    const element = panel.current
+    if (element === null) return
+    if (!closing) {
+      element.style.removeProperty(EXIT_NAME_VAR)
+      return
+    }
+    const dialog = element.parentElement
+    const enter = dialog === null ? '' : window.getComputedStyle(dialog).animationName
+    if (enter !== '' && enter !== 'none') element.style.setProperty(EXIT_NAME_VAR, enter)
+  }, [closing])
 
   return (
-    <div className={css.overlay} role="presentation">
-      <div className={css.mask} aria-hidden="true" onClick={onClose} />
+    <Modal open={showing} onClose={onClose} title={t('title')} headless className={css.dialog}>
       <div
+        ref={panel}
+        id={id}
         className={css.panel}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('title')}
         data-dsh-plugin={PLUGIN_ATTR}
         data-dsh-part={PART_PANEL}
+        data-closing={closing || undefined}
+        onAnimationEnd={(event) => {
+          if (closing && event.target === event.currentTarget) onExited()
+        }}
+        onTransitionEnd={(event) => {
+          if (closing && event.target === event.currentTarget && event.propertyName === 'opacity') onExited()
+        }}
       >
-        <div className={css.header}>
+        <header className={css.header}>
           <div className={css.heading}>
             <h2 className={css.title}>{t('title')}</h2>
             <p className={css.subtitle}>{t('subtitle')}</p>
           </div>
-          <button type="button" className={css.closeButton} aria-label={t('action.close')} onClick={onClose}>
-            <CloseIcon />
-          </button>
-        </div>
+          <Button
+            className={css.close}
+            variant="ghost"
+            size="sm"
+            aria-label={t('action.close')}
+            icon={<IconCloseOutlineRegular />}
+            onClick={onClose}
+          />
+        </header>
 
-        {state.kind === 'reading' && <Notice tone="plain" title={t('state.reading')} />}
-
-        {state.kind === 'forbidden' && (
-          <Notice tone="alert" title={t('forbidden.title')} body={t('forbidden.body')} />
-        )}
-
-        {state.kind === 'failed' && (
-          <Notice tone="alert" title={t('failed.title')} body={t('failed.body', { status: String(state.status) })} />
-        )}
-
-        {state.kind === 'unreachable' && (
-          <Notice tone="alert" title={t('unreachable.title')} body={t('unreachable.body')} />
-        )}
-
-        {state.kind === 'ready' && (
-          <>
-            <div className={css.qrCard}>
-              <div className={css.qrWrap} data-dsh-part={PART_QR} {...{ [QR_VALUE_ATTR]: payload }}>
-                <PairQrCode value={payload} label={t('pair.qrLabel')} />
+        <div className={css.body}>
+          {(state.kind === 'forbidden' || state.kind === 'failed' || state.kind === 'unreachable') && (
+            <div className={css.notice} data-dsh-part={PART_NOTICE} data-tone="alert" role="alert">
+              <span className={css.noticeIcon} aria-hidden="true"><IconWarningOutlineRegular /></span>
+              <div className={css.noticeCopy}>
+                <p className={css.noticeTitle}>
+                  {state.kind === 'forbidden' && t('forbidden.title')}
+                  {state.kind === 'failed' && t('failed.title')}
+                  {state.kind === 'unreachable' && t('unreachable.title')}
+                </p>
+                <p className={css.noticeText}>
+                  {state.kind === 'forbidden' && t('forbidden.body')}
+                  {state.kind === 'failed' && t('failed.body', { status: String(state.status) })}
+                  {state.kind === 'unreachable' && t('unreachable.body')}
+                </p>
               </div>
-              {expired ? (
-                <Notice tone="alert" title={t('pair.expired')} body={t('pair.expiredHint')} />
-              ) : (
-                <div className={css.countdown}>
-                  <span className={css.countdownText}>{t('pair.countdown', { s: String(seconds) })}</span>
-                  <span className={css.bar}>
-                    <span className={css.barFill} style={{ width: `${String(percent)}%` }} />
-                  </span>
+            </div>
+          )}
+
+          {(state.kind === 'reading' || ready) && (
+            <>
+              <div className={css.qrCard}>
+                <div
+                  className={css.qrSlot}
+                  data-dsh-part={PART_QR}
+                  {...{ [QR_VALUE_ATTR]: payload }}
+                  {...{ [EXPIRED_ATTR]: expired || undefined }}
+                >
+                  {ready ? (
+                    <PairQrCode value={payload} label={t('pair.qrLabel')} />
+                  ) : (
+                    <span className={css.skeleton} aria-hidden="true" />
+                  )}
                 </div>
-              )}
-            </div>
+                <div className={css.status}>
+                  {!ready && <p className={css.statusText}>{t('state.reading')}</p>}
+                  {ready && expired && <p className={css.statusText} role="status">{t('pair.expired')}</p>}
+                  {ready && !expired && (
+                    <>
+                      <p className={css.statusText}>{t('pair.countdown', { s: String(seconds) })}</p>
+                      <span className={css.bar} aria-hidden="true">
+                        <span className={css.barFill} style={{ width: `${String(percent)}%` }} />
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
 
-            <div className={css.tokenRow} data-dsh-part={PART_TOKEN}>
-              <span className={css.tokenLabel}>{t('pair.payloadLabel')}</span>
-              <code className={css.token}>{payload}</code>
-            </div>
-
-            <button
-              type="button"
-              className={css.copyButton}
-              data-dsh-part={PART_COPY}
-              data-copied={copy === 'copied'}
-              data-failed={copy === 'failed'}
-              onClick={() => { onCopy(payload) }}
-            >
-              {copy === 'copied' ? <CheckIcon /> : <CopyIcon />}
-              {copy === 'copied' ? t('action.copied') : copy === 'failed' ? t('action.copyFailed') : t('action.copy')}
-            </button>
-
-            {state.pairingUrl === null ? (
-              <Notice tone="warning" title={t('origin.title')} body={t('origin.body', { host })} />
-            ) : (
-              <Notice
-                tone="plain"
-                title={t('origin.located.title')}
-                body={t('origin.located.body', { origin: state.origin ?? '' })}
-              />
-            )}
-          </>
-        )}
-
-        <div className={css.actions}>
-          {state.kind !== 'reading' && state.kind !== 'forbidden' && (
-            <button type="button" className={css.refresh} data-dsh-part={PART_REFRESH} onClick={onRefresh}>
-              <RefreshIcon />
-              {t('pair.refresh')}
-            </button>
+              <p className={css.address} data-tone={located ? 'plain' : 'warning'}>
+                {ready && located && t('origin.located', { origin: state.origin ?? '' })}
+                {ready && !located && t('origin.missing', { host })}
+              </p>
+              <p className={css.hint}>{t('pair.usedHint')}</p>
+            </>
           )}
         </div>
+
+        <footer className={css.actions}>
+          <Button
+            variant="outline"
+            size="sm"
+            data-dsh-part={PART_COPY}
+            disabled={!canCopy}
+            icon={copy === 'copied' ? <IconCheckOutlineRegular /> : <IconCopyOutlineRegular />}
+            onClick={() => { onCopy(payload) }}
+          >
+            <span className={css.labels}>
+              <span className={css.label} data-visible={copy === 'idle'} aria-hidden={copy !== 'idle'}>
+                {t('action.copy')}
+              </span>
+              <span className={css.label} data-visible={copy === 'copied'} aria-hidden={copy !== 'copied'}>
+                {t('action.copied')}
+              </span>
+              <span className={css.label} data-visible={copy === 'failed'} aria-hidden={copy !== 'failed'}>
+                {t('action.copyFailed')}
+              </span>
+            </span>
+          </Button>
+          {state.kind !== 'forbidden' && (
+            <Button
+              variant="primary"
+              size="sm"
+              data-dsh-part={PART_REFRESH}
+              disabled={state.kind === 'reading'}
+              icon={<IconRefreshOutlineRegular />}
+              onClick={onRefresh}
+            >
+              {primaryLabel}
+            </Button>
+          )}
+        </footer>
       </div>
-    </div>
+    </Modal>
   )
 }

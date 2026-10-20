@@ -14,13 +14,10 @@ export const PART_ENTRY = 'entry'
 /** The modal panel root. */
 export const PART_PANEL = 'panel'
 
-/** The QR symbol's wrapper — it also mirrors the encoded string. */
+/** The QR symbol's box — it also mirrors the encoded string. */
 export const PART_QR = 'qr'
 
-/** The plaintext pairing code row. */
-export const PART_TOKEN = 'token'
-
-/** A state notice: the origin warning, or a refusal the host raised. */
+/** A refusal the host raised. */
 export const PART_NOTICE = 'notice'
 
 /** The mint-again button. */
@@ -32,6 +29,13 @@ export const PART_COPY = 'copy'
 /**
  * Attribute carrying the exact string the QR symbol encodes, so the operator
  * (and a UI check) can compare it against the host route's answer without
- * decoding the symbol. The same string is already on screen in plaintext.
+ * decoding the symbol. It is the only machine trace the panel renders.
  */
 export const QR_VALUE_ATTR = 'data-dsh-qr-value'
+
+/**
+ * Marks the QR part of a code that has run out of time. Expiry is state on the
+ * existing part, not a new part value: the cross-repository part enum is frozen
+ * and a plugin may not extend it for one visual state.
+ */
+export const EXPIRED_ATTR = 'data-expired'

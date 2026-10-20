@@ -5,14 +5,14 @@
  * (declared by ui-sidebar — the same seat dsh-remote-web-ui and dsh-update
  * share).
  *
- * This component owns the panel's behavior: one read per open, one clock tick
- * while a live code is on screen, the mint-again action, and the copy action.
- * The wire call and the clipboard are injected (see the plugin entry), so the
- * rendered tree carries no closure-factory bundle import and both can be driven
- * by a test without patching a module.
+ * This component owns the panel's presence and behavior: one read per open, one
+ * clock tick while a live code is on screen, the mint-again action, the copy
+ * action, and the leave leg that keeps the modal mounted until its exit reports
+ * completion. The wire call and the clipboard are injected (see the plugin
+ * entry), so the rendered tree carries no closure-factory bundle import and both
+ * can be driven by a test without patching a module.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { PairPanel, type PairCopyState, type PairPanelState } from './PairPanel.tsx'
 import type { PairTokenOutcome } from './pair-token.ts'
@@ -24,6 +24,19 @@ import css from './panel.module.css'
 const COPY_FEEDBACK_MS = 1_500
 /** The countdown's tick; one second is the resolution the panel shows. */
 const TICK_MS = 1_000
+/**
+ * Upper bound on the leave leg. The card reports its own animation end, and the
+ * reduced-motion fade reports a transition end; this only ends the presence of a
+ * browser that reports neither, just past var(--ds-transition-duration).
+ */
+const EXIT_TIMEOUT_MS = 260
+
+/**
+ * The modal's presence. `closing` is a state of its own: the card stays mounted
+ * for its reverse exit and unmounts only when that exit reports completion,
+ * instead of disappearing on the same tick as the click.
+ */
+type Presence = 'closed' | 'open' | 'closing'
 
 export type PairEntryProps = PropsLocale<'remote-bridge'> & {
   /** Whether the sidebar renders wide content (false = 56px rail). */
@@ -53,15 +66,16 @@ function panelStateOf(outcome: PairTokenOutcome, issuedAt: number): PairPanelSta
 }
 
 /**
- * Render the pairing seat trigger and, when open, the panel.
+ * Render the pairing seat trigger and, while it is open or leaving, the panel.
  * @param props - the footer seat's column state, the injected actions and the locale seat.
- * @returns the trigger and the panel portal.
+ * @returns the trigger and, when present, the official Modal holding the panel.
  */
 export function PairEntry({ wide, read, copy, t }: PairEntryProps) {
-  const [open, setOpen] = useState(false)
+  const [presence, setPresence] = useState<Presence>('closed')
   const [state, setState] = useState<PairPanelState>({ kind: 'reading' })
   const [copyState, setCopyState] = useState<PairCopyState>('idle')
   const [now, setNow] = useState<number>(() => Date.now())
+  const panelId = useId()
   // Generation counter: closing (or minting again) invalidates a read that is
   // still in flight, so an answer that lands after the panel closed cannot
   // resurrect a code nobody asked for.
@@ -79,20 +93,38 @@ export function PairEntry({ wide, read, copy, t }: PairEntryProps) {
   }, [read])
 
   const openPanel = useCallback((): void => {
-    setOpen(true)
+    setPresence('open')
     setCopyState('idle')
     mint()
   }, [mint])
 
-  const closePanel = useCallback((): void => {
+  // Escape, the mask click, the focus trap and focus restoration belong to the
+  // official Modal; this only decides what closing means for the presence, and
+  // it invalidates a read that is still in flight.
+  const requestClose = useCallback((): void => {
     generation.current += 1
-    setOpen(false)
+    setPresence((current) => (current === 'closed' ? 'closed' : 'closing'))
   }, [])
+
+  const finishClose = useCallback((): void => {
+    setPresence((current) => (current === 'closing' ? 'closed' : current))
+  }, [])
+
+  const closing = presence === 'closing'
+  const showing = presence !== 'closed'
+
+  // Safety net for the leave leg: the card normally reports its own animation or
+  // transition end, and this bound covers the case where neither arrives.
+  useEffect(() => {
+    if (!closing) return
+    const timer = window.setTimeout(() => { finishClose() }, EXIT_TIMEOUT_MS)
+    return () => { window.clearTimeout(timer) }
+  }, [closing, finishClose])
 
   // One ticker per live code; it clears itself at the deadline, so a panel left
   // open on an expired code stops re-rendering instead of ticking forever.
   useEffect(() => {
-    if (!open || state.kind !== 'ready') return
+    if (presence !== 'open' || state.kind !== 'ready') return
     const deadline = state.expiresAt
     const timer = window.setInterval(() => {
       const current = Date.now()
@@ -100,19 +132,10 @@ export function PairEntry({ wide, read, copy, t }: PairEntryProps) {
       if (current >= deadline) window.clearInterval(timer)
     }, TICK_MS)
     return () => { window.clearInterval(timer) }
-  }, [open, state])
+  }, [presence, state])
 
-  useEffect(() => {
-    if (!open) return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') closePanel()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener('keydown', onKey) }
-  }, [open, closePanel])
-
-  const handleCopy = useCallback((token: string): void => {
-    void copy(token).then((ok) => {
+  const handleCopy = useCallback((payload: string): void => {
+    void copy(payload).then((ok) => {
       setCopyState(ok ? 'copied' : 'failed')
       window.setTimeout(() => { setCopyState('idle') }, COPY_FEEDBACK_MS)
     })
@@ -127,24 +150,28 @@ export function PairEntry({ wide, read, copy, t }: PairEntryProps) {
         data-dsh-part={PART_ENTRY}
         data-wide={wide ? 'wide' : 'rail'}
         aria-label={t('entry.label')}
-        aria-expanded={open}
+        aria-expanded={showing}
+        aria-controls={showing ? panelId : undefined}
         title={t('entry.label')}
         onClick={openPanel}
       >
         <QrIcon />
       </button>
-      {open && createPortal(
+      {showing && (
         <PairPanel
+          id={panelId}
           t={t}
           state={state}
           now={now}
           host={window.location.host}
           copy={copyState}
-          onClose={closePanel}
+          showing={showing}
+          closing={closing}
+          onClose={requestClose}
+          onExited={finishClose}
           onRefresh={mint}
           onCopy={handleCopy}
-        />,
-        document.body,
+        />
       )}
     </>
   )
