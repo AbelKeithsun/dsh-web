@@ -112,7 +112,7 @@ dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方�
 
 | 多列看板与智能体协作 | 后台定时调度与参数配置 |
 | --- | --- |
-| ![DeepSeek Harness 任务看板界面 — AI 智能体多列任务状态流转与并发执行](docs/screenshots/09-task-board.png) | ![DeepSeek 任务后台定时执行设置 — Cron 表达式与无人值守自动化调度](docs/screenshots/10-task-board-detail-cron.png) |
+| ![DeepSeek Harness 任务看板界面 — AI 智能体多列任务状态流转与并发执行](docs/screenshots/09-task-board.png) | ![DeepSeek 任务详情与后台定时执行设置 — 智能体参数配置、Cron 调度与执行历史](docs/screenshots/10-task-board-detail-cron.png) |
 
 ### 移动端远程控制（Mobile Remote · 手机访问与跨设备触控优化）
 

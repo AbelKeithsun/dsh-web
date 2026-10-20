@@ -112,7 +112,7 @@ Open from the "Task Board" icon in the sidebar. More than a visual card interfac
 
 | Multi-Column Board & Agent Collaboration | Background Scheduling & Configuration |
 | --- | --- |
-| ![DeepSeek Harness Task Board — AI agent multi-column task scheduling and lifecycle](docs/screenshots/09-task-board.png) | ![DeepSeek Task Scheduling — Cron expressions and persistent background automation](docs/screenshots/10-task-board-detail-cron.png) |
+| ![DeepSeek Harness Task Board — AI agent multi-column task scheduling and lifecycle](docs/screenshots/09-task-board.png) | ![DeepSeek Task Details & Scheduled Execution — Agent configuration, cron scheduling, and run history](docs/screenshots/10-task-board-detail-cron.png) |
 
 ### Mobile Remote Control（Mobile Remote · Mobile Access & Cross-Device Touch Optimization）
 
