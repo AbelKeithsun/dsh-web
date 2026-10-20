@@ -380,3 +380,18 @@
 .label[data-visible='false'] {
   visibility: hidden;
 }
+
+/* The copy outcome as a live region. The label swap above confirms the result
+   on screen, but a control's name is spoken when focus lands on it, so the
+   change itself can pass unheard; this region says it instead. It takes no part
+   in the row: out of flow, no box, clipped away, with no type, colour or length
+   of its own, so the action row keeps the geometry it had. */
+.announce {
+  position: absolute;
+  width: 0;
+  height: 0;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(0);
+}

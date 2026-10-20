@@ -18,7 +18,7 @@
  */
 import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
@@ -195,14 +195,50 @@ describe('protocol v1 pairing panel', () => {
   it('operator can copy a live code and cannot copy an expired one', () => {
     // Given a live code, then the same code past its deadline
     const live = mount(liveCode(null, null))
-    // When each render's copy action is inspected
-    const liveCopy = live.container.querySelector('[data-dsh-part="copy"]')
-    // Then copy follows the deadline instead of handing out a dead string
-    expect(liveCopy?.hasAttribute('disabled')).toBe(false)
+    // When each render's copy action is looked up by the name it offers
+    const liveCopy = within(live.container).getByRole('button', { name: zh['action.copy'] })
+    // Then copy follows the deadline instead of handing out a dead string: the
+    // action is there in both renders, and only its availability moves
+    expect(liveCopy.hasAttribute('disabled')).toBe(false)
     cleanup()
     const dead = mount(liveCode(null, null), { now: ISSUED_AT + WINDOW_MS + 1_000 })
-    const deadCopy = dead.container.querySelector('[data-dsh-part="copy"]')
-    expect(deadCopy?.hasAttribute('disabled')).toBe(true)
+    const deadCopy = within(dead.container).getByRole('button', { name: zh['action.copy'] })
+    expect(deadCopy.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('operator in a state with no code on screen is offered no copy action at all', () => {
+    // Given the four states that hold no secret to hand out
+    const states: PairPanelState[] = [
+      { kind: 'reading' },
+      { kind: 'forbidden' },
+      { kind: 'failed', status: 500 },
+      { kind: 'unreachable' },
+    ]
+    for (const state of states) {
+      // When each renders
+      const panel = mount(state)
+      // Then there is no copy action to press, not even a switched-off one: an
+      // action that cannot run is not on screen to be read or tabbed to
+      expect(within(panel.container).queryByRole('button', { name: zh['action.copy'] })).toBeNull()
+      expect(panel.container.querySelector('[data-dsh-part="copy"]')).toBeNull()
+      cleanup()
+    }
+  })
+
+  it('operator hears the copy outcome from a live region that is silent while idle', () => {
+    // Given a live code whose copy has not been attempted
+    const idle = mount(liveCode(null, null))
+    // When the panel's live region is read
+    // Then it holds nothing, so no stale outcome is announced on open
+    expect(within(idle.container).getByRole('status').textContent).toBe('')
+    cleanup()
+    // When the copy succeeded, then the write was refused
+    const copied = mount(liveCode(null, null), { copy: 'copied' })
+    const failed = mount(liveCode(null, null), { copy: 'failed' })
+    // Then the same region carries each outcome in words, so the result is
+    // spoken instead of only redrawn on the focused button
+    expect(within(copied.container).getByRole('status').textContent).toBe(zh['action.copied'])
+    expect(within(failed.container).getByRole('status').textContent).toBe(zh['action.copyFailed'])
   })
 
   it('operator asked to act again gets a new code from a live code and a retry from a refusal', () => {

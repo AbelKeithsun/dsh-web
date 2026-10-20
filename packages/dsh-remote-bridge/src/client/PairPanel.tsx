@@ -101,7 +101,9 @@ export function PairPanel({
   const windowMs = ready ? Math.max(1, state.expiresAt - state.issuedAt) : 1
   const percent = Math.min(100, Math.max(0, Math.round((remainingMs / windowMs) * 100)))
   const payload = payloadOf(state)
-  const canCopy = ready && !expired && payload !== ''
+  // Only a live code can be handed out. An expired one is still on screen, so
+  // its button stays put and reports that it is switched off.
+  const canCopy = !expired && payload !== ''
   // A refusal the host raised is retried; a live or expired code is minted again.
   const primaryLabel = state.kind === 'failed' || state.kind === 'unreachable' ? t('action.retry') : t('pair.refresh')
   const located = ready && state.pairingUrl !== null
@@ -211,28 +213,33 @@ export function PairPanel({
           )}
         </div>
 
-        <footer className={css.actions}>
-          <Button
-            variant="outline"
-            size="sm"
-            data-dsh-part={PART_COPY}
-            disabled={!canCopy}
-            icon={copy === 'copied' ? <IconCheckOutlineRegular /> : <IconCopyOutlineRegular />}
-            onClick={() => { onCopy(payload) }}
-          >
-            <span className={css.labels}>
-              <span className={css.label} data-visible={copy === 'idle'} aria-hidden={copy !== 'idle'}>
-                {t('action.copy')}
-              </span>
-              <span className={css.label} data-visible={copy === 'copied'} aria-hidden={copy !== 'copied'}>
-                {t('action.copied')}
-              </span>
-              <span className={css.label} data-visible={copy === 'failed'} aria-hidden={copy !== 'failed'}>
-                {t('action.copyFailed')}
-              </span>
-            </span>
-          </Button>
-          {state.kind !== 'forbidden' && (
+        {/* The row exists only while it holds an action: a refusal offers
+            nothing to press, and copy itself needs a code to hand out. An
+            actionless row would still spend the panel's own gap. */}
+        {state.kind !== 'forbidden' && (
+          <footer className={css.actions}>
+            {ready && (
+              <Button
+                variant="outline"
+                size="sm"
+                data-dsh-part={PART_COPY}
+                disabled={!canCopy}
+                icon={copy === 'copied' ? <IconCheckOutlineRegular /> : <IconCopyOutlineRegular />}
+                onClick={() => { onCopy(payload) }}
+              >
+                <span className={css.labels}>
+                  <span className={css.label} data-visible={copy === 'idle'} aria-hidden={copy !== 'idle'}>
+                    {t('action.copy')}
+                  </span>
+                  <span className={css.label} data-visible={copy === 'copied'} aria-hidden={copy !== 'copied'}>
+                    {t('action.copied')}
+                  </span>
+                  <span className={css.label} data-visible={copy === 'failed'} aria-hidden={copy !== 'failed'}>
+                    {t('action.copyFailed')}
+                  </span>
+                </span>
+              </Button>
+            )}
             <Button
               variant="primary"
               size="sm"
@@ -243,8 +250,17 @@ export function PairPanel({
             >
               {primaryLabel}
             </Button>
-          )}
-        </footer>
+          </footer>
+        )}
+
+        {/* Renaming the button under the pointer is not announced: a control's
+            label is reported when focus lands on it, not when it changes. The
+            outcome is said once from this region instead, and said as nothing
+            while there is no outcome to report. */}
+        <div className={css.announce} role="status">
+          {copy === 'copied' && t('action.copied')}
+          {copy === 'failed' && t('action.copyFailed')}
+        </div>
       </div>
     </Modal>
   )
