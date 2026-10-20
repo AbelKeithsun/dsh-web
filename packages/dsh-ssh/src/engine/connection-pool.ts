@@ -115,20 +115,31 @@ export function buildConnectConfig(entry: SshHostEntry, sock: ConnectConfig['soc
   return config
 }
 
+/**
+ * The default ssh-agent endpoint on Windows: the named pipe the native
+ * OpenSSH ssh-agent service listens on. ssh2 connects to a named pipe for any
+ * path matching its Windows pipe form, so the default is a real endpoint
+ * rather than a protocol name (#1910). PuTTY Pageant is still reachable — it
+ * is what the literal `pageant` agent path selects — but it is no longer the
+ * assumption.
+ */
+export const WINDOWS_AGENT_PIPE = '\\\\.\\pipe\\openssh-ssh-agent'
+
 /** Resolve the ssh2 agent path for 'agent' auth. */
 export function resolveAgentPath(agentPath?: string): string | undefined {
   const explicit = normalizeAgentPath(agentPath)
   if (explicit !== undefined) return explicit
   const sock = process.env.SSH_AUTH_SOCK
   if (sock !== undefined && sock !== '') return sock
-  if (process.platform === 'win32') return 'pageant'
+  if (process.platform === 'win32') return WINDOWS_AGENT_PIPE
   return undefined
 }
 
 /**
  * Resolve the ssh-agent endpoint that forwarding brokers signatures through:
- * an explicitly configured agent path wins, then SSH_AUTH_SOCK, then Pageant
- * on Windows. Undefined means no endpoint exists on this machine.
+ * an explicitly configured agent path wins, then SSH_AUTH_SOCK, then the
+ * native OpenSSH named pipe on Windows. Undefined means no endpoint exists on
+ * this machine.
  *
  * Forwarding shares the auth resolution on purpose — the endpoint a host
  * signs through is the same one it authenticates with — but it is a separate
