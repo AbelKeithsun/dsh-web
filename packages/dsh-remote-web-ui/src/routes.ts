@@ -24,12 +24,32 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { z, type ZodType } from 'zod'
 import { UnknownLanAddressError, type PairingService, type PairingSnapshot } from './pairing.ts'
-import { isLoopbackAddress } from './loopback.ts'
-import { isLoopbackClient, readCookie } from './gate.ts'
+import { isLoopbackAddress, isProxiedRequest } from './loopback.ts'
+import { isLoopbackClient, isLoopbackUpstream, readCookie } from './gate.ts'
 import { readJsonBody, writeJson } from './http.ts'
 import { createPairGrantStore, type PairGrantStore } from './pair-grant.ts'
 import { REMOTE_HOST_GRANT_GLOBAL } from './remote-channel-rules.ts'
 import { appShellLanSwitchScript, type LanSourceHop } from './lan-source.ts'
+
+/**
+ * Whether one configured authority names the URL's authority: a port-less
+ * entry matches the hostname on any port, an exact `host:port` entry matches
+ * that authority verbatim (WHATWG normalization both sides). A malformed entry
+ * (a config or DSH_REMOTE_TRUSTED_HOSTS typo) contributes no trust instead of
+ * throwing out of the fence, so the valid entries are still consulted.
+ * @param entry - one `host` or `host:port` literal this surface serves.
+ * @param url - the parsed authority to match.
+ * @returns true when the entry names that authority.
+ */
+function matchesAuthority(entry: string, url: URL): boolean {
+  let entryUrl: URL
+  try {
+    entryUrl = new URL(`http://${entry}`)
+  } catch {
+    return false
+  }
+  return entryUrl.port === '' ? entryUrl.hostname === url.hostname : entryUrl.host === url.host
+}
 
 /**
  * Browser-trust fence for the /api/pair routes, mirroring the connection
@@ -42,31 +62,51 @@ import { appShellLanSwitchScript, type LanSourceHop } from './lan-source.ts'
  * @param request - the node HTTP request.
  * @param trustedHosts - non-loopback authorities this surface serves: exact
  * `host:port`, or port-less `host` matching any port.
- * @returns true when the Host is ours (loopback or trusted) and any attached
- * browser markers are same-origin.
+ * @returns true when the Host is ours (a loopback upstream or a trusted
+ * authority) and any attached browser markers are same-origin.
  */
 export function isTrustedApiRequest(request: IncomingMessage, trustedHosts: readonly string[]): boolean {
   if (!isTrustedHost(request, trustedHosts)) return false
   // Cross-site fence: an explicit cross-site marker is refused regardless of
   // Origin (modern browsers label the initiator on every fetch).
   if (request.headers['sec-fetch-site'] === 'cross-site') return false
-  // Origin fence: when a browser attaches an Origin it must be exactly this
-  // authority; absent Origin is fine — the Host fence already bound it.
+  // Origin fence: when a browser attaches an Origin it must be this authority,
+  // or a served one on a rewritten loopback upstream (below); absent Origin is
+  // fine — the Host fence already bound it.
   const origin = request.headers.origin
   if (origin === undefined) return true
+  let originUrl: URL
+  let hostUrl: URL
   try {
-    return new URL(origin).host === new URL(`http://${request.headers.host ?? ''}`).host
+    originUrl = new URL(origin)
+    hostUrl = new URL(`http://${request.headers.host ?? ''}`)
   } catch {
     return false
   }
+  if (originUrl.host === hostUrl.host) return true
+  // A reverse proxy rewrites the Host to its own 127.0.0.1:<port> upstream, so
+  // a legitimate same-origin page presents the public authority in Origin while
+  // the Host header names the rewritten literal (a Cloudflare tunnel, frp and
+  // nginx all produce this). The Origin is accepted only for such a forwarded
+  // request, and only when it names an authority this surface actually serves:
+  // never an arbitrary origin, and never by dropping the equality assertion for
+  // a direct request (issue #1919).
+  if (!isProxiedRequest(request) || !isLoopbackUpstream(request)) return false
+  return trustedHosts.some(entry => matchesAuthority(entry, originUrl))
 }
 
 /**
- * Whether the request's Host is an authority this surface serves: loopback, or
- * a trusted entry (exact `host:port`, or port-less `host` matching any port).
- * The browser-marker checks stay in {@link isTrustedApiRequest}: a pairing
- * entry page is a navigation, and its authority is the token or device
+ * Whether the request's Host is an authority this surface answers at all: a
+ * loopback upstream (the desktop, or a reverse proxy dialing the loopback
+ * literal) or a trusted entry (exact `host:port`, or port-less `host` matching
+ * any port). The browser-marker checks stay in {@link isTrustedApiRequest}: a
+ * pairing entry page is a navigation, and its authority is the token or device
  * credential it carries, not who linked to it.
+ *
+ * This is reachability, not authorization: the desktop payload and every
+ * credential-bearing control plane ask {@link isLoopbackClient} (no forwarding
+ * header) instead, so a tunnel visitor becomes answerable without becoming the
+ * desktop (#1919 closes the reachability bug while #1906 keeps the leak shut).
  * @param request - the node HTTP request.
  * @param trustedHosts - non-loopback authorities this surface serves.
  * @returns true when the Host is ours.
@@ -80,22 +120,7 @@ export function isTrustedHost(request: IncomingMessage, trustedHosts: readonly s
   } catch {
     return false
   }
-  const hostname = hostUrl.hostname
-  return isLoopbackClient(request) || trustedHosts.some(entry => {
-    // A port-less entry matches the hostname on any port; an exact host:port
-    // entry matches that authority verbatim (WHATWG normalization both sides).
-    // A malformed entry (a config or DSH_REMOTE_TRUSTED_HOSTS typo) contributes
-    // no trust instead of throwing out of the fence: every pairing request from
-    // a non-loopback origin would otherwise answer 400 with only a generic
-    // webserver warning, and the valid entries would never be consulted.
-    let entryUrl: URL
-    try {
-      entryUrl = new URL(`http://${entry}`)
-    } catch {
-      return false
-    }
-    return entryUrl.port === '' ? entryUrl.hostname === hostname : entryUrl.host === hostUrl.host
-  })
+  return isLoopbackUpstream(request) || trustedHosts.some(entry => matchesAuthority(entry, hostUrl))
 }
 
 /**
@@ -669,12 +694,40 @@ export function makeRoutes(deps: PairRoutesDeps): WebRoute[] {
   const lanBaseUrls = (): string[] => service.lanAddresses
     .map(address => service.lanBaseUrlFor(address))
     .filter((base): base is string => base !== undefined)
+
+  /**
+   * The origin a redirect may name: the authority the visitor actually
+   * reached. That is the Host it presented - except when a proxy forwarded the
+   * request and rewrote the Host to its own loopback upstream, where the
+   * literal names the VISITOR's loopback rather than this host (issue #1919:
+   * a phone following it would dial itself). Such a request is sent to the
+   * configured public base, the only authority that visitor can reach; with no
+   * public base configured there is nothing better to name, so the Host stays.
+   */
+  const redirectOrigin = (req: IncomingMessage): string => {
+    if (isProxiedRequest(req) && isLoopbackUpstream(req) && service.publicBaseUrl !== undefined) {
+      try {
+        return new URL(service.publicBaseUrl).origin
+      } catch {
+        // A malformed public base contributes nothing: keep the Host authority.
+      }
+    }
+    return appOrigin(req)
+  }
+
   const grants = deps.grants ?? createPairGrantStore()
   const events = new PairingEventsStream(service)
   const dynamicTrustedHosts = new Set<string>()
 
-  /** Loopback-only fence: the desktop panel's control endpoints. */
-  const loopbackFence = (req: IncomingMessage): boolean => isTrustedApiRequest(req, [])
+  /**
+   * Strict desktop fence: the desktop panel's control endpoints, and every
+   * route that mints, stops or streams a credential. A direct desktop request
+   * (loopback socket, loopback Host, NO forwarding header) passes; a request a
+   * reverse proxy forwarded does not, even though the reachability fence below
+   * now accepts the rewritten loopback upstream it presents (issue #1906 stays
+   * shut for the control plane while #1919 opens the phone-facing surface).
+   */
+  const loopbackFence = (req: IncomingMessage): boolean => isLoopbackClient(req) && isTrustedApiRequest(req, [])
   /**
    * Phone-facing fence: loopback, the service's live LAN literals, configured
    * public host, extra trusted hosts, or dynamically paired hosts. `navigation`
@@ -935,10 +988,13 @@ export function makeRoutes(deps: PairRoutesDeps): WebRoute[] {
     }
     const deviceId = readCookie(req.headers.cookie, service.config.cookieName)
     const paired = deviceId !== undefined && service.hasDevice(deviceId)
-    // The desktop (loopback) keeps the full pairing-relevant view; the LAN IP
-    // literals stay behind a live pairing or loopback so an unauthenticated
-    // caller on a tunnel cannot map the internal network. A phone already knows
-    // its usable literal from the URL it opened.
+    // The desktop (loopback, no forwarding header) keeps the full
+    // pairing-relevant view; the LAN IP literals stay behind a live pairing or
+    // that desktop view so an unauthenticated caller on a tunnel cannot map the
+    // internal network. A phone already knows its usable literal from the URL
+    // it opened. A tunneled visitor reaches this handler now (#1919) and lands
+    // on the minimal branch: reachability for the pairing flow, the snapshot
+    // only for the desktop or a live device.
     const local = isLoopbackClient(req)
     const snapshot = service.snapshot()
     // Unpaired LAN/tunnel clients get only the pairing-relevant fields; the
@@ -1019,7 +1075,7 @@ export function makeRoutes(deps: PairRoutesDeps): WebRoute[] {
         // An already-paired device re-opening a dead link goes straight to the
         // cookieless app landing, again on a fresh one-time grant.
         const { grant } = grants.issue(deviceId)
-        res.writeHead(303, { location: `${appOrigin(req)}/pair-app?grant=${encodeURIComponent(grant)}`, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' })
+        res.writeHead(303, { location: `${redirectOrigin(req)}/pair-app?grant=${encodeURIComponent(grant)}`, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' })
         res.end()
         return
       }
@@ -1039,7 +1095,7 @@ export function makeRoutes(deps: PairRoutesDeps): WebRoute[] {
     // whether or not the browser stores cookies.
     const { grant } = grants.issue(result.deviceId)
     res.writeHead(303, {
-      location: `${appOrigin(req)}/pair-app?grant=${encodeURIComponent(grant)}`,
+      location: `${redirectOrigin(req)}/pair-app?grant=${encodeURIComponent(grant)}`,
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
       'set-cookie': [deviceCookie(req, service.config.cookieName, result.deviceId)],
@@ -1116,7 +1172,7 @@ export function makeRoutes(deps: PairRoutesDeps): WebRoute[] {
    */
   const lanHop = (req: IncomingMessage, deviceId: string): LanSourceHop | undefined => {
     if (sourcePreference() !== 'auto') return undefined
-    const candidates = lanSourceCandidates(lanBaseUrls(), appOrigin(req))
+    const candidates = lanSourceCandidates(lanBaseUrls(), redirectOrigin(req))
     if (candidates.length === 0) return undefined
     return { candidates, path: PAIR_PATHS.appPage, pingPath: PAIR_PATHS.ping, grant: grants.issue(deviceId).grant }
   }
@@ -1216,7 +1272,12 @@ export function deviceCookie(req: IncomingMessage, cookieName: string, deviceId:
   return `${cookieName}=${deviceId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${String(COOKIE_MAX_AGE_SEC)}${secure}`
 }
 
-/** The request origin (https when a tunnel edge says so). */
+/**
+ * The Host authority one request presented (https when a tunnel edge says so).
+ * It is the literal in the header, not necessarily an authority the visitor can
+ * reach: {@link makeRoutes} layers the public-base fallback over it for a Host a
+ * proxy rewrote to its loopback upstream.
+ */
 function appOrigin(req: IncomingMessage): string {
   const origin = `http://${req.headers.host ?? '127.0.0.1'}`
   return isHttpsRequest(req) ? origin.replace('http://', 'https://') : origin

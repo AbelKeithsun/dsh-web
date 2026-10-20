@@ -861,7 +861,7 @@ describe('/api/pair routes', () => {
     }
   })
 
-  it('operator behind a reverse proxy never sees the desktop pairing snapshot', async () => {
+  it('operator behind a reverse proxy gets the minimal view, never the desktop snapshot', async () => {
     // Given a running pairing service with a public base configured
     const service = makeService()
     service.setPublicBaseUrl('https://phone.example.com')
@@ -874,12 +874,18 @@ describe('/api/pair routes', () => {
         host: loopbackHost,
         headers: { 'cf-connecting-ip': '203.0.113.7' },
       })
-      // Then it is not the desktop: the Host it presents is the proxy's own
-      // upstream literal, which is no served authority, so the phone-facing
-      // fence refuses it instead of handing out the loopback snapshot.
-      expect(forwarded.status).toBe(403)
-      expect(forwarded.body).toMatchObject({ ok: false, code: 'forbidden' })
-      expect(forwarded.body).not.toHaveProperty('tokenExpiresAt')
+      // Then the phone-facing surface answers it - a tunneled pairing flow has
+      // to read this (issue #1919) - but the Host it presents is the proxy's
+      // own upstream literal, i.e. a rewritten loopback upstream rather than
+      // the desktop, so only the minimal payload comes back.
+      expect(forwarded.status).toBe(200)
+      expect(forwarded.body).toEqual({
+        ok: true,
+        paired: false,
+        requirePairingForLan: true,
+        phase: 'waiting',
+        lanAvailable: true,
+      })
       // The direct desktop call still gets the full pairing-relevant view.
       const direct = await call(port, 'GET', '/api/pair/status', { host: loopbackHost })
       expect(direct.status).toBe(200)
@@ -1196,5 +1202,266 @@ describe('/api/pair body failure contract (shared readJsonBody)', () => {
     // non-loopback pairing request answer 400) and the valid entry still works.
     expect(isTrustedHost(request, ['[fe80::1'])).toBe(false)
     expect(isTrustedHost(request, ['[fe80::1', 'proxy.example:3080'])).toBe(true)
+  })
+})
+
+/**
+ * A tunnel (a Cloudflare tunnel, frp, nginx) dials 127.0.0.1:<port> and rewrites
+ * the Host to that upstream literal, so the phone-facing surface has to answer the
+ * visitor (#1919 was the 403 storm: no pairing page, no status, a blank phone)
+ * while the desktop payload and every credential-bearing control plane stay behind
+ * the strict no-forwarding-header classification (#1906 stays shut).
+ */
+describe('tunneled mobile pairing (issue #1919)', () => {
+  /** What the edge stamps on a request it forwards to the loopback upstream. */
+  const tunnelHeaders = { 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-proto': 'https' }
+  /** The shape a phone's top-level navigation to a pairing link takes. */
+  const navigationMarkers = { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }
+
+  it('guest: the tunneled phone reads the minimal pairing status', async () => {
+    // Given a pairing service with a live token and a configured public base
+    const service = makeService()
+    service.setPublicBaseUrl('https://phone.example.com')
+    service.issue('ws-7', undefined)
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      // When the tunnel rewrites the Host to its loopback upstream
+      const status = await call(port, 'GET', PAIR_PATHS.status, {
+        host: '127.0.0.1:' + String(port),
+        headers: tunnelHeaders,
+      })
+      // Then the phone is answered with the minimal payload only: no device
+      // roster, no token, no public URL, no LAN layout.
+      expect(status.status).toBe(200)
+      expect(status.body).toEqual({
+        ok: true,
+        paired: false,
+        requirePairingForLan: true,
+        phase: 'waiting',
+        lanAvailable: true,
+      })
+    } finally {
+      await close()
+    }
+  })
+
+  it('guest: every credential control plane stays refused behind the tunnel', async () => {
+    // Given a pairing server behind a Host-rewriting tunnel
+    const service = makeService()
+    const { port, close } = await serve(makeRoutes({
+      service,
+      lanBindStatus: () => ({ bindHost: '192.168.1.5' }),
+    }))
+    try {
+      const loopbackHost = '127.0.0.1:' + String(port)
+      // When the tunnel-forwarded caller asks each control plane
+      const issue = await call(port, 'POST', PAIR_PATHS.issue, { host: loopbackHost, body: {}, headers: tunnelHeaders })
+      const lanBind = await call(port, 'GET', PAIR_PATHS.lanBind, { host: loopbackHost, headers: tunnelHeaders })
+      const revoke = await call(port, 'POST', PAIR_PATHS.revoke, { host: loopbackHost, body: { deviceId: 'tok-1' }, headers: tunnelHeaders })
+      const stop = await call(port, 'POST', PAIR_PATHS.stop, { host: loopbackHost, body: {}, headers: tunnelHeaders })
+      // Then minting, revoking, stopping and the LAN-bind facts all stay refused
+      expect(issue.status).toBe(403)
+      expect(issue.body).toEqual({ ok: false, code: 'forbidden' })
+      expect(lanBind.status).toBe(403)
+      expect(revoke.status).toBe(403)
+      expect(stop.status).toBe(403)
+      // And the desktop, which presents no forwarding header, still has them.
+      const desktopIssue = await call(port, 'POST', PAIR_PATHS.issue, { host: loopbackHost, body: {} })
+      const desktopLanBind = await call(port, 'GET', PAIR_PATHS.lanBind, { host: loopbackHost })
+      expect(desktopIssue.status).toBe(200)
+      expect(desktopLanBind.status).toBe(200)
+    } finally {
+      await close()
+    }
+  })
+
+  it('guest: the desktop events stream stays refused behind the tunnel', async () => {
+    // Given a pairing service whose device roster rides the loopback stream
+    const service = makeService()
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      // When the tunnel-forwarded caller opens the stream
+      const stream = await call(port, 'GET', PAIR_PATHS.events, {
+        host: '127.0.0.1:' + String(port),
+        headers: tunnelHeaders,
+      })
+      // Then it is refused instead of streaming the roster
+      expect(stream.status).toBe(403)
+      expect(stream.body).toEqual({ ok: false, code: 'forbidden' })
+    } finally {
+      await close()
+    }
+  })
+
+  it('operator: the desktop keeps the full pairing snapshot without a forwarding header', async () => {
+    // Given a pairing service with a token and a public base
+    const service = makeService()
+    service.setPublicBaseUrl('https://phone.example.com')
+    service.issue('ws-7', undefined)
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      // When the desktop panel asks over plain loopback
+      const status = await call(port, 'GET', PAIR_PATHS.status, { host: '127.0.0.1:' + String(port) })
+      // Then it keeps the full pairing-relevant view
+      expect(status.status).toBe(200)
+      expect(status.body).toMatchObject({ ok: true, paired: false, deviceCount: 0, onlineCount: 0 })
+      expect(status.body).toHaveProperty('tokenExpiresAt')
+      expect(status.body).toHaveProperty('publicUrl', 'https://phone.example.com')
+      expect(status.body).toHaveProperty('lanAddresses', ['192.168.1.5'])
+      // The per-device roster never leaves through status, not even here.
+      expect(status.body).not.toHaveProperty('devices')
+    } finally {
+      await close()
+    }
+  })
+
+  it('guest: a tunneled accept carrying the configured public base is allowed', async () => {
+    // Given a pairing service that advertises a public base
+    const service = makeService()
+    service.setPublicBaseUrl('https://phone.example.com')
+    service.issue('ws-7', undefined)
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      // When the page on the public origin posts the accept through the tunnel
+      // (Host rewritten to the loopback upstream, Origin still the public one)
+      const accepted = await call(port, 'POST', PAIR_PATHS.accept, {
+        host: '127.0.0.1:' + String(port),
+        body: { token: 'tok-1' },
+        headers: { ...tunnelHeaders, origin: 'https://phone.example.com' },
+      })
+      // Then the same-origin public page is allowed and gets the device cookie
+      expect(accepted.status).toBe(200)
+      expect(accepted.body).toEqual({ ok: true, deviceId: 'tok-1' })
+      expect(accepted.cookies[0]).toMatch(/^dsh_pair=tok-1;/)
+    } finally {
+      await close()
+    }
+  })
+
+  it('guest: a tunneled accept carrying a stranger Origin is refused', async () => {
+    // Given a pairing service that advertises a public base
+    const service = makeService()
+    service.setPublicBaseUrl('https://phone.example.com')
+    service.issue('ws-7', undefined)
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      // When some other site's page posts the accept through the same tunnel
+      const stranger = await call(port, 'POST', PAIR_PATHS.accept, {
+        host: '127.0.0.1:' + String(port),
+        body: { token: 'tok-1' },
+        headers: { ...tunnelHeaders, origin: 'https://evil.example.net' },
+      })
+      // Then the origin fence refuses it: only served authorities, never any
+      expect(stranger.status).toBe(403)
+      expect(stranger.body).toEqual({ ok: false, code: 'forbidden' })
+      expect(stranger.cookies).toEqual([])
+    } finally {
+      await close()
+    }
+  })
+
+  it('guest: a served-authority Origin is refused unless a proxy forwarded it onto the loopback upstream', async () => {
+    // Given a request whose Host is a served LAN literal (no rewritten upstream)
+    const service = makeService()
+    service.setPublicBaseUrl('https://phone.example.com')
+    service.issue('ws-7', undefined)
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      // When it presents another served authority as its Origin
+      const mismatched = await call(port, 'POST', PAIR_PATHS.accept, {
+        host: '192.168.1.5:3080',
+        body: { token: 'tok-1' },
+        headers: { origin: 'https://phone.example.com' },
+      })
+      // Then the equality assertion still holds: the relaxation belongs to the
+      // rewritten loopback upstream, not to any served authority anywhere.
+      expect(mismatched.status).toBe(403)
+      // And a direct desktop request claiming a served public origin is refused
+      // too: no proxy forwarded it, so Origin must equal Host.
+      const desktopClaim = await call(port, 'POST', PAIR_PATHS.accept, {
+        host: '127.0.0.1:' + String(port),
+        body: { token: 'tok-1' },
+        headers: { origin: 'https://phone.example.com' },
+      })
+      expect(desktopClaim.status).toBe(403)
+    } finally {
+      await close()
+    }
+  })
+
+  it('guest: a tunneled phone walks from the pairing link to the rendered shell', async () => {
+    // Given a pairing service with a public base, an app shell and a grant table
+    const service = makeService()
+    service.setPublicBaseUrl('https://phone.example.com')
+    service.issue('ws-7', undefined)
+    const { port, close } = await serve(makeRoutes({
+      service,
+      indexDocument: async () => '<html><head><title>shell</title></head><body>official</body></html>',
+      grants: makeGrants(),
+    }))
+    try {
+      const loopbackHost = '127.0.0.1:' + String(port)
+      // When the phone opens the QR link through the tunnel
+      const accept = await call(port, 'GET', PAIR_PATHS.acceptPage + '?pair=tok-1', {
+        host: loopbackHost,
+        headers: { ...tunnelHeaders, ...navigationMarkers },
+      })
+      // Then the entry page answers (it used to 403 here) and redirects to the
+      // PUBLIC authority the phone can reach, not to the rewritten loopback
+      // literal, which would be the phone's own 127.0.0.1.
+      expect(accept.status).toBe(303)
+      expect(accept.location).toBe('https://phone.example.com/pair-app?grant=grant-1')
+      expect(accept.cookies[0]).toMatch(/^dsh_pair=tok-1;.*; Secure$/)
+      // And the landing renders the patched official shell for that device.
+      const app = await call(port, 'GET', PAIR_PATHS.appPage + '?grant=grant-1', {
+        host: loopbackHost,
+        headers: { ...tunnelHeaders, ...navigationMarkers },
+      })
+      expect(app.status).toBe(200)
+      expect(app.raw).toContain('dsh-remote-device')
+      expect(app.raw).toContain('official')
+    } finally {
+      await close()
+    }
+  })
+
+  it('operator: the desktop redirect stays on its own authority', async () => {
+    // Given the same service, opened from the desktop with no forwarding header
+    const service = makeService()
+    service.setPublicBaseUrl('https://phone.example.com')
+    service.issue('ws-7', undefined)
+    const { port, close } = await serve(makeRoutes({
+      service,
+      indexDocument: async () => '<html><body>official</body></html>',
+      grants: makeGrants(),
+    }))
+    try {
+      const loopbackHost = '127.0.0.1:' + String(port)
+      // When the desktop follows the same entry page
+      const accept = await call(port, 'GET', PAIR_PATHS.acceptPage + '?pair=tok-1', { host: loopbackHost })
+      // Then the redirect stays on the authority the desktop actually reached
+      expect(accept.status).toBe(303)
+      expect(accept.location).toBe('http://' + loopbackHost + '/pair-app?grant=grant-1')
+    } finally {
+      await close()
+    }
+  })
+
+  it('guest: the LAN reachability beacon answers through the tunnel', async () => {
+    // Given a pairing service behind the tunnel
+    const service = makeService()
+    const { port, close } = await serve(makeRoutes({ service }))
+    try {
+      // When the beacon is probed from the rewritten authority
+      const ping = await call(port, 'GET', PAIR_PATHS.ping, {
+        host: '127.0.0.1:' + String(port),
+        headers: { ...tunnelHeaders, 'sec-fetch-site': 'cross-site' },
+      })
+      // Then it answers: the probe is cross-site by construction and is the
+      // signal that decides between the public and the LAN source.
+      expect(ping.status).toBe(204)
+    } finally {
+      await close()
+    }
   })
 })
