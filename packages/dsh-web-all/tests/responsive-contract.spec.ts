@@ -5,6 +5,7 @@ import { apply, RESPONSIVE_CSS } from '../src/client/index.ts'
 afterEach(() => {
   vi.unstubAllGlobals()
   document.body.innerHTML = ''
+  document.documentElement.removeAttribute('data-dsh-frame-active')
   document.head.querySelectorAll('style[data-dsh-compat="responsive"]').forEach(style => style.remove())
 })
 
@@ -48,14 +49,47 @@ describe('aggregate responsive compat contract', () => {
     // aggregate owns the unconditional one.
     // Given the aggregate responsive stylesheet, when the shell frame is up,
     // then the scrolling root is locked so focus() has no overflow to scroll.
-    const lock = RESPONSIVE_CSS.match(/html:has\(\[data-dsh-frame\]\)[^{]*\{([^}]*)\}/)?.[1] ?? ''
+    const lock = RESPONSIVE_CSS.match(/html\[data-dsh-frame-active\][^{]*\{([^}]*)\}/)?.[1] ?? ''
     expect(lock).toContain('overflow: hidden')
     expect(lock).toContain('height: 100%')
     // Scoped to the frame so it stays inert before the shell mounts.
-    expect(RESPONSIVE_CSS).toContain('html:has([data-dsh-frame]) > body')
+    expect(RESPONSIVE_CSS).toContain('html[data-dsh-frame-active] > body')
+    // The scope is a root attribute, never :has(): a :has() here re-evaluates
+    // the ancestor chain on every node insertion in the document, which made a
+    // terminal-style rebuild cost grow with the page's node count (#1913).
+    expect(RESPONSIVE_CSS).not.toContain(':has([data-dsh-frame])')
     // Never lock the app root: its own lock clipped content (#1222/#1225).
     expect(RESPONSIVE_CSS).not.toContain('[id="root"]')
     expect(RESPONSIVE_CSS).not.toMatch(/#root\b/)
+  })
+
+  it('user scrolling the page is locked only while the shell frame exists', async () => {
+    // The lock must never outlive the frame it locks: a stale root attribute
+    // would freeze scrolling on a page with no shell.
+    const frames = new Map<number, FrameRequestCallback>()
+    let id = 0
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++id, callback); return id })
+    vi.stubGlobal('cancelAnimationFrame', (frame: number) => { frames.delete(frame) })
+    const flushFrames = (): void => {
+      const batch = [...frames.values()]
+      frames.clear()
+      batch.forEach(callback => callback(0))
+    }
+    // Given a mounted shell, when the shim stamps its frame, then the lock is on.
+    document.body.innerHTML = '<main><aside class="sidebarCol"></aside><section class="centerCol"></section></main>'
+    let cleanup: (() => void) | undefined
+    apply({ effect: (effect: () => (() => void) | void) => { cleanup = effect() ?? undefined } } as never)
+    try {
+      expect(document.documentElement.getAttribute('data-dsh-frame-active')).toBe('')
+      // When React replaces the shell and the next pass finds no frame, then
+      // the lock is released again.
+      document.body.innerHTML = '<div>no shell yet</div>'
+      await Promise.resolve()
+      flushFrames()
+      expect(document.documentElement.hasAttribute('data-dsh-frame-active')).toBe(false)
+    } finally {
+      cleanup?.()
+    }
   })
 
   it('user on the macOS desktop keeps window dragging and double-click zoom', () => {

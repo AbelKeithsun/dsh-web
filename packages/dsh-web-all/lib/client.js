@@ -114,10 +114,24 @@ window.__ModuleLoader__.load({
    symptom, reachable here with no skin active. Locking only the scrolling root
    (never the app root element, whose own lock clipped content in
    #1222/#1225) removes the overflow scroll target without touching the frame's
-   box in any state. Scoped through :has() so the rule stays inert until the
-   shell frame exists. */
-html:has([data-dsh-frame]),
-html:has([data-dsh-frame]) > body {
+   box in any state. Scoped to a root attribute the shim maintains so the rule
+   stays inert until the shell frame exists.
+
+   The scope is a plain attribute selector on purpose: it used to be an :has()
+   lookup for the frame on the root element, and that :has() was the whole cost
+   of this stylesheet. :has() makes every node insertion in the document
+   re-evaluate the ancestor chain up to <html>, so a terminal-style rebuild
+   (xterm re-creating its row elements on a fontSize change) paid it once per
+   inserted node and the price grew with the page's total node count. Measured
+   on a shell-shaped page driving real xterm 5.5.0 through a fontSize change:
+   22.5k nodes 12.3 ms / 12.5 ms, 64.5k nodes 31.5 ms / 13.1 ms, 127.5k nodes
+   58.1 ms / 24.2 ms
+   (:has() / attribute), i.e. the :has() variant alone scaled with page size.
+   An attribute on <html> costs one selector match per style invalidation and
+   gives the same lock: the shim writes it whenever it stamps the frame
+   (issue #1913). */
+html[data-dsh-frame-active],
+html[data-dsh-frame-active] > body {
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -466,6 +480,8 @@ html[data-platform="darwin"] body > :is(
 				if (raf !== 0) cancelAnimationFrame(raf);
 			};
 		}
+		/** Root attribute the viewport-lock rules in RESPONSIVE_CSS are scoped to. */
+		const FRAME_LOCK_ATTRIBUTE = "data-dsh-frame-active";
 		/** One pass over the current DOM. Returns false once every stamp is already in place. */
 		function applyShims() {
 			let changed = false;
@@ -485,7 +501,21 @@ html[data-platform="darwin"] body > :is(
 				changed = true;
 			}
 			if (frame !== null) changed = stampSemanticParts(frame) || changed;
+			if (syncFrameLock(frame !== null)) changed = true;
 			return changed;
+		}
+		/**
+		* Mirror the shell frame's presence onto the document root.
+		* @param present - whether a stamped frame is currently in the document.
+		* @returns whether the root attribute changed.
+		*/
+		function syncFrameLock(present) {
+			const root = document.documentElement;
+			if (root === null) return false;
+			if (root.hasAttribute(FRAME_LOCK_ATTRIBUTE) === present) return false;
+			if (present) root.setAttribute(FRAME_LOCK_ATTRIBUTE, "");
+			else root.removeAttribute(FRAME_LOCK_ATTRIBUTE);
+			return true;
 		}
 		function installBootShield() {
 			if (typeof document === "undefined") return {
