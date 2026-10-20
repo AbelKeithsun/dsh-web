@@ -147,15 +147,16 @@ describe('session.fork.v1', () => {
     expect(harness.gateway.countOf('session', 'fork')).toBe(0)
   })
 
-  it('user greets the bridge and finds the fork channel last in the served capabilities with the minor beside it', async () => {
+  it('user greets the bridge and finds the fork channel among the served capabilities with the minor beside it', async () => {
     // Given a client that greets the bridge without declaring anything
     const harness = makeConnection({ paired: true })
     // When the handshake is answered
     await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, client: 'ios/0.1' }))
-    // Then the announcement carries the minor this channel raised and lists it last
+    // Then the announcement carries the minor and lists this channel; a channel that
+    // shipped after it appends behind it, so its position is not what is asserted
     const hello = answerOf(harness, 1).r as { minor: number; capabilities: string[] }
-    expect(hello.minor).toBe(11)
+    expect(hello.minor).toBe(12)
     expect(hello.capabilities).toEqual([...SERVED_CAPABILITIES])
-    expect(hello.capabilities[hello.capabilities.length - 1]).toBe(CAP_SESSION_FORK)
+    expect(hello.capabilities).toContain(CAP_SESSION_FORK)
   })
 })

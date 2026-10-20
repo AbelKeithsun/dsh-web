@@ -20,6 +20,8 @@ export const METHOD_SESSION_MODELS = 'session.models'
 export const METHOD_SESSION_SET_MODEL = 'session.setModel'
 export const METHOD_SESSION_CREATE = 'session.create'
 export const METHOD_SESSION_FORK = 'session.fork'
+export const METHOD_SESSION_COMMANDS = 'session.commands'
+export const METHOD_SESSION_COMMAND = 'session.command'
 export const METHOD_PRESETS_LIST = 'presets.list'
 export const METHOD_PAIR_BEGIN = 'pair.begin'
 export const METHOD_PAIR_FINISH = 'pair.finish'
@@ -219,6 +221,23 @@ export const CAP_SESSION_DEEP_HISTORY = 'session.deep-history.v1'
 export const CAP_SESSION_FORK = 'session.fork.v1'
 
 /**
+ * Capability a client declares in `hello`'s `cap` array to list a session's
+ * slash commands and skills and to run one of them.
+ *
+ * Declaring it is what makes `session.commands` and `session.command` part of
+ * that client's protocol at all: a client that does not declare it — including
+ * every client written before this channel existed — is refused both as unknown
+ * methods, exactly as those frames were refused before. Neither method is called
+ * on a connection's behalf either, so a client that never asks costs the host no
+ * registry read and no skill catalog read.
+ *
+ * The channel holds no events and no cache: a directory is read live on every
+ * call, so a command a plugin registered a moment ago and a skill withdrawn from
+ * one Agent preset are both reflected in the answer that follows.
+ */
+export const CAP_COMMANDS = 'commands.v1'
+
+/**
  * Capability a client declares in `hello`'s `cap` array to be sent frames
  * compressed instead of as plain text.
  *
@@ -268,6 +287,8 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_PRESETS_LIST,
   METHOD_SESSION_CREATE,
   METHOD_SESSION_FORK,
+  METHOD_SESSION_COMMANDS,
+  METHOD_SESSION_COMMAND,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
@@ -298,6 +319,14 @@ export const CODE_SNAPSHOT_UNAVAILABLE = 'snapshot-unavailable'
  * what a particular host mounts — and only a call that needs the registry fails.
  */
 export const CODE_JOBS_UNAVAILABLE = 'jobs-unavailable'
+/**
+ * This host serves no endpoint behind the command channel: no `commands/list`,
+ * no `commands/execute` or no `skills/list`, which the gateway itself reports
+ * as an endpoint nothing exports. The capability stays advertised — it is a fact
+ * about this bridge, not about what a particular host mounts — and only a call
+ * that needs those endpoints fails.
+ */
+export const CODE_COMMANDS_UNAVAILABLE = 'commands-unavailable'
 export const CODE_SNAPSHOT_TOO_LARGE = 'snapshot-too-large'
 export const CODE_INTERNAL = 'internal'
 
@@ -306,6 +335,9 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 12 when the command channel shipped: behind {@link CAP_COMMANDS} a client may
+ * call {@link METHOD_SESSION_COMMANDS} and {@link METHOD_SESSION_COMMAND}, so it
+ * reads a new reply body off the wire and the number rises with it.
  * 11 when the fork channel shipped: behind {@link CAP_SESSION_FORK} a client may
  * call {@link METHOD_SESSION_FORK} and receive the host's own fork answer, so a
  * phone branches a session that inherits the context of the one it forked. This
@@ -348,7 +380,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 11
+export const MINOR = 12
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -371,6 +403,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_ROSTER_COMPACT,
   CAP_SESSION_SNAPSHOT_SINCE,
   CAP_SESSION_FORK,
+  CAP_COMMANDS,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'

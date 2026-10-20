@@ -17,6 +17,7 @@
  */
 
 import type { ApprovalRegistry } from './approvals.ts'
+import { commandItems, commandsUnavailable } from './commands.ts'
 import type { DeviceRoster } from './devices.ts'
 import { ROSTER_DELTA_MAX_ROWS, RemoteBridgeDeltas, type DeltaRow } from './delta.ts'
 import { deltaOfFollowFrame, MessageIndex, oldestEntrySeq, pageTurns, readFollowBaseline, SpawnCallIndex, ToolCallIndex, trimUnrenderedEntries, turnsAbove, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
@@ -28,6 +29,7 @@ import type { PairingService } from './pairing.ts'
 import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
 import {
   CAP_AGENTS,
+  CAP_COMMANDS,
   CAP_DELTA,
   CAP_FRAME_DEFLATE,
   CAP_JOBS,
@@ -39,6 +41,7 @@ import {
   CAP_SESSION_SNAPSHOT_TRIM,
   CAP_SUBAGENT_THREAD,
   CODE_APPROVAL_UNKNOWN,
+  CODE_COMMANDS_UNAVAILABLE,
   CODE_INTERNAL,
   CODE_INVALID_ARGS,
   CODE_JOBS_UNAVAILABLE,
@@ -59,6 +62,8 @@ import {
   METHOD_PRESETS_LIST,
   METHOD_QUESTION_ANSWER,
   METHOD_SESSION_ATTACHMENT,
+  METHOD_SESSION_COMMAND,
+  METHOD_SESSION_COMMANDS,
   METHOD_SESSION_CREATE,
   METHOD_SESSION_FORK,
   METHOD_SESSION_HISTORY,
@@ -722,6 +727,13 @@ export class BridgeConnection {
     if (frame.m === METHOD_SESSION_FORK && !this.declares(CAP_SESSION_FORK)) {
       return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
+    // The command channel is one capability: without `commands.v1` neither the
+    // directory nor the dispatch is part of this client's protocol, so no
+    // registry and no skill catalog is read on a client's behalf that never
+    // asked for either.
+    if ((frame.m === METHOD_SESSION_COMMANDS || frame.m === METHOD_SESSION_COMMAND) && !this.declares(CAP_COMMANDS)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // Unconditional: a loopback Host buys nothing here. Without a device token
     // only the handshake and the two pairing steps run.
     if (!this.paired && !UNPAIRED_METHODS.has(frame.m)) return refusal(CODE_UNPAIRED, 'this connection is not paired')
@@ -752,6 +764,8 @@ export class BridgeConnection {
       case METHOD_PRESETS_LIST: return await this.#presetsList()
       case METHOD_SESSION_CREATE: return await this.#sessionCreate(frame.p)
       case METHOD_SESSION_FORK: return await this.#sessionFork(frame.p)
+      case METHOD_SESSION_COMMANDS: return await this.#sessionCommands(frame.p)
+      case METHOD_SESSION_COMMAND: return await this.#sessionCommand(frame.p)
       default: return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
   }
@@ -1541,6 +1555,80 @@ export class BridgeConnection {
       ...(atSeq === undefined ? {} : { atSeq }),
     })
     return call.ok ? { ok: true, r: call.value } : call
+  }
+
+  /**
+   * Answer `session.commands`: one session's slash commands and skills, in one
+   * directory.
+   *
+   * Both catalogs are read live and neither is modelled here: `commands/list`
+   * is the host registry's own effective view for this Agent — a command
+   * registered through an Agent-scoped child shadows the global one — and
+   * `skills/list` is the catalog this session's cwd and preset select, so what
+   * a phone lists is what the desktop composer would offer that same session. A
+   * row crosses with the name and the summary the host publishes for it, plus
+   * the whole draft line that invokes it, separator space included.
+   *
+   * Nothing is paged, re-sorted or cached: every command first, every skill
+   * after, each in the host's own order, and the next call reads both again.
+   * @param payload - `{sessionId}`.
+   */
+  async #sessionCommands(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.commands requires sessionId')
+    const commands = await this.#unary('commands', 'list', { agentId: sessionId })
+    if (!commands.ok) return this.#commandsFailure('commands', 'list', commands)
+    if (!Array.isArray(commands.value)) return refusal(CODE_INTERNAL, 'commands/list returned no command directory')
+    const skills = await this.#unary('skills', 'list', { sessionId })
+    if (!skills.ok) return this.#commandsFailure('skills', 'list', skills)
+    if (!isRecord(skills.value) || !Array.isArray(skills.value.skills)) {
+      return refusal(CODE_INTERNAL, 'skills/list returned no skill catalog')
+    }
+    return { ok: true, r: { sessionId, items: commandItems(commands.value, skills.value.skills) } }
+  }
+
+  /**
+   * Answer `session.command`: run one draft line on the host and report whether
+   * the host resolved it.
+   *
+   * The line crosses exactly as the client wrote it, because what a line means
+   * belongs to the host: its parser decides whether the text is a slash command
+   * at all, and its registry decides whether that name is one this Agent has. A
+   * line the host resolves runs — this method does not pre-judge a command,
+   * replay one, or refuse a line it does not recognise — and the answer is then
+   * `matched: true`. A line the host resolves to nothing (no leading slash, an
+   * unknown name, or a skill's `/name` gesture, which is prompt text rather than
+   * a registry entry) answers `matched: false`, and nothing ran.
+   *
+   * A plain invocation carries no attachments: a draft line has none, the
+   * endpoint requires the key, so an empty array is what crosses.
+   * @param payload - `{sessionId, line}`.
+   */
+  async #sessionCommand(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    const line = stringArg(payload, 'line')
+    if (sessionId === undefined || line === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'session.command requires sessionId and line')
+    }
+    const call = await this.#unary('commands', 'execute', { agentId: sessionId, line, submittedAttachments: [] })
+    if (!call.ok) return this.#commandsFailure('commands', 'execute', call)
+    return { ok: true, r: { matched: call.value !== undefined } }
+  }
+
+  /**
+   * Re-answer one command-channel failure.
+   *
+   * An endpoint this host does not serve at all is this bridge's own
+   * `commands-unavailable`, so a phone stops offering the directory instead of
+   * showing a call that fails every time; a call the host refused, and a channel
+   * that is merely still activating, cross with the failure's own code and text.
+   * @param namespace - the Remote namespace that failed.
+   * @param method - the endpoint that failed.
+   * @param failure - the refusal `#unary` produced.
+   */
+  #commandsFailure(namespace: string, method: string, failure: CallFailure): CallFailure {
+    if (!commandsUnavailable(failure.code)) return failure
+    return refusal(CODE_COMMANDS_UNAVAILABLE, `this host serves no ${namespace}/${method} endpoint`)
   }
 
   #approvalResolve(payload: Readonly<Record<string, unknown>>): DispatchOutcome {

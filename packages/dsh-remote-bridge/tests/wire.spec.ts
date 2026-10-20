@@ -47,7 +47,7 @@ describe('DSH Remote wire argument layout', () => {
     const inventory = WIRE_TABLE.filter(row => row.wire === 'none').length
     // Then exactly the four zero-parameter endpoints are marked, and the rest carry named arguments
     expect(zeroArgument).toEqual(['session/modelCatalog', 'agentPresets/list', 'pluginInventory/list', 'pluginManager/listPlugins'])
-    expect(WIRE_TABLE.length - inventory).toBe(12)
+    expect(WIRE_TABLE.length - inventory).toBe(15)
   })
 
   it('user answers a continued question and every declared parameter travels as its own key', () => {
