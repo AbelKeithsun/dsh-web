@@ -31,6 +31,7 @@ import { mainViewSessionId } from './main-session.ts'
 import { LocalStorageTaskStore } from '../core/store.ts'
 import { claimTaskboardApply, releaseTaskboardApply } from './apply-guard.ts'
 import { registerTaskBoardPanel } from './native-panel.tsx'
+import { createScheduleRowGuard } from './suppress-schedule-row.ts'
 import { TaskBoardSettingsCard, TaskBoardSettingsCardController, type TaskBoardSettings } from './TaskBoardSettingsCard.tsx'
 import { en, zh, setRuntimeTranslate, type TaskBoardKey } from './locales.ts'
 import { HttpTaskBoardHostTransport } from './host-api.ts'
@@ -413,6 +414,12 @@ export function apply(ctx: ClientContext): void {
       uiDisposer = undefined
     }
   }
+  // The board's master switch owns the official automation-tasks entry as
+  // well: while the board is on, the shell's duplicate "Automation tasks" row
+  // is hidden, and with the board off the official row comes back. The same
+  // switch already governs the board's own row, so both scheduling entries
+  // appear and disappear together.
+  const scheduleRowGuard = createScheduleRowGuard(ctx)
   const syncEnabled = (): void => {
     const snapshot = settingsForm.getSnapshot()
     const enabled = snapshot.status === 'ready'
@@ -421,8 +428,10 @@ export function apply(ctx: ClientContext): void {
     if (enabled) {
       mountUi()
       clientService.setEnabled(true)
+      scheduleRowGuard.hide()
     } else {
       clientService.setEnabled(false)
+      scheduleRowGuard.show()
       uiDisposer?.()
     }
   }
@@ -436,6 +445,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => () => {
     unsubscribeSettings()
     uiDisposer?.()
+    scheduleRowGuard.dispose()
   }, 'task-board: DOM surfaces')
   syncEnabled()
 }
