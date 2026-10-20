@@ -4,7 +4,7 @@
  * NewTaskModal and the EditTaskModal. State stays in the owning modal; these
  * are controlled components.
  */
-import { useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { TAG_NAME_MAX_LENGTH, TAG_PROMPT_MAX_LENGTH, TASK_TAG_LIMIT, normalizeTags, type TaskTag } from '../../core/tasks.ts'
 import { t } from '../locales.ts'
 import css from '../board.module.css'
@@ -106,13 +106,19 @@ export function CollapsibleSection({
   children: ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const panelId = useId()
   const expanded = forceOpen || open
+  // The one-line preview is also the row's title, so the line that ellipsizes
+  // in the header stays readable in full (same rule as the panel's folds).
+  const fullLine = summary ?? ''
   return (
     <section className={css.formSection} data-dsh-part="form-section" data-open={expanded ? 'true' : undefined}>
       <button
         type="button"
         className={css.formSectionHeader}
         aria-expanded={expanded}
+        aria-controls={panelId}
+        title={fullLine === '' ? undefined : fullLine}
         onClick={() => { setOpen(value => !value) }}
       >
         <span className={css.formSectionChevron} aria-hidden="true" />
@@ -121,7 +127,7 @@ export function CollapsibleSection({
           <span className={css.formSectionSummary}>{summary}</span>
         )}
       </button>
-      {expanded && <div className={css.formSectionBody}>{children}</div>}
+      {expanded && <div className={css.formSectionBody} id={panelId}>{children}</div>}
     </section>
   )
 }
@@ -231,7 +237,7 @@ export function TaskTagFields({
           />
           <button
             type="button"
-            className={css.ghostButton}
+            className={css.iconButton}
             aria-label={t('new.tagRemove', { name: tag.name })}
             onClick={() => { onChange(tags.filter((_, position) => position !== index)) }}
           >

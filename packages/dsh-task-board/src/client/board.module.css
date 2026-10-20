@@ -879,7 +879,7 @@
 
 .modalTitle {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -943,7 +943,7 @@
 
 .tagManageCount {
   flex: none;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -954,7 +954,7 @@
 
 .tagManageMerge {
   flex: 1 0 100%;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -964,6 +964,13 @@
  * every collapsed header carries a one-line summary of what it holds. The
  * body keeps an overflow fallback for tiny viewports. The chevron is drawn
  * with borders (no glyph), so no font or emoji can change it.
+ *
+ * The region is the SAME disclosure contract the card panel's folds use: the
+ * same markup (data-open, aria-expanded/aria-controls, one summary track), a
+ * 12px header row, a label that shrinks and ellipsizes before the summary
+ * does, a summary held on the one right-hand track by its auto margin, and a
+ * 44px pointer target expanded past the row. Only the spacing rhythm around
+ * the regions is the dialog's own, at the dialog's control geometry.
  * ----------------------------------------------------------------------------- */
 
 .modalBody {
@@ -981,32 +988,57 @@
   flex: none;
 }
 
+/* A row is shorter than its 44px target, so the section stops clipping and the
+   header carries the section's inner radius itself — which is what
+   `overflow: hidden` used to do. */
 .formSection {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--dsw-alias-separator-primary);
   border-radius: 10px;
-  overflow: hidden;
+  overflow: visible;
 }
 
+/* 28px row on the dialog's 30px control height (plus the section border). */
 .formSectionHeader {
+  position: relative;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 10px;
+  min-height: 28px;
+  padding: 6px 10px;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary);
   text-align: left;
   background: transparent;
   border: 0;
+  border-radius: 9px;
   cursor: pointer;
 }
 
 .formSectionHeader:hover {
   background: var(--dsw-alias-bg-mask-1);
+}
+
+.formSection[data-open='true'] .formSectionHeader {
+  border-radius: 9px 9px 0 0;
+}
+
+/* Pointer target: the board's 44px minimum, expanded past the row exactly like
+   the panel's fold row and the board's card actions. */
+.formSectionHeader::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--dsh-tb-hit-size);
+  height: var(--dsh-tb-hit-size);
+  transform: translate(-50%, -50%);
 }
 
 .formSectionChevron {
@@ -1024,13 +1056,22 @@
   transform: rotate(90deg);
 }
 
+/* Title and summary both shrink, so a long summary never takes the row: the
+   label keeps its own width and the line that gives way is the one that
+   ellipsizes. The summary's auto margin is what puts every region's summary on
+   the dialog's one right-hand track. */
 .formSectionTitle {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .formSectionSummary {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  margin-left: auto;
   overflow: hidden;
   font-weight: 400;
   color: var(--dsw-alias-label-tertiary);
@@ -2331,8 +2372,9 @@
 }
 
 .fieldHint {
+  margin: 0;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
 }
 

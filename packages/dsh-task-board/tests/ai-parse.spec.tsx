@@ -170,4 +170,18 @@ describe('new-task AI parse section (#1540)', () => {
     chooseOption(select, '')
     expect(window.localStorage.getItem('dsh-task-board.parse-model')).toBe('')
   })
+
+  it('user starting a parse sees a secondary action, never a second primary one', () => {
+    // Given the create dialog with the parse region open
+    const { container } = renderModal()
+
+    // When the user looks at the parse action beside the model picker
+    const submit = container.querySelector<HTMLButtonElement>('button[type="submit"]')
+    const run = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent === t('new.aiParseRun'))
+
+    // Then the dialog's only filled action stays the submit
+    expect(run).toBeDefined()
+    expect(run?.className).not.toBe(submit?.className)
+  })
 })

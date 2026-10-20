@@ -232,3 +232,44 @@ describe('create-task dialog regions', () => {
   })
 })
 
+describe('create-task dialog action hierarchy and disclosure wiring', () => {
+  it('user scanning the create dialog sees one filled action, and it is the submit', () => {
+    // Given the create dialog with its footer actions
+    const container = renderModal()
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')]
+
+    // When the user looks for the control that commits the form
+    const submit = container.querySelector<HTMLButtonElement>('button[type="submit"]')
+    expect(submit).not.toBeNull()
+    const submitClass = submit?.className ?? ''
+    const filled = buttons.filter(button => button.className === submitClass)
+
+    // Then exactly one control wears the filled primary style
+    expect(filled).toEqual([submit])
+
+    // And the dismiss beside it is a secondary control
+    const cancel = buttons.find(button => button.textContent === t('new.cancel'))
+    expect(cancel?.className).not.toBe(submitClass)
+  })
+
+  it('user folding a create-dialog region gets the panel fold disclosure wiring', () => {
+    // Given a collapsed region that carries a one-line summary
+    const container = renderModal()
+    const header = regionHeader(container, t('new.section.labels'))
+    const controls = header.getAttribute('aria-controls')
+
+    // Then the row declares its state, names its own body, and keeps the
+    // collapsed line readable in full
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    expect(controls).not.toBeNull()
+    expect(header.getAttribute('title')).toBe(t('new.summary.none'))
+
+    // When the user expands it
+    act(() => { header.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+
+    // Then the body it names is the one that rendered
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById(controls ?? '')).not.toBeNull()
+  })
+})
+

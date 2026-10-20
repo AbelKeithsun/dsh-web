@@ -259,6 +259,25 @@ describe('linking an existing task', () => {
     // Then no candidate is offered and the empty copy is shown
     expect(container.textContent).toContain(t('link.subtask.empty'))
   })
+
+  it('user picking a candidate gets one secondary action per row, never a second submit', () => {
+    // Given one linkable task and the linker open above its parent
+    const parent = task('parent')
+    const free = task('free')
+    const { controller } = fakeController([parent, free])
+    const container = render(<LinkSubtaskModal controller={controller} parent={parent} onClose={() => {}} />)
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')]
+    const cancel = buttons.find(button => button.textContent === t('new.cancel'))
+    const rowActions = buttons.filter(button => button.textContent === t('link.subtask.confirm'))
+
+    // Then each row action wears the same secondary style as the dismiss, so a
+    // list of candidates never paints several competing primary actions
+    expect(rowActions).toHaveLength(1)
+    expect(rowActions[0].className).toBe(cancel?.className)
+
+    // And the dialog commits nothing of its own: no row is a form submit
+    expect(container.querySelector('button[type="submit"]')).toBeNull()
+  })
 })
 
 describe('new subtask form', () => {

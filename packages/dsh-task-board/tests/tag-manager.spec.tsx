@@ -194,3 +194,46 @@ describe('label manager', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 })
+
+describe('label manager action hierarchy', () => {
+  it('user renaming one label sees one filled action, and it is that row commit', () => {
+    // Given two cards carrying one label
+    const { controller } = fakeController([task('a', [{ name: 'ship' }]), task('b', [{ name: 'ship' }])])
+    const container = render(<TagManagerModal controller={controller} onClose={() => {}} />)
+
+    // When the user opens the row editor
+    click(container, t('tags.rename'))
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')]
+    const save = buttons.find(button => button.textContent === t('tags.save'))
+    expect(save).toBeDefined()
+    const saveClass = save?.className ?? ''
+
+    // Then the row commit is the only filled control in the dialog, because
+    // only one row can be in its edit state at a time
+    expect(buttons.filter(button => button.className === saveClass)).toEqual([save])
+
+    // And the row's dismiss and the dialog's Done stay secondary
+    for (const label of [t('new.cancel'), t('tags.done')]) {
+      expect(buttons.find(button => button.textContent === label)?.className).not.toBe(saveClass)
+    }
+  })
+
+  it('user confirming a label delete sees a destructive control apart from the dismiss', () => {
+    // Given a label the user asked to delete
+    const { controller } = fakeController([task('a', [{ name: 'ship' }])])
+    const container = render(<TagManagerModal controller={controller} onClose={() => {}} />)
+    click(container, t('tags.delete'))
+
+    // When the confirmation opens
+    const question = document.querySelector('[role="alertdialog"]')
+    const buttons = [...(question?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+    const confirm = buttons.find(button => button.textContent === t('tags.deleteOk'))
+    const cancel = buttons.find(button => button.textContent === t('delete.cancel'))
+
+    // Then the destructive commit wears its own role and the dismiss beside it
+    // is a secondary control
+    expect(confirm).toBeDefined()
+    expect(cancel).toBeDefined()
+    expect(confirm?.className).not.toBe(cancel?.className)
+  })
+})

@@ -426,7 +426,7 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
                 : (
                   <button
                     type="button"
-                    className={css.primaryButton}
+                    className={css.ghostButton}
                     disabled={parseText.trim() === ''}
                     onClick={() => { void runParse() }}
                   >
@@ -460,7 +460,7 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
           onPromptChange={setPrompt}
         />
         {isDuplicate && (
-          <label className={css.checkboxLabel}>
+          <label className={css.scheduleToggle}>
             <input
               type="checkbox"
               checked={archiveOriginal}

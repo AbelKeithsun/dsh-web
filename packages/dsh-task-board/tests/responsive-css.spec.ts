@@ -385,12 +385,88 @@ describe('task detail panel fold rhythm and summary track', () => {
     expect(block('.detailBody .formSectionHeader')).toContain('box-sizing: border-box')
   })
 
-  it('the form dialogs keep their own region scale beside the panel folds', () => {
+  it('the form dialogs keep their own spacing rhythm beside the panel folds', () => {
     // Given the region contract the dialogs share with the panel
-    // Then the panel's rules are scoped and the dialog body is untouched
-    expect(block('.formSectionTitle')).toContain('flex: none')
-    expect(block('.formSectionSummary')).toContain('flex: 1 1 auto')
-    expect(block('.formSection')).toContain('overflow: hidden')
-    expect(block('.formSectionHeader')).not.toContain('::after')
+    // Then the rhythm around the regions is the dialog's own
+    expect(block('.formSectionBody')).toContain('padding: 8px 10px 10px')
+    expect(block('.modalBody')).toContain('gap: 8px')
+  })
+})
+
+describe('task form dialogs speak the panel fold contract on one type scale', () => {
+  /** One rule body of the stylesheet, by exact selector. */
+  const block = (selector: string): string => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return css.match(new RegExp('(?:^|\\n)' + escaped + '\\s*\\{([^}]*)\\}', 'm'))?.[1] ?? ''
+  }
+  /** The dialog region of the stylesheet: the shell and every field in it. */
+  const dialogRegion = css.slice(css.indexOf('/* --- modals ---'), css.indexOf('/* --- detail ---'))
+
+  it('user reading any task dialog stays inside 16 title / 13 body / 12 meta', () => {
+    // Given every declared font size in the dialog region
+    const sizes = [...dialogRegion.matchAll(/font-size:\s*([0-9.]+px)/g)].map(match => match[1])
+
+    // When the dialog paints its title, its fields and its label rows
+    // Then no size falls outside the three-step budget
+    expect(new Set(sizes)).toEqual(new Set(['12px', '13px', '16px']))
+
+    // The hint line shares the budget although its rule lives with the label
+    // chips it is painted from.
+    expect(block('.fieldHint')).toContain('font-size: 12px')
+  })
+
+  it('user never meets an 11px or 12.5px label anywhere in the stylesheet', () => {
+    expect(css).not.toMatch(/font-size:\s*11px/)
+    expect(css).not.toMatch(/font-size:\s*12\.5px/)
+  })
+
+  it('user collapsing a task form region gets the panel fold row contract', () => {
+    // Given the dialog's region row and the rules the panel's folds use
+    const header = block('.formSectionHeader')
+    const title = block('.formSectionTitle')
+    const summary = block('.formSectionSummary')
+
+    // Then the row is a 12px header on the dialog's control height
+    expect(header).toContain('font-size: 12px')
+    expect(header).toContain('min-height: 28px')
+    expect(header).toContain('box-sizing: border-box')
+
+    // And the label shrinks and ellipsizes while the summary rides the one
+    // right-hand track, so a long preview never takes the row
+    expect(title).toContain('flex: 0 1 auto')
+    expect(title).toContain('min-width: 0')
+    expect(title).toContain('text-overflow: ellipsis')
+    expect(summary).toContain('flex: 0 1 auto')
+    expect(summary).toContain('margin-left: auto')
+    expect(summary).toContain('text-overflow: ellipsis')
+
+    // And the chevron and the open state stay the panel's own rules
+    expect(block('.formSectionChevron')).toContain('border-left: 5px solid')
+    expect(css).toMatch(/\.formSection\[data-open='true'\] \.formSectionChevron\s*\{[^}]*transform: rotate\(90deg\)/s)
+  })
+
+  it('user pointer-reaching a collapsed region gets the board 44px target', () => {
+    // Given the dialog region row and the board's hit-size token
+    expect(block('.board')).toContain('--dsh-tb-hit-size: 44px')
+    expect(block('.formSectionHeader')).toContain('position: relative')
+
+    // When the row is reached
+    // Then the target expands past the row exactly like the panel's fold row
+    const target = block('.formSectionHeader::after')
+    expect(target).toContain('width: var(--dsh-tb-hit-size)')
+    expect(target).toContain('height: var(--dsh-tb-hit-size)')
+
+    // And a target that overflows the row is not clipped away by the section,
+    // which hands the header the section's inner radius instead
+    expect(block('.formSection')).toContain('overflow: visible')
+    expect(block('.formSectionHeader')).toContain('border-radius: 9px')
+  })
+
+  it('user opening a task dialog reads one title size and one meta size', () => {
+    expect(block('.modalTitle')).toContain('font-size: 16px')
+    expect(block('.confirmMessage')).toContain('font-size: 13px')
+    expect(block('.tagManageName')).toContain('font-size: 13px')
+    expect(block('.tagManageCount')).toContain('font-size: 12px')
+    expect(block('.tagManageMerge')).toContain('font-size: 12px')
   })
 })
