@@ -15,6 +15,7 @@
  */
 import { useId, useState } from 'react'
 import type { ExecutionRecord } from '../../core/tasks.ts'
+import { isMissingWorkspaceReason } from '../../core/workspace-target.ts'
 import { t, type TaskBoardKey } from '../locales.ts'
 import css from '../board.module.css'
 import { IconSession } from './icons.tsx'
@@ -83,7 +84,9 @@ function ExecutionRow({ execution, timeZone, onOpen }: {
         )}
         {execution.verification !== undefined && <VerificationReport verification={execution.verification} />}
         {execution.error !== undefined && execution.error !== '' && (
-          <span className={css.executionError}>{execution.error}</span>
+          <span className={css.executionError}>
+            {isMissingWorkspaceReason(execution.error) ? t('exec.error.noWorkspace') : execution.error}
+          </span>
         )}
       </div>
     </li>

@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import { goalObjective, HostExecutionRunner } from '../src/host-runner.ts'
+import { fixtureWorkspaces } from './workspace-fixture.ts'
 
 type GatewayRequest = {
   namespace: string
@@ -156,7 +157,7 @@ describe('goal run arming', () => {
     const gateway = launchGateway(order, promptPayloads)
 
     // When the card runs
-    await expect(new HostExecutionRunner(gateway, commands).launch(createTask({ title: 'Run me', description: '', prompt: 'do work', goalRun: true }, 1, 'task-a'), { goalEnabled: true })).resolves.toBe('session-a')
+    await expect(new HostExecutionRunner(gateway, commands, fixtureWorkspaces()).launch(createTask({ title: 'Run me', description: '', prompt: 'do work', goalRun: true }, 1, 'task-a'), { goalEnabled: true })).resolves.toBe('session-a')
 
     // Then the instruction turn is queued first and the goal extends it
     expect(order).toEqual(['create', 'rename', 'prompt', 'command:do work'])
@@ -173,7 +174,7 @@ describe('goal run arming', () => {
     }
 
     // When the card runs
-    await new HostExecutionRunner(launchGateway(order), commands)
+    await new HostExecutionRunner(launchGateway(order), commands, fixtureWorkspaces())
       .launch(task, { promptContext: { peers: [{ id: 'child', title: 'Child' }] }, goalEnabled: true })
 
     // Then the objective is exactly what the session received
@@ -190,7 +191,7 @@ describe('goal run arming', () => {
     const task: TaskRecord = createTask({ title: 'Run me', description: '', prompt: 'do work' }, 1, 'task-a')
 
     // When the card runs
-    await new HostExecutionRunner(launchGateway(order), commands).launch(task, { goalEnabled: true })
+    await new HostExecutionRunner(launchGateway(order), commands, fixtureWorkspaces()).launch(task, { goalEnabled: true })
 
     // Then no command is dispatched at all: the card must ASK for the goal run,
     // and the option is off by default.
@@ -205,7 +206,7 @@ describe('goal run arming', () => {
     const task: TaskRecord = { ...createTask({ title: 'Run me', description: '', prompt: 'do work', goalRun: true }, 1, 'task-a'), goalRun: undefined }
 
     // When the card runs
-    await new HostExecutionRunner(launchGateway(order), commands).launch(task, { goalEnabled: true })
+    await new HostExecutionRunner(launchGateway(order), commands, fixtureWorkspaces()).launch(task, { goalEnabled: true })
 
     // Then the cleared value behaves exactly like a card that never opted in
     expect(order).toEqual(['create', 'rename', 'prompt'])
@@ -218,7 +219,7 @@ describe('goal run arming', () => {
     const commands = { execute: vi.fn(async () => ({ kind: 'error' as const, text: 'A goal is already active.' })) }
 
     // When an opted-in card runs
-    const launched = await new HostExecutionRunner(launchGateway(order), commands)
+    const launched = await new HostExecutionRunner(launchGateway(order), commands, fixtureWorkspaces())
       .launch(createTask({ title: 'Run me', description: '', prompt: 'do work', goalRun: true }, 1, 'task-a'), { goalEnabled: true })
 
     // Then the session is launched with the prompt and the run survives
@@ -231,7 +232,7 @@ describe('goal run arming', () => {
     const order: string[] = []
 
     // When an opted-in card runs
-    const launched = await new HostExecutionRunner(launchGateway(order))
+    const launched = await new HostExecutionRunner(launchGateway(order), undefined, fixtureWorkspaces())
       .launch(createTask({ title: 'Run me', description: '', prompt: 'do work', goalRun: true }, 1, 'task-a'), { goalEnabled: true })
 
     // Then the prompt is still queued and the session exists
@@ -245,7 +246,7 @@ describe('goal run arming', () => {
     const commands = { execute: vi.fn(async (_sessionId: string, line: string) => { order.push('command:' + goalLine(line)); return { kind: 'success' as const } }) }
 
     // When a card that opted in runs
-    await new HostExecutionRunner(launchGateway(order), commands)
+    await new HostExecutionRunner(launchGateway(order), commands, fixtureWorkspaces())
       .launch(createTask({ title: 'Run me', description: '', prompt: 'do work', goalRun: true }, 1, 'task-a'))
 
     // Then no /goal is dispatched: the global switch alone decides, and off is
@@ -260,7 +261,7 @@ describe('goal run arming', () => {
       const order: string[] = []
       const commands = { execute: vi.fn(async (_sessionId: string, line: string) => { order.push('command:' + goalLine(line)); return { kind: 'success' as const } }) }
       const task: TaskRecord = { ...createTask({ title: 'Run me', description: '', prompt: 'do work' }, 1, 'task-a'), ...(options.goalRun === undefined ? {} : { goalRun: options.goalRun }) }
-      await new HostExecutionRunner(launchGateway(order), commands).launch(task, { goalEnabled: options.goalEnabled })
+      await new HostExecutionRunner(launchGateway(order), commands, fixtureWorkspaces()).launch(task, { goalEnabled: options.goalEnabled })
       return order
     }
 
@@ -284,7 +285,7 @@ describe('goal run arming', () => {
     const commands = { execute: vi.fn(async (_sessionId: string, line: string) => { order.push('command:' + goalLine(line)); return { kind: 'success' as const } }) }
 
     // When the opted-in launch runs with its frozen value
-    await new HostExecutionRunner(launchGateway(order), commands)
+    await new HostExecutionRunner(launchGateway(order), commands, fixtureWorkspaces())
       .launch(createTask({ title: 'Run me', description: '', prompt: 'do work', goalRun: true }, 1, 'task-a'), { goalEnabled: true })
 
     // Then the frozen decision is what ran: nothing re-reads a live setting, so

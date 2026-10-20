@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mostRecentWorkspaceId, workspaceOwningSession, type WorkspaceCandidate } from '../src/core/workspace-target.ts'
+import { MISSING_WORKSPACE_REASON, isMissingWorkspaceReason, mostRecentWorkspaceId, workspaceOwningSession, type WorkspaceCandidate } from '../src/core/workspace-target.ts'
 
 function workspace(id: string, updatedAt: string, sessionIds: readonly string[] = []): WorkspaceCandidate {
   return { id, updatedAt, sessionIds }
@@ -37,6 +37,15 @@ describe('mostRecentWorkspaceId', () => {
     // Then the newest durable mutation wins in either listing order
     expect(mostRecentWorkspaceId(oldestFirst)).toBe('ws-new')
     expect(mostRecentWorkspaceId(newestFirst)).toBe('ws-new')
+  })
+
+  it('user sees the missing-workspace refusal recognized and no other failure rewritten', () => {
+    // Given the refusal the Host records for a card that names no workspace
+    // When it and unrelated failure texts are classified
+    // Then only that refusal is claimed, so no other failure is reworded
+    expect(isMissingWorkspaceReason(MISSING_WORKSPACE_REASON)).toBe(true)
+    expect(isMissingWorkspaceReason('workspace not found: ws-a')).toBe(false)
+    expect(isMissingWorkspaceReason('')).toBe(false)
   })
 
   it('operator sees list order decide equal and unreadable stamps', () => {

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Workspace } from '@deepseek-ai/dsh-workspace/types'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
+import { MISSING_WORKSPACE_REASON } from '../src/core/workspace-target.ts'
+import { fixtureWorkspaces } from './workspace-fixture.ts'
 import { HostExecutionRunner, SessionLaunchError, createOwnerPeer, type GatewayPeer } from '../src/host-runner.ts'
 
 type GatewayRequest = {
@@ -222,7 +224,7 @@ describe('HostExecutionRunner', () => {
       ...createTask({ title: 'Task with model', description: '', prompt: 'hello' }, 1, 'task-m'),
       model: 'deepseek/deepseek-chat',
     }
-    await expect(new HostExecutionRunner(gateway).launch(taskWithModel)).resolves.toBe('session-model')
+    await expect(new HostExecutionRunner(gateway, undefined, fixtureWorkspaces()).launch(taskWithModel)).resolves.toBe('session-model')
     // A card that pins no reasoning effort gets exactly the selection it always
     // got: the model route, with no effort key at all.
     expect(selections).toEqual([{ sessionId: 'session-model', provider: 'deepseek', model: 'deepseek-chat' }])
@@ -768,52 +770,60 @@ describe('HostExecutionRunner workspace default', () => {
   it('operator sees an unpinned card run in the most recently used workspace', async () => {
     // Given a deployment whose newest workspace record is workspace-new
     const created: unknown[] = []
+    const calls: string[] = []
     const gateway = {
       stream: fakeStream(async () => ({ async *[Symbol.asyncIterator]() {} })),
       invoke: fakeInvoke(async (request: GatewayRequest) => {
         if (request.method === 'create') {
+          calls.push('create')
           created.push(request.args.request)
           return { sessionId: 'session-a' }
         }
-        if (request.method === 'rename') return { title: 'Run me', seq: 1 }
-        if (request.method === 'prompt') return { accepted: true }
+        if (request.method === 'rename') {
+          calls.push('rename')
+          return { title: 'Run me', seq: 1 }
+        }
+        if (request.method === 'prompt') {
+          calls.push('prompt')
+          return { accepted: true }
+        }
         throw new Error('unexpected gateway call')
       }),
     }
     const task = createTask({ title: 'Run me', description: '', prompt: 'do work' }, 1, 'task-a')
 
     // When the runner launches a card that pins no workspace
-    await new HostExecutionRunner(gateway, undefined, registryListing([
+    // Then the launch completes into that workspace, never the Host's own directory
+    await expect(new HostExecutionRunner(gateway, undefined, registryListing([
       { id: 'workspace-old', updatedAt: '2026-09-29T10:00:00.000Z' },
       { id: 'workspace-new', updatedAt: '2026-09-30T10:00:00.000Z' },
-    ])).launch(task)
-
-    // Then the session is created in that workspace, never in the Host's own directory
+    ])).launch(task)).resolves.toBe('session-a')
     expect(created).toEqual([{ workspaceId: 'workspace-new' }])
+    expect(calls).toEqual(['create', 'rename', 'prompt'])
   })
 
-  it('operator sees the Host decide when the deployment knows no workspace', async () => {
-    // Given a deployment that has registered no workspace at all
-    const created: unknown[] = []
+  it('operator sees an unpinned card refused instead of run in the Host directory', async () => {
+    // Given a deployment with no workspace to resolve to (an empty registry, or
+    // no workspace registry at all), and a gateway that would record a session
+    const create = vi.fn()
     const gateway = {
       stream: fakeStream(async () => ({ async *[Symbol.asyncIterator]() {} })),
       invoke: fakeInvoke(async (request: GatewayRequest) => {
-        if (request.method === 'create') {
-          created.push(request.args.request)
-          return { sessionId: 'session-a' }
-        }
-        if (request.method === 'rename') return { title: 'Run me', seq: 1 }
-        if (request.method === 'prompt') return { accepted: true }
+        if (request.method === 'create') return create()
         throw new Error('unexpected gateway call')
       }),
     }
     const task = createTask({ title: 'Run me', description: '', prompt: 'do work' }, 1, 'task-a')
 
-    // When the runner launches the card
-    await new HostExecutionRunner(gateway, undefined, workspaceRegistry([])).launch(task)
+    // When the runner launches a card that pins no workspace
+    const emptyRegistry = new HostExecutionRunner(gateway, undefined, workspaceRegistry([])).launch(task)
+    const noRegistry = new HostExecutionRunner(gateway).launch(task)
 
-    // Then the create request carries no workspace and the Host's own default decides
-    expect(created).toEqual([{}])
+    // Then the run is refused with the reason the user can act on, before any
+    // session exists — never handed to the Host's own working directory
+    await expect(emptyRegistry).rejects.toThrow(MISSING_WORKSPACE_REASON)
+    await expect(noRegistry).rejects.toThrow(MISSING_WORKSPACE_REASON)
+    expect(create).not.toHaveBeenCalled()
   })
 })
 

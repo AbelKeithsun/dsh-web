@@ -14,6 +14,7 @@ import { HostTaskLedger } from '../src/host-ledger.ts'
 import { TaskBoardHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
 import { DEFAULT_RUN_LAUNCH_WIDTH, RUN_LAUNCH_WIDTH_MAX, normalizeRunLaunchWidth } from '../src/core/launch-width.ts'
+import { fixtureWorkspaces } from './workspace-fixture.ts'
 
 const roots: string[] = []
 const NOW = 1_700_000_000_000
@@ -119,6 +120,7 @@ function serviceFor(ledger: HostTaskLedger, gate: Gate, width: () => number): Ta
     power: new PowerInhibitor({ platform: 'linux' }),
     now: () => NOW,
     runLaunchWidth: width,
+    workspaceRegistry: fixtureWorkspaces(),
   })
 }
 
@@ -349,6 +351,7 @@ describe('run launch admission width', () => {
       timers,
       now: () => now,
       runLaunchWidth: () => 1,
+      workspaceRegistry: fixtureWorkspaces(),
     })
     service.start()
     expect(last?.delay).toBe(30_000)
@@ -445,6 +448,7 @@ describe('run launch admission width', () => {
       power: new PowerInhibitor({ platform: 'linux' }),
       now: () => NOW,
       runLaunchWidth: () => 2,
+      workspaceRegistry: fixtureWorkspaces(),
       team: {
         async spawn(input) {
           inFlight += 1

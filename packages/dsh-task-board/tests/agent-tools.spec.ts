@@ -18,6 +18,7 @@ import { Config, apply, resolveToolRegistry } from '../src/index.ts'
 import { HostTaskLedger } from '../src/host-ledger.ts'
 import { TaskBoardHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
+import { fixtureWorkspaces } from './workspace-fixture.ts'
 import type { TaskPermission } from '../src/core/tasks.ts'
 import { exceptionAttempts, type VerificationAttempt } from '../src/core/verification.ts'
 
@@ -85,6 +86,7 @@ function harness(options: { sessionDefaultPermission?: TaskPermission; maxSubtas
     ledger,
     power: new PowerInhibitor({ platform: 'linux' }),
     now: () => NOW,
+    workspaceRegistry: fixtureWorkspaces(),
   })
   harnesses.push(host)
   return { host, tools: buildTaskBoardTools(host) }

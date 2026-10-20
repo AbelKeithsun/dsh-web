@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { ModelCatalogView } from '../src/core/verification.ts'
 import { HostExecutionRunner } from '../src/host-runner.ts'
+import { fixtureWorkspaces } from './workspace-fixture.ts'
 
 interface GatewayRequest {
   namespace: string
@@ -102,7 +103,7 @@ function harness(modelSelection: unknown = null, options: { rejectSelectModel?: 
     },
   }
   return {
-    runner: new HostExecutionRunner(gateway as never),
+    runner: new HostExecutionRunner(gateway as never, undefined, fixtureWorkspaces()),
     selectModel,
     prompt,
     projections: () => projectionReads,

@@ -16,6 +16,7 @@ import { HostTaskLedger } from '../src/host-ledger.ts'
 import { TaskBoardHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
 import type { ModelCatalogView } from '../src/core/verification.ts'
+import { fixtureWorkspaces } from './workspace-fixture.ts'
 
 const NOW = 1_700_000_000_000
 
@@ -84,6 +85,7 @@ function harness(options: { catalog?: ModelCatalogView; rejectSelectModel?: bool
     power: new PowerInhibitor({ platform: 'linux' }),
     now: () => NOW,
     ...(options.catalog === undefined ? {} : { verificationCatalog: async () => options.catalog }),
+    workspaceRegistry: fixtureWorkspaces(),
   })
   return {
     service,

@@ -16,6 +16,7 @@ import { t, zh } from '../src/client/locales.ts'
 import { openFormSection } from './form-sections.ts'
 import { VISIBLE_EXECUTIONS } from '../src/client/board/ExecutionLog.tsx'
 import { OVERLAY_EXIT_MS } from '../src/client/board/overlay.tsx'
+import { MISSING_WORKSPACE_REASON } from '../src/core/workspace-target.ts'
 import type { BoardController, ControllerSnapshot } from '../src/core/controller.ts'
 import { createTask, type ExecutionRecord, type TaskRecord } from '../src/core/tasks.ts'
 
@@ -452,6 +453,21 @@ describe('folded execution column', () => {
     // Then the focus is on the row that owns the folded body, not on the body
     expect(document.activeElement).toBe(header)
     expect(header.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('user reading a run refused for pinning no workspace sees the fix, not the Host wording', () => {
+    // Given a card whose latest run was refused because it pins no workspace
+    const refused: ExecutionRecord = { ...run('e1', 1_000), result: 'failed', error: MISSING_WORKSPACE_REASON }
+    const { container } = renderDetail(card({ executions: [refused] }))
+
+    // When the reader opens the history region
+    openFormSection(container, t('detail.execution'))
+
+    // Then the row states what to do in the reader's language, never the raw
+    // Host text that the ledger stored
+    const row = container.querySelector('[data-execution-id="e1"]')
+    expect(row?.textContent).toContain(t('exec.error.noWorkspace'))
+    expect(row?.textContent).not.toContain(MISSING_WORKSPACE_REASON)
   })
 
   it('user reaching a fold from the keyboard toggles it from the region row itself', () => {
