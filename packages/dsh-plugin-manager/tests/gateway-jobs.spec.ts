@@ -1663,3 +1663,94 @@ describe('CliGateway orphan pruning keeps overrides of rows that still exist', (
     expect(existsSync(`${facts.patchPath}.bak-plugin-manager`)).toBe(false)
   })
 })
+
+/**
+ * The layer of the profile's one installed bundle: the row id the user layer
+ * overrides, carried under the package that really mounts it.
+ */
+const INSTALLED_BUNDLE_LAYER = [
+  '- insert:',
+  '    - id: web-ui-pet',
+  "      name: '@linxin666/dsh-client-ui-pet'",
+  '',
+].join('\n')
+
+/**
+ * A user layer naming that row by the package it used to be mounted from,
+ * beside an override the target composition no longer carries at all.
+ */
+const STALE_NAME_LAYER = [
+  '# user overrides written by the plugin manager',
+  '- id: web-ui-pet',
+  '  name: "@linxin666/dsh-web-all/pet"',
+  '  disabled: false',
+  '- id: web-ui-model-capabilities',
+  '  name: "@linxin666/dsh-model-capabilities"',
+  '  disabled: true',
+  '',
+].join('\n')
+
+/** The same layer with the row pointed at the live package; the orphan stays. */
+const REPAIRED_NAME_LAYER = [
+  '# user overrides written by the plugin manager',
+  '- id: web-ui-pet',
+  '  name: "@linxin666/dsh-client-ui-pet"',
+  '  disabled: false',
+  '- id: web-ui-model-capabilities',
+  '  name: "@linxin666/dsh-model-capabilities"',
+  '  disabled: true',
+  '',
+].join('\n')
+
+/**
+ * A marker seeded into the backup between two runs: a write replaces the
+ * backup with the current layer, so a surviving marker proves the run wrote
+ * nothing at all.
+ */
+const BACKUP_SENTINEL = '# sentinel: no write may replace this file\n'
+
+describe('CliGateway row-name repair on the update path', () => {
+  it('operator: repairs a stale row name while a declared bundle is not installed, and prunes nothing', async () => {
+    // Given a CLI-created profile whose bundle list names an official bundle
+    // that is not installed under node_modules (the shape `dsh plugin` writes,
+    // where `@deepseek-ai/dsh-base` resolves from the host installation), one
+    // installed bundle declaring the row id, and a user layer naming that row
+    // by the package it used to be mounted from, beside an orphan override
+    const { facts, dir } = makeProfile(
+      { 'dsh-memoir': { version: '1.0.0', bundle: true, patch: INSTALLED_BUNDLE_LAYER } },
+      { bundles: ['dsh-memoir', '@deepseek-ai/dsh-base'] },
+    )
+    tempDirs.push(dir)
+    writeFileSync(facts.patchPath, STALE_NAME_LAYER)
+    const gateway = gatewayFor(facts, (args) => {
+      if (args.includes('--dump-config')) return { code: 0, output: STALE_DUMP }
+      if (args[0] === 'plugin' && args[3] === 'add') installPackage(facts.profileDir, 'dsh-memoir', { version: '1.1.0' })
+      return { code: 0 }
+    }, [])
+
+    // When the update runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then the row names the live package and every other byte of the layer is
+    // untouched, the pre-repair text survives as the single backup, and the
+    // orphan override is still there: the bundle that cannot be resolved
+    // leaves the live ids unknown, so nothing may be deleted
+    expect(job.phase).toBe('done')
+    const repaired = readFileSync(facts.patchPath, 'utf8')
+    expect(repaired).toBe(REPAIRED_NAME_LAYER)
+    expect(repaired).toContain('- id: web-ui-model-capabilities')
+    expect(readFileSync(`${facts.patchPath}.bak-plugin-manager`, 'utf8')).toBe(STALE_NAME_LAYER)
+    expect(existsSync(`${facts.patchPath}.tmp`)).toBe(false)
+
+    // When the same update runs again over the repaired profile
+    writeFileSync(`${facts.patchPath}.bak-plugin-manager`, BACKUP_SENTINEL)
+    const second = await settle(gateway, gateway.update('dsh-memoir', '1.1.0').jobId)
+
+    // Then the run is a no-op: no duplicated row, no rewrite, and no new
+    // backup, because the sentinel a write would have replaced is still there
+    expect(second.phase).toBe('done')
+    expect(readFileSync(facts.patchPath, 'utf8')).toBe(REPAIRED_NAME_LAYER)
+    expect(readFileSync(`${facts.patchPath}.bak-plugin-manager`, 'utf8')).toBe(BACKUP_SENTINEL)
+  })
+})

@@ -1840,6 +1840,10 @@ export class CliGateway {
    * override that the loader reports on every boot as
    * `patch: entry "<id>" not found`.
    *
+   * The stale-row-name repair ({@link repairProfileRowNames}) runs first and
+   * on its own authority, so a profile whose bundle declarations cannot be
+   * resolved is repaired even though the prune then writes nothing.
+   *
    * Nothing is written when nothing is orphaned — a second run over a pruned
    * profile returns the input text untouched, so no write and no second backup
    * happen — and an unobtainable composition leaves the file as it is instead
@@ -1851,15 +1855,16 @@ export class CliGateway {
    * @returns the pruned entry ids, or undefined when the job failed.
    */
   private async pruneOrphanOverrides(job: GatewayJob, dumpText?: string): Promise<string[] | undefined> {
-    const dump = dumpText ?? await this.compositionOf()
-    if (dump === undefined) return []
-    const composed = composedEntryIdsOf(dump)
-    if (composed === undefined) return []
-    const live = await this.liveOverrideIds(composed)
-    if (live === undefined) return []
     // A row whose package was renamed is dead until its name follows the
     // rename, so the names are repaired before the orphan pass decides what to
-    // drop: a row that names a live package again is not an orphan.
+    // drop: a row that names a live package again is not an orphan. The repair
+    // answers to its own authority — the names the bundles it can read declare
+    // ({@link liveEntryNames}) — and runs before the guards below rather than
+    // inside them: a profile whose bundle list names a package that is not
+    // installed (the normal shape of a CLI-created profile, which lists
+    // `@deepseek-ai/dsh-base` and `@deepseek-ai/dsh-web-app` without
+    // installing them) leaves {@link liveOverrideIds} unknown, and a repair
+    // gated behind that would never run, while the boot repair does it anyway.
     try {
       const repaired = await this.repairProfileRowNames()
       if (repaired.length > 0) {
@@ -1868,6 +1873,12 @@ export class CliGateway {
     } catch (error) {
       console.warn('[plugin-manager] profile 行名修复失败：' + (error instanceof Error ? error.message : String(error)))
     }
+    const dump = dumpText ?? await this.compositionOf()
+    if (dump === undefined) return []
+    const composed = composedEntryIdsOf(dump)
+    if (composed === undefined) return []
+    const live = await this.liveOverrideIds(composed)
+    if (live === undefined) return []
     let text: string
     try {
       text = await readFile(this.facts.patchPath, 'utf8')
