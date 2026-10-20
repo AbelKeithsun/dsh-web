@@ -16,7 +16,10 @@ paths produced it, and both trace to the same line of the runner:
    (`~/.dsh/profiles/desktop`) in the desktop app. Observed on 2026-09-30: a card
    created from a session working in `~/code/dsh-web` executed in
    `~/.dsh/profiles/desktop`, and the session store recorded it under
-   `~/.dsh/sessions/--Users-zcl-.dsh-profiles-desktop--/`.
+   `~/.dsh/sessions/--Users-zcl-.dsh-profiles-desktop--/`. The session header of
+   that run recorded `cwd: /Users/zcl/.dsh/profiles/desktop`,
+   `delegationDepth: 0`, `agentPreset: standard` — the app profile root, which
+   the Agents view then showed as the working directory of a batch of agents.
 2. Only the browser new-task form ever filled the pin (the open project, or an
    explicit choice). A card written through the agent tool `task_board_create` —
    how a scheduled card is normally created while in conversation — arrived with
@@ -37,18 +40,26 @@ submits `callingSessionId(exec)`, and the browser submits the main view's sessio
 so one rule covers both writers. The initiator is client-asserted and only
 selects among workspaces the deployment already lists.
 
-**A run whose pin is still empty resolves the most recently used workspace
-instead of omitting `workspaceId`.** `HostExecutionRunner.launch()` falls back to
-`mostRecentWorkspaceId(registry.list())` — the workspace whose record changed last,
-since attaching a session stamps `updatedAt` — with the deployment's own list
-order breaking ties. This covers cards written before this change, imported
-cards, and creators no workspace can resolve. Only a deployment that serves no
-workspace registry, or has registered none yet, still leaves the choice to
-`session.create` and therefore to the Host working directory.
+**A run whose pin is still empty resolves the most recently used workspace, and
+refuses when the deployment has none.** `HostExecutionRunner.launch()` resolves
+`task.handover?.workspaceId ?? task.workspaceId ?? mostRecentWorkspaceId(registry.list())`
+— the workspace whose record changed last, since attaching a session stamps
+`updatedAt` — with the deployment's own list order breaking ties. This covers
+cards written before this change, imported cards, and creators no workspace can
+resolve. When all three sources are empty — no pin, no handover bundle, and a
+workspace registry that is absent or has registered none — the launch throws
+`MISSING_WORKSPACE_REASON` (`this card pins no workspace; choose a workspace on
+the card before running`) before `session.create` is called. The refusal happens
+before any session exists, so the board settles the card failed with that text,
+the agent tools serve the same text, and the browser renders it from the
+`exec.error.noWorkspace` dictionary entry in the reader's language. The reuse
+branch is unaffected: continuing an existing session needs no workspace.
 
-Both rules live in the framework-free `src/core/workspace-target.ts` and read a
-structural subset of the SDK `Workspace` entity, so the browser program compiles
-them without an SDK value import.
+All three rules live in the framework-free `src/core/workspace-target.ts` and
+read a structural subset of the SDK `Workspace` entity, so the browser program
+compiles them without an SDK value import: `workspaceOwningSession()`,
+`mostRecentWorkspaceId()`, and `MISSING_WORKSPACE_REASON` with its
+`isMissingWorkspaceReason()` predicate.
 
 The most-recently-used fallback is a LAST resort, not an answer: it is correct
 only when the card has no better fact. A card materialized by the GitHub
@@ -63,12 +74,16 @@ may set it.
 ## Testing
 
 - `tests/workspace-target.spec.ts` — session ownership, recency selection, ties,
-  unreadable stamps, and the empty registry.
+  unreadable stamps, the empty registry, and the refusal predicate.
 - `tests/host-runner.spec.ts` — an unpinned launch creates its session in the most
-  recently used workspace; a registry-less deployment still issues a bare create.
+  recently used workspace and keeps the historical create/rename/prompt sequence;
+  a deployment with an empty registry, or no registry at all, refuses with the
+  missing-workspace reason and creates no session.
 - `tests/host-service.spec.ts` — a root creation from a session pins that session's
   workspace even when another workspace is more recent; an explicit pin wins; a
   subtask keeps inheriting its lineage.
+- `tests/task-detail-panel.spec.tsx` — the execution history renders the refusal in
+  the reader's language instead of the Host text the ledger recorded.
 
 ## Alternatives considered
 
@@ -78,6 +93,12 @@ may set it.
   project the user last touched — for a card whose job is maintaining this
   repository's satellites, running in an unrelated checkout repeats the surprise
   the report described.
+- **Keep the silent fallback when nothing resolves a workspace.** Rejected: the
+  only thing `session.create` can do without a workspace is fall back to the Host
+  process working directory, which is exactly the profile-directory outcome this
+  note exists to stop — a run that says nothing about where it goes and that the
+  board cannot correct. A refusal names the missing fact and the fix (choose a
+  workspace on the card) at the moment the run is asked for.
 - **Pin the creator's workspace in the browser only.** Rejected: the agent tool
   path never passes through the browser, and the two writers would drift apart.
 - **Make the workspace field mandatory when no project is open.** Already rejected
@@ -104,3 +125,11 @@ may set it.
   recent workspace; pinning a workspace remains the way to freeze it.
 - `TaskBoardHostService.apply()` reads the workspace registry once per root
   creation — a synchronous scan of the deployment's workspace list.
+- A deployment that has registered no workspace yet — a fresh profile — can no
+  longer run an unpinned card at all: the run settles failed with the
+  missing-workspace reason until a workspace exists or the card pins one. Every
+  deployment with at least one workspace, and every card that pins one, behaves
+  exactly as before.
+- A scheduled occurrence that meets this refusal creates no session and is
+  refunded its planned run, exactly like any other launch that fails before a
+  session exists.
