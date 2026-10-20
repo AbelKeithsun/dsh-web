@@ -77,67 +77,69 @@ describe('webServer port unsettled (0.2.1-rc.2)', () => {
 })
 
 /**
- * Issue #1893: the managed block pinned host 0.0.0.0, which the webserver
- * schema rejects since 0.2.1-rc.2, so every later start failed at config
- * validation. The block can only be written from this one worker, and only
- * with a literal the capability approved.
+ * Issues #1893 and #1917: the managed block pinned a literal the webserver
+ * schema rejects, and before that it swallowed the row's own bind expression and
+ * the CLI flags altogether. Both failure classes came from writing that row, so
+ * the invariant is now structural: nothing in this plugin writes a bind, and the
+ * one file operation left - removing the legacy block - runs before every other
+ * bind step.
  */
-describe('the lan-bind write path versus the bind capability (issue #1893)', () => {
-  it('operator loses no write when nothing bindable could be planned', () => {
-    // Given the boot re-assert, which owns the only call that writes the block
-    // When the plan comes back undefined (a host that rejects the wildcard and
-    // a machine with no advertisable LAN address)
-    // Then the write sits in the else branch of that guard, so an unplanned
-    // literal can never reach the patch file
-    const work = bodyOf('applyLanBindWork')
-    const guard = work.indexOf('desiredPort === undefined')
-    const blocked = work.indexOf('desiredHost === undefined')
-    const write = work.indexOf('writeLanBind(')
-    expect(guard).toBeGreaterThan(-1)
-    expect(blocked).toBeGreaterThan(guard)
-    expect(write).toBeGreaterThan(blocked)
+describe('the LAN edge never writes a bind (issues #1893 and #1917)', () => {
+  it('operator: no code path writes the web server row any more', () => {
+    // Given the host half, source and bind planners alike
+    // When the bind writers that used to exist are looked for
+    // Then none of them is reachable: the flags reach the official row itself
+    // and there is nothing left that could replace it
+    expect(source).not.toContain('writeLanBind(')
+    expect(source).not.toContain('desiredBindHost(')
+    expect(source).not.toContain('managedBlock(')
   })
 
-  it('operator gets the block planned against what the host accepts', () => {
-    // Given the boot re-assert on a host that may refuse the wildcard
-    // When it plans the bind host
-    // Then the capability sampled once per boot is passed in, so the planner
-    // can pin a concrete address instead of echoing the refused literal
+  it('operator: the legacy cleanup runs before the LAN edge and the firewall', () => {
+    // Given the deferred bind worker
+    // When its steps are read in order
+    // Then the block removal comes first: a surviving block keeps replacing the
+    // row's config, so the forwarder must not be planned against a profile that
+    // still carries one
     const work = bodyOf('applyLanBindWork')
-    const plan = work.indexOf('desiredBindHost(')
-    expect(plan).toBeGreaterThan(-1)
-    expect(work.slice(plan, plan + 160)).toContain(', capability)')
-    // One sample per boot drives the block and the status frame alike, so the
-    // card never explains a literal the write path would not have chosen.
-    expect(source).toContain('const capability = lanBindCapabilityOf()')
+    const cleanup = work.indexOf('cleanupLegacyBlock(')
+    const edge = work.indexOf('applyForwardEdge(')
+    const firewall = work.indexOf('ensureFirewallRule(')
+    expect(cleanup).toBeGreaterThan(-1)
+    expect(edge).toBeGreaterThan(cleanup)
+    expect(firewall).toBeGreaterThan(edge)
   })
 
-  it('operator is told when the CLI --host is refused and what was pinned instead', () => {
-    // Given a --host the installed schema will not bind (a wildcard, or any
-    // value that is not a concrete literal) while the block replaces the row's
-    // config wholesale, so nothing else validates that flag
-    // When the boot re-assert plans the block
-    // Then the planner drops the flag and one warning names the refused value
-    // and the literal pinned instead - the operator is never left guessing
-    // why their flag had no effect (issue #1893)
-    const work = bodyOf('applyLanBindWork')
-    expect(work).toContain('refusedStartupHost(startup?.host, capability)')
-    const warnAt = work.indexOf('console.warn(')
-    expect(warnAt).toBeGreaterThan(-1)
-    expect(work.slice(warnAt, warnAt + 240)).toContain('ignoring --host')
-    // The warning sits in the branch that does write, after the plan settled,
-    // so it can name the literal that was pinned instead.
-    expect(warnAt).toBeGreaterThan(work.indexOf('desiredBindHost('))
-    expect(warnAt).toBeGreaterThan(work.indexOf('desiredHost === undefined'))
-    expect(warnAt).toBeLessThan(work.indexOf('writeLanBind('))
+  it('operator: a bind that cannot be taken is reported, never thrown', () => {
+    // Given the LAN edge reconcile
+    // When the forwarder start rejects with a bind error (address gone, port
+    // taken)
+    // Then the failure is logged with its reason and the reconcile continues:
+    // the loopback listener is untouched, so the host cannot brick
+    const edge = bodyOf('applyForwardEdge')
+    expect(edge).toContain('forwarder.start(')
+    expect(edge).toContain('could not listen on')
+    expect(edge).toContain('loopback access is unaffected')
+    expect(edge).not.toContain('throw ')
   })
 
-  it('operator sees the blocked state explained instead of a silent skip', () => {
-    // Given the same guard
-    // When nothing could be pinned
+  it('operator: the CLI --host is honoured by yielding, not by rewriting', () => {
+    // Given the LAN edge reconcile
+    // When a non-loopback --host already binds the network
+    // Then the plan comes back with the yield reason and the forwarder stays
+    // off, so the plugin adds no second listener on that address:port
+    const edge = bodyOf('applyForwardEdge')
+    expect(edge).toContain('forwardPlanOf(value.lanBind, startup?.host, liveCapability)')
+    expect(edge).toContain("plan.reason === 'host-bind'")
+    expect(edge).toContain('yields that port')
+  })
+
+  it('operator: a machine with no LAN address is told instead of silently skipped', () => {
+    // Given the same reconcile
+    // When the plan reports no address
     // Then one error line names the situation and points at the tunnel
-    const work = bodyOf('applyLanBindWork')
-    expect(work).toContain('the host rejects wildcard binds and no LAN IPv4 address is available')
-    expect(work).toContain('use a tunnel instead')
+    const edge = bodyOf('applyForwardEdge')
+    expect(edge).toContain('no LAN IPv4 address to listen on')
+    expect(edge).toContain('use a tunnel instead')
   })
 })

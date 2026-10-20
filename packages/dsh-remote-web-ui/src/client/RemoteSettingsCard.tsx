@@ -316,15 +316,20 @@ export function RemoteSettingsCard(props: RemoteSettingsCardProps) {
 }
 
 /**
- * Live LAN-bind facts above the toggle: the managed block's host, the live
- * bind, the firewall summary, and the reachable LAN URLs. Polls the
- * loopback-only status endpoint; a failure (non-loopback origin) renders
- * nothing — the pairing panel carries the loopback banner instead.
+ * Live LAN facts above the toggle: the address LAN clients dial, the host
+ * process's own listener beside it, the firewall summary, and the reachable LAN
+ * URLs. Polls the loopback-only status endpoint; a failure (non-loopback
+ * origin) renders nothing — the pairing panel carries the loopback banner
+ * instead.
  *
- * A host on DSH 0.2.1-rc.2 or later rejects wildcard binds, so the managed
- * block pins a concrete LAN literal there instead; the lines below report that
- * two ways the wildcard assumption no longer holds (the host refuses the
- * wildcard, or nothing is bindable at all) rather than showing stale copy.
+ * Issue #1917 deleted the managed profile block: a runtime forwarder now holds
+ * the LAN edge, so the card reports that edge instead of a written block — the
+ * address it listens on, why it does not listen (the operator's --host takes the
+ * port, or this machine has no LAN address), the bind failure verbatim, and
+ * whether the block an older version wrote was cleaned up. The host process's
+ * own listener stays visible, so "the LAN entry is a forwarder" is readable
+ * rather than inferred. A pre-#1917 host half sends no `forward` field and the
+ * frame is read defensively.
  */
 export function LanBindStatus({ t }: { t: TranslateNS<'remote'> }) {
   const [frame, setFrame] = useState<LanBindFrame | undefined>(undefined)
@@ -348,25 +353,44 @@ export function LanBindStatus({ t }: { t: TranslateNS<'remote'> }) {
     }
   }, [])
   if (frame === undefined) return null
-  // Either end of the managed block can prove LAN access is on: the block may
-  // still pin the legacy wildcard, or a concrete literal the host accepts.
-  const lanOn = isLanHost(frame.blockHost) || isLanHost(frame.bindHost)
+  const forward = frame.forward
+  // A listening forwarder IS the edge LAN clients dial, so its address is what
+  // the card reports; without one the running bind is the reachable address.
+  const entryHost = forward?.listening === true && typeof forward.host === 'string'
+    ? forward.host
+    : frame.bindHost
+  const port = String(frame.port ?? '')
+  const localHost = typeof frame.localBindHost === 'string' && frame.localBindHost !== ''
+    ? frame.localBindHost
+    : undefined
   const firewallText = frame.firewall.managed
     ? t(frame.firewall.ok ? 'lan.firewall.ok' : 'lan.firewall.bad')
     : t('lan.firewall.unmanaged')
   const lines: string[] = [
-    t('lan.bind', { host: frame.bindHost, port: String(frame.port) }) + ' · ' + firewallText,
+    t('lan.entry', { host: entryHost ?? '', port }) + ' · ' + firewallText,
   ]
-  if (lanOn && frame.lanUrls.length > 0) {
+  if (isLanHost(entryHost) && frame.lanUrls.length > 0) {
     lines.push(t('lan.urls', { urls: frame.lanUrls.join('  ') }))
   }
-  if (!lanOn) {
+  if (!isLanHost(entryHost)) {
     lines.push(t('lan.off'))
   }
-  if (frame.wildcardSupported === false) {
-    lines.push(t('lan.wildcardUnsupported'))
+  // The host process's own listener, whenever the LAN edge sits beside it: a
+  // phone reading "LAN entry: 192.168.1.5:3080" still needs to know the process
+  // itself answers on loopback.
+  if (localHost !== undefined && localHost !== entryHost) {
+    lines.push(t('lan.localBind', { host: localHost, port }))
   }
-  if (frame.lanBlocked === true) {
+  if (forward !== undefined && !forward.listening) {
+    // A bind failure is reported verbatim and first: it is the concrete reason
+    // the LAN entry is missing, and the loopback entry still works.
+    if (typeof forward.error === 'string' && forward.error !== '') {
+      lines.push(t('lan.forward.error', { error: forward.error }))
+    } else if (forward.reason === 'host-bind') {
+      lines.push(t('lan.forward.yield', { host: localHost ?? entryHost ?? '' }))
+    }
+  }
+  if (frame.lanBlocked === true || forward?.reason === 'no-address') {
     lines.push(t('lan.noLanAddress'))
   }
   if (frame.setting === null) {
@@ -374,6 +398,9 @@ export function LanBindStatus({ t }: { t: TranslateNS<'remote'> }) {
   }
   if (frame.pendingRestart === true) {
     lines.push(t('lan.pendingRestart'))
+  }
+  if (frame.legacyBlockRemoved === true) {
+    lines.push(t('lan.legacyRemoved'))
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12, lineHeight: '18px', opacity: 0.85 }}>

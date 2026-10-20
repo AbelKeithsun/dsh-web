@@ -1,12 +1,13 @@
 /** @vitest-environment jsdom */
 /**
- * The LAN-bind status lines (issue #1893). The card used to derive "LAN access
- * is on" from `blockHost === '0.0.0.0'`, which stops being true the moment the
- * host refuses wildcard binds: DSH 0.2.1-rc.2 rejects them, so the managed
- * block pins a concrete LAN literal of this machine instead (or nothing at all
- * when the machine has no LAN address). These specs hold the card to that
- * reality: either end of the block may prove LAN access, and the two failure
- * shapes each earn their own line.
+ * The LAN status lines on the settings card. The card used to derive "LAN
+ * access is on" from a managed block host; issue #1917 deleted that block and
+ * put a runtime forwarder on the LAN edge, so these specs hold the card to what
+ * the status frame now reports: the address the forwarder listens on, the host
+ * process's own listener beside it, why the edge is down (the operator's --host
+ * took the port, or no LAN address exists), the bind failure verbatim, and the
+ * one-time cleanup of the block an older version wrote. Every assertion reads
+ * the rendered text, not the frame.
  */
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -30,12 +31,16 @@ const t: Parameters<typeof LanBindStatus>[0]['t'] = (key, params) => {
 
 /** The copy the assertions name, kept beside the dictionary they come from. */
 const COPY = {
-  off: 'Currently localhost-only.',
+  entry: 'LAN entry: 192.168.1.5:3080',
+  localBind: 'Host process listening: 127.0.0.1:3080',
   urls: 'LAN URLs: http://192.168.1.5:3080',
+  off: 'Currently localhost-only.',
   untouched: 'The toggle has never been used',
   pendingRestart: 'The bind change takes effect after dsh web restarts.',
-  wildcardUnsupported: 'refuses wildcard (0.0.0.0) binds',
-  noLanAddress: 'LAN access cannot be pinned',
+  noLanAddress: 'the forwarder has nothing to listen on',
+  forwardError: 'The LAN entry did not come up (EADDRINUSE: address already in use); the loopback entry is unaffected.',
+  yield: 'The LAN forwarder yields',
+  legacyRemoved: 'Removed the bind block an older version wrote',
 } as const
 
 /**
@@ -46,8 +51,9 @@ function frame(overrides: Partial<LanBindFrame>): LanBindFrame {
   return {
     profile: 'web',
     setting: true,
-    blockHost: '192.168.1.5',
+    blockHost: null,
     bindHost: '192.168.1.5',
+    localBindHost: '127.0.0.1',
     port: 3080,
     lanUrls: ['http://192.168.1.5:3080'],
     firewall: { ok: true, managed: true },
@@ -67,14 +73,14 @@ async function renderStatus(frameValue: LanBindFrame): Promise<string> {
     headers: { 'content-type': 'application/json' },
   })))
   const view = render(<LanBindStatus t={t} />)
-  await waitFor(() => { expect(view.container.textContent).toContain('Bind:') })
+  await waitFor(() => { expect(view.container.textContent).toContain('LAN entry:') })
   return view.container.textContent ?? ''
 }
 
 describe('isLanHost', () => {
   it('operator: an address another device can dial counts as LAN access', () => {
-    // Given the literals a managed block may pin: the legacy wildcard (hosts
-    // that still accept it) and a concrete interface address of this machine.
+    // Given the literals a listener may take: the legacy wildcard (hosts that
+    // still accept it) and a concrete interface address of this machine.
     // When the card asks whether each reaches the network.
     // Then both are LAN access.
     expect(isLanHost('0.0.0.0')).toBe(true)
@@ -94,98 +100,120 @@ describe('isLanHost', () => {
 })
 
 describe('LanBindStatus', () => {
-  it('operator: a host that still accepts the wildcard keeps the wildcard block', async () => {
-    // Given a host whose webserver schema accepts 0.0.0.0 and a block pinning it.
+  it('operator: a listening forwarder shows the LAN address and the loopback listener beside it', async () => {
+    // Given a forwarder answering on this machine LAN address while the host
+    // process itself listens on loopback.
     // When the card renders the live facts.
-    // Then the LAN URLs show, the localhost-only line does not, and the card
-    // makes no claim that a wildcard is refused.
+    // Then the address a phone dials is on screen, the loopback listener is
+    // named separately, and no "localhost-only" line is drawn.
     const text = await renderStatus(frame({
-      blockHost: '0.0.0.0',
-      bindHost: '0.0.0.0',
-      desiredHost: '0.0.0.0',
-      wildcardSupported: true,
-      supportedHosts: ['192.168.1.5'],
+      forward: { listening: true, host: '192.168.1.5', port: 3080, reason: null, error: null },
     }))
-    expect(text).toContain(COPY.urls)
-    expect(text).not.toContain(COPY.off)
-    expect(text).not.toContain(COPY.wildcardUnsupported)
-  })
-
-  it('operator: a concrete LAN literal the host accepts reads as LAN access', async () => {
-    // Given a host that rejects wildcard binds and a block pinning this
-    // machine's LAN address.
-    // When the card renders the live facts.
-    // Then the LAN URLs show instead of the localhost-only line.
-    const text = await renderStatus(frame({ blockHost: '192.168.1.5', bindHost: '192.168.1.5', wildcardSupported: false }))
+    expect(text).toContain(COPY.entry)
+    expect(text).toContain(COPY.localBind)
     expect(text).toContain(COPY.urls)
     expect(text).not.toContain(COPY.off)
   })
 
-  it('operator: a host that refuses the wildcard says so', async () => {
-    // Given a host whose webserver schema rejects 0.0.0.0 and a block that
-    // therefore pins a concrete address.
+  it('operator: a forwarder bind failure names the cause and spares the loopback entry', async () => {
+    // Given a forwarder that could not take its address, so the LAN edge is
+    // down while the host process still answers on loopback.
     // When the card renders the live facts.
-    // Then the card explains why the address is concrete rather than wildcard.
-    const text = await renderStatus(frame({ wildcardSupported: false }))
-    expect(text).toContain(COPY.wildcardUnsupported)
-  })
-
-  it('operator: a blocked toggle explains that nothing could be pinned', async () => {
-    // Given the toggle on, the wildcard refused, and a machine whose LAN
-    // addresses are all unadvertisable, so no block host exists at all.
-    // When the card renders the live facts.
-    // Then it reports both the refusal and the blocked state, and keeps the
-    // localhost-only line because the live bind really is loopback.
+    // Then the bind error is shown verbatim together with the plain statement
+    // that the loopback entry is unaffected, and the card still reports the
+    // loopback-only reality instead of implying LAN access works.
     const text = await renderStatus(frame({
-      blockHost: null,
       bindHost: '127.0.0.1',
       lanUrls: [],
-      wildcardSupported: false,
-      lanBlocked: true,
-      desiredHost: null,
-      supportedHosts: [],
+      forward: { listening: false, host: null, port: null, reason: null, error: 'EADDRINUSE: address already in use' },
     }))
-    expect(text).toContain(COPY.wildcardUnsupported)
+    expect(text).toContain(COPY.forwardError)
+    expect(text).toContain('the loopback entry is unaffected')
+    expect(text).toContain(COPY.off)
+  })
+
+  it('operator: a forwarder that yielded to --host explains why it holds no port', async () => {
+    // Given an operator who bound the network address with --host, so the
+    // forwarder stands down instead of fighting for the same port.
+    // When the card renders the live facts.
+    // Then the card says the forwarder yielded, names the address the operator
+    // bound, and still shows the reachable LAN URLs.
+    const text = await renderStatus(frame({
+      bindHost: '192.168.1.5',
+      localBindHost: '192.168.1.5',
+      forward: { listening: false, host: null, port: null, reason: 'host-bind', error: null },
+    }))
+    expect(text).toContain(COPY.yield)
+    expect(text).toContain('--host')
+    expect(text).toContain('192.168.1.5')
+    expect(text).toContain(COPY.urls)
+  })
+
+  it('operator: a host-less machine explains the LAN entry never came up', async () => {
+    // Given the toggle on and a machine whose LAN addresses are all
+    // unadvertisable, so the forwarder has nothing to listen on.
+    // When the card renders the live facts.
+    // Then the card names that reason and keeps the localhost-only line,
+    // because the live edge really is loopback.
+    const text = await renderStatus(frame({
+      bindHost: '127.0.0.1',
+      lanUrls: [],
+      lanBlocked: true,
+      supportedHosts: [],
+      forward: { listening: false, host: null, port: null, reason: 'no-address', error: null },
+    }))
     expect(text).toContain(COPY.noLanAddress)
     expect(text).toContain(COPY.off)
   })
 
   it('operator: an untouched toggle names the untouched state, not a blocked one', async () => {
-    // Given a profile whose toggle was never flipped on a host that refuses
-    // wildcard binds, so the host property holds while nothing is pinned yet.
+    // Given a profile whose toggle was never flipped, so the forwarder stays
+    // off by policy rather than by failure.
     // When the card renders the live facts.
-    // Then the localhost-only line and the untouched hint show, the host's
-    // wildcard refusal is reported as the reason a flip will pin a concrete
-    // address, and no blocked claim is made.
+    // Then the localhost-only line and the untouched hint show, and no failure
+    // claim is made.
     const text = await renderStatus(frame({
       setting: null,
-      blockHost: null,
       bindHost: '127.0.0.1',
+      localBindHost: '127.0.0.1',
       lanUrls: [],
-      wildcardSupported: false,
+      forward: { listening: false, host: null, port: null, reason: 'off', error: null },
     }))
     expect(text).toContain(COPY.off)
     expect(text).toContain(COPY.untouched)
-    expect(text).toContain(COPY.wildcardUnsupported)
     expect(text).not.toContain(COPY.noLanAddress)
+    expect(text).not.toContain(COPY.yield)
+  })
+
+  it('operator: the cleaned-up legacy block is reported once and never again', async () => {
+    // Given a process that removed the bind block an older version wrote.
+    // When the card renders the live facts beside a working forwarder.
+    // Then the cleanup is stated in plain words, so the user knows the old
+    // block is gone and will not come back.
+    const text = await renderStatus(frame({
+      legacyBlockRemoved: true,
+      forward: { listening: true, host: '192.168.1.5', port: 3080, reason: null, error: null },
+    }))
+    expect(text).toContain(COPY.legacyRemoved)
+    expect(text).toContain('never written again')
+    expect(text).toContain(COPY.entry)
   })
 
   it('operator: an older host half renders without the fields it never sent', async () => {
-    // Given a host half that predates the new status fields, so the frame
-    // carries none of them.
+    // Given a host half that predates the forwarder fields, so the frame
+    // carries no forward state and no local bind.
     // When the card renders the live facts.
-    // Then it falls back to the legacy reading: the wildcard block is LAN
-    // access and the card claims nothing about a wildcard refusal.
+    // Then it still shows the reachable URLs and claims no failure.
     const text = await renderStatus(frame({ blockHost: '0.0.0.0', bindHost: '0.0.0.0' }))
     expect(text).toContain(COPY.urls)
-    expect(text).not.toContain(COPY.wildcardUnsupported)
-    expect(text).not.toContain(COPY.noLanAddress)
     expect(text).not.toContain(COPY.off)
+    expect(text).not.toContain(COPY.noLanAddress)
+    expect(text).not.toContain(COPY.forwardError)
   })
 
-  it('operator: a pinned address still asks for the restart', async () => {
-    // Given a block that already pins a concrete LAN address while the running
-    // bind has not caught up yet.
+  it('operator: a pending restart is still reported when a legacy frame asks for it', async () => {
+    // Given a legacy frame whose running bind has not caught up with the
+    // toggle yet.
     // When the card renders the live facts.
     // Then the URLs are shown together with the pending-restart line.
     const text = await renderStatus(frame({ desiredHost: '192.168.1.5', pendingRestart: true }))

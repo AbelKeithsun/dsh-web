@@ -1,11 +1,20 @@
-/** The managed lan-bind patch block: parse, strip, and write semantics. */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+/**
+ * The lan-bind patch block: parse, strip, and the legacy cleanup (issue #1917).
+ *
+ * Up to 0.4.8 the toggle wrote a managed `- id: webserver` row into the
+ * profile's patch file. That row is retired: the plugin never writes a bind any
+ * more, and its only remaining file operation is removing the block an older
+ * version left behind. The invariants this file pins are the ones the incident
+ * was about - the official row keeps its own bind expression byte for byte, the
+ * cleanup happens once, and a second run writes nothing at all.
+ */
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parseAllDocuments } from 'yaml'
-import { LAN_BIND_BLOCK_BEGIN, LAN_BIND_BLOCK_END, lanBindState, managedBlock, managedBindOf, profilePatchFile, stripManagedBlock, writeLanBind } from '../src/lan-bind.ts'
+import { LAN_BIND_BLOCK_BEGIN, LAN_BIND_BLOCK_END, lanBindState, managedBindOf, profilePatchFile, removeManagedBlock, stripManagedBlock } from '../src/lan-bind.ts'
 
 const tempDirs: string[] = []
 
@@ -25,14 +34,51 @@ function parsePatch(content: string): Record<string, unknown>[] {
   return roots[0] as Record<string, unknown>[]
 }
 
+/** The legacy block a previous version wrote, verbatim. */
+function legacyBlock(host: string, port: number): string {
+  return [
+    LAN_BIND_BLOCK_BEGIN,
+    '- id: webserver',
+    "  name: '@deepseek-ai/dsh-host-webserver'",
+    '  config:',
+    `    host: '${host}'`,
+    `    port: ${String(port)}`,
+    '    compression: gzip',
+    '    compressionLevel: 1',
+    '    compressionThresholdBytes: 1024',
+    LAN_BIND_BLOCK_END,
+    '',
+  ].join('\n')
+}
+
+/** The profile patch every DSH profile carries: the official web server row. */
+const OFFICIAL_ROW = [
+  '- insert:',
+  '    - id: webserver',
+  "      name: '@deepseek-ai/dsh-host-webserver'",
+  '      config:',
+  "        host: !!js ctx.webStartup.host ?? '127.0.0.1'",
+  '        port: !!js ctx.webStartup.port ?? 3000',
+  '        compression: gzip',
+  '',
+].join('\n')
+
+/** Write one profile patch and return its path. */
+function profileFile(home: string, profile: string, content: string): string {
+  const patch = join(home, 'profiles', profile, 'cordis.patch.yml')
+  mkdirSync(join(home, 'profiles', profile), { recursive: true })
+  writeFileSync(patch, content)
+  return patch
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-describe('managedBindOf / managedBlock', () => {
+describe('managedBindOf', () => {
   it('parses the pinned bind out of the block', () => {
-    expect(managedBindOf(managedBlock('0.0.0.0', 3080))).toEqual({ host: '0.0.0.0', port: 3080 })
-    expect(managedBindOf(managedBlock('127.0.0.1', 3191))).toEqual({ host: '127.0.0.1', port: 3191 })
+    expect(managedBindOf(legacyBlock('0.0.0.0', 3080))).toEqual({ host: '0.0.0.0', port: 3080 })
+    expect(managedBindOf(legacyBlock('127.0.0.1', 3191))).toEqual({ host: '127.0.0.1', port: 3191 })
   })
 
   it('returns undefined without a managed block', () => {
@@ -41,7 +87,7 @@ describe('managedBindOf / managedBlock', () => {
   })
 
   it('surfaces hand-edited values instead of claiming a known state', () => {
-    const handEdited = managedBlock('0.0.0.0', 3080).replace("'0.0.0.0'", "'192.168.1.5'")
+    const handEdited = legacyBlock('0.0.0.0', 3080).replace("'0.0.0.0'", "'192.168.1.5'")
     expect(managedBindOf(handEdited)?.host).toBe('192.168.1.5')
   })
 })
@@ -78,7 +124,7 @@ describe('stripManagedBlock', () => {
       LAN_BIND_BLOCK_END,
       '',
     ].join('\n')
-    // When the block is stripped for a rewrite.
+    // When the block is stripped.
     const stripped = stripManagedBlock(content)
     // Then only the markers and the managed row are gone.
     expect(stripped).toBe([
@@ -113,64 +159,54 @@ describe('stripManagedBlock', () => {
   })
 })
 
-describe('writeLanBind / lanBindState', () => {
-  it('appends the block, preserves other rows, and rewrites in place', () => {
+describe('removeManagedBlock / lanBindState', () => {
+  // Issue #1917 (a): the failure the whole change exists for. The official row's
+  // bind expression and port must survive the cleanup byte for byte - the legacy
+  // block replaced that config wholesale, which ate --host/--port.
+  it('operator: the official web server row is byte-identical after the legacy block is removed', () => {
+    // Given a profile the old toggle wrote to: the official row plus the block.
     const home = tempHome()
-    const patch = join(home, 'profiles', 'web', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
-    writeFileSync(patch, '- insert:\n    - id: remote-web-ui\n      name: \'@linxin666/dsh-remote-web-ui\'\n')
-    writeLanBind('0.0.0.0', 3080, 'web', home)
-    const afterOn = readFileSync(patch, 'utf8')
-    expect(afterOn).toContain('- id: remote-web-ui')
-    expect(managedBindOf(afterOn)).toEqual({ host: '0.0.0.0', port: 3080 })
-    expect(lanBindState('web', home)).toEqual({ blockPresent: true, host: '0.0.0.0', port: 3080 })
-    // Flipping rewrites the same block (no duplication).
-    writeLanBind('127.0.0.1', 3191, 'web', home)
-    const afterOff = readFileSync(patch, 'utf8')
-    expect(managedBindOf(afterOff)).toEqual({ host: '127.0.0.1', port: 3191 })
-    expect(afterOff.split(LAN_BIND_BLOCK_BEGIN)).toHaveLength(2)
+    const patch = profileFile(home, 'web', `${OFFICIAL_ROW}\n${legacyBlock('192.168.1.5', 3080)}`)
+    const before = readFileSync(patch, 'utf8')
+    expect(before).toContain("host: !!js ctx.webStartup.host ?? '127.0.0.1'")
+    // When the plugin removes its block.
+    const result = removeManagedBlock('web', home)
+    // Then only the block is gone and the official row is untouched.
+    const after = readFileSync(patch, 'utf8')
+    expect(result).toEqual({ removed: true, host: '192.168.1.5', port: 3080 })
+    expect(after).toBe(`${OFFICIAL_ROW}\n`)
+    expect(after).toContain(OFFICIAL_ROW)
+    expect(after).toContain(`port: !!js ctx.webStartup.port ?? 3000`)
+    expect(after).not.toContain(LAN_BIND_BLOCK_BEGIN)
+    expect(after).not.toContain('- id: webserver\n  name')
+    // The file is still exactly one valid patch document.
+    expect(parsePatch(after)).toHaveLength(1)
   })
 
-  it('reports a missing file as untouched', () => {
+  // Issue #1917 (b): one removal, then silence. A second boot must not rewrite
+  // the file (an equivalent write is what the HMR watcher reacted to).
+  it('operator: the legacy block is removed once and a second run changes nothing', () => {
+    // Given a profile carrying the block.
     const home = tempHome()
+    const patch = profileFile(home, 'web', `${OFFICIAL_ROW}\n${legacyBlock('0.0.0.0', 3080)}`)
+    // When the cleanup runs twice.
+    const first = removeManagedBlock('web', home)
+    const afterFirst = readFileSync(patch, 'utf8')
+    const statFirst = statSync(patch).mtimeMs
+    const second = removeManagedBlock('web', home)
+    // Then the first run reports the removal and the second one writes nothing.
+    expect(first.removed).toBe(true)
+    expect(second).toEqual({ removed: false, host: undefined, port: undefined })
+    expect(readFileSync(patch, 'utf8')).toBe(afterFirst)
+    expect(statSync(patch).mtimeMs).toBe(statFirst)
     expect(lanBindState('web', home)).toEqual({ blockPresent: false })
   })
 
-  it('refuses profiles that escape the profiles directory', () => {
-    const home = tempHome()
-    expect(() => writeLanBind('0.0.0.0', 3080, '../elsewhere', home)).toThrow(/unsafe lan-bind profile/)
-    expect(() => writeLanBind('0.0.0.0', 3080, 'a/b', home)).toThrow(/unsafe lan-bind profile/)
-    expect(() => writeLanBind('0.0.0.0', 3080, '..', home)).toThrow(/unsafe lan-bind profile/)
-    expect(() => profilePatchFile('../../elsewhere', home)).toThrow(/unsafe lan-bind profile/)
-  })
-
-  it('replaces an unterminated block instead of stacking a second webserver row', () => {
-    const home = tempHome()
-    const patch = join(home, 'profiles', 'web', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
-    // A hand-truncated file: BEGIN present, END missing, and a row after the
-    // orphan that the rewrite must not eat.
-    writeFileSync(patch, '- id: keep\n' + `${LAN_BIND_BLOCK_BEGIN}\n- id: webserver\n  config:\n    host: '0.0.0.0'\n- id: keep-after\n`)
-    writeLanBind('127.0.0.1', 3191, 'web', home)
-    const after = readFileSync(patch, 'utf8')
-    expect(managedBindOf(after)).toEqual({ host: '127.0.0.1', port: 3191 })
-    expect(after.split(LAN_BIND_BLOCK_BEGIN)).toHaveLength(2)
-    expect(after.split('- id: webserver')).toHaveLength(2)
-    expect(after).toContain('- id: keep')
-    expect(after).toContain('- id: keep-after')
-  })
-
-  // Write path: the boot re-assert (and every toggle flip) reaches
-  // stripManagedBlock. It must leave rows another writer displaced into the
-  // markers alone - the remote-control row carries the LAN toggle itself, so
-  // deleting it turned the feature back off and locked the phone out again.
-  it('operator: the boot re-assert keeps rows displaced inside the markers', () => {
-    const home = tempHome()
+  it('operator: rows a YAML writer displaced inside the markers survive the cleanup', () => {
     // Given a Desktop profile whose remote-control row and model rows were
     // appended through the YAML document API while the block was last.
-    const patch = join(home, 'profiles', 'desktop', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'desktop'), { recursive: true })
-    writeFileSync(patch, [
+    const home = tempHome()
+    const patch = profileFile(home, 'desktop', [
       '- id: keep-before',
       LAN_BIND_BLOCK_BEGIN,
       '- id: webserver',
@@ -188,132 +224,63 @@ describe('writeLanBind / lanBindState', () => {
       LAN_BIND_BLOCK_END,
       '',
     ].join('\n'))
-    // When the boot re-assert rewrites the block for the same bind.
-    writeLanBind('0.0.0.0', 19387, 'desktop', home)
-    // Then every foreign row survives and one block still carries the bind.
+    // When the cleanup runs.
+    removeManagedBlock('desktop', home)
+    // Then every foreign row survives, the managed row and markers are gone,
+    // and the toggle's own value is still readable from the patch.
     const content = readFileSync(patch, 'utf8')
     expect(parsePatch(content).map(item => item.id)).toEqual([
       'keep-before',
       'web-ui-remote-web-ui',
       'llm-verifier',
-      'webserver',
     ])
-    expect(managedBindOf(content)).toEqual({ host: '0.0.0.0', port: 19387 })
-    expect(content.split(LAN_BIND_BLOCK_BEGIN)).toHaveLength(2)
-    expect(content.split('- id: webserver')).toHaveLength(2)
+    expect(content).not.toContain(LAN_BIND_BLOCK_BEGIN)
+    expect(managedBindOf(content)).toBeUndefined()
+  })
+
+  it('operator: a hand-truncated block is removed without eating the rows after it', () => {
+    // Given a BEGIN marker with no END and rows on both sides of it.
+    const home = tempHome()
+    const patch = profileFile(home, 'web', '- id: keep\n' + `${LAN_BIND_BLOCK_BEGIN}\n- id: webserver\n  config:\n    host: '0.0.0.0'\n- id: keep-after\n`)
+    // When the cleanup runs.
+    removeManagedBlock('web', home)
+    // Then both surrounding rows stay and the orphan is gone.
+    const content = readFileSync(patch, 'utf8')
+    expect(content).toBe('- id: keep\n- id: keep-after\n')
+    expect(content).not.toContain('webserver')
+  })
+
+  it('reports a missing file as untouched', () => {
+    const home = tempHome()
+    expect(lanBindState('web', home)).toEqual({ blockPresent: false })
+    expect(removeManagedBlock('web', home)).toEqual({ removed: false, host: undefined, port: undefined })
+    expect(existsSync(join(home, 'profiles', 'web', 'cordis.patch.yml'))).toBe(false)
+  })
+
+  it('reports a file without the block as untouched', () => {
+    const home = tempHome()
+    const patch = profileFile(home, 'web', OFFICIAL_ROW)
+    expect(removeManagedBlock('web', home).removed).toBe(false)
+    expect(readFileSync(patch, 'utf8')).toBe(OFFICIAL_ROW)
+  })
+
+  it('refuses profiles that escape the profiles directory', () => {
+    const home = tempHome()
+    expect(() => removeManagedBlock('../elsewhere', home)).toThrow(/unsafe lan-bind profile/)
+    expect(() => removeManagedBlock('a/b', home)).toThrow(/unsafe lan-bind profile/)
+    expect(() => removeManagedBlock('..', home)).toThrow(/unsafe lan-bind profile/)
+    expect(() => profilePatchFile('../../elsewhere', home)).toThrow(/unsafe lan-bind profile/)
   })
 
   it.skipIf(process.platform === 'win32')('preserves the original file permissions instead of resetting to umask', () => {
+    // Given a profile patch only the owner can read.
     const home = tempHome()
     const patch = join(home, 'profiles', 'web', 'cordis.patch.yml')
     mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
-    writeFileSync(patch, '- id: a\n', { mode: 0o600 })
-    writeLanBind('0.0.0.0', 3080, 'web', home)
+    writeFileSync(patch, `${OFFICIAL_ROW}\n${legacyBlock('0.0.0.0', 3080)}`, { mode: 0o600 })
+    // When the cleanup rewrites it.
+    removeManagedBlock('web', home)
+    // Then the mode is the file's own, not the umask default.
     expect(statSync(patch).mode & 0o777).toBe(0o600)
   })
-
-  it('strips empty array placeholder [] so cordis.patch.yml remains valid YAML', () => {
-    const home = tempHome()
-
-    // Case 1: only []
-    const patch1 = join(home, 'profiles', 'p1', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'p1'), { recursive: true })
-    writeFileSync(patch1, '[]\n')
-    writeLanBind('0.0.0.0', 3080, 'p1', home)
-    const content1 = readFileSync(patch1, 'utf8')
-    expect(content1).not.toContain('[]')
-    expect(content1.trimStart().startsWith(LAN_BIND_BLOCK_BEGIN)).toBe(true)
-    expect(managedBindOf(content1)).toEqual({ host: '0.0.0.0', port: 3080 })
-
-    // Case 2: # comment followed by []
-    const patch2 = join(home, 'profiles', 'p2', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'p2'), { recursive: true })
-    writeFileSync(patch2, '# user patch\n[]\n')
-    writeLanBind('0.0.0.0', 3080, 'p2', home)
-    const content2 = readFileSync(patch2, 'utf8')
-    expect(content2).not.toContain('[]')
-    expect(content2).toContain('# user patch')
-    expect(managedBindOf(content2)).toEqual({ host: '0.0.0.0', port: 3080 })
-
-    // Case 3: existing entries followed by []
-    const patch3 = join(home, 'profiles', 'p3', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'p3'), { recursive: true })
-    writeFileSync(patch3, '- id: keep\n  config:\n    x: 1\n[]\n')
-    writeLanBind('0.0.0.0', 3080, 'p3', home)
-    const content3 = readFileSync(patch3, 'utf8')
-    expect(content3).not.toContain('[]')
-    expect(content3).toContain('- id: keep')
-    expect(managedBindOf(content3)).toEqual({ host: '0.0.0.0', port: 3080 })
-  })
-
-  // #1675: the plugin manager appends rows through the YAML document API,
-  // which preserves the placeholder's flow style, leaving a NON-empty flow
-  // array. Appending the block sequence there produced two root documents and
-  // the profile failed to parse at dsh web startup (7:1).
-  it('operator: a flow-array profile stays one document after the block is written', () => {
-    const home = tempHome()
-    // Given a profile whose placeholder [] was rewritten into flow rows.
-    const patch = join(home, 'profiles', 'web', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
-    writeFileSync(patch, '[ { id: web-ui-ssh, name: "@linxin666/dsh-web-all/ssh", disabled: false } ]\n')
-    // When the LAN bind toggle writes its managed block.
-    writeLanBind('0.0.0.0', 3080, 'web', home)
-    // Then the file is exactly one patch list holding the user's row and the
-    // managed webserver row, and no second root document exists.
-    const content = readFileSync(patch, 'utf8')
-    const items = parsePatch(content)
-    expect(items).toHaveLength(2)
-    expect(items.map(item => item.id)).toEqual(['web-ui-ssh', 'webserver'])
-    expect(managedBindOf(content)).toEqual({ host: '0.0.0.0', port: 3080 })
-    expect(content.trimStart().startsWith('[')).toBe(false)
-  })
-
-  it('operator: the managed row is appended last so it overrides the user rows', () => {
-    const home = tempHome()
-    // Given a flow-array profile that already carries a webserver row.
-    const patch = join(home, 'profiles', 'web', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
-    writeFileSync(patch, '[ { id: webserver, name: "@deepseek-ai/dsh-host-webserver", config: { host: "127.0.0.1", port: 3000 } }, { id: other, name: x } ]\n')
-    // When the LAN bind toggle writes its managed block.
-    writeLanBind('0.0.0.0', 3080, 'web', home)
-    // Then the user's rows are untouched and the appended managed row carries
-    // the bind (same-id patch rows replace wholesale).
-    const content = readFileSync(patch, 'utf8')
-    const items = parsePatch(content)
-    expect(items.map(item => item.id)).toEqual(['webserver', 'other', 'webserver'])
-    const last = items[items.length - 1] as { config?: { host?: unknown; port?: unknown } }
-    expect(last.config?.host).toBe('0.0.0.0')
-    expect(last.config?.port).toBe(3080)
-    expect(managedBindOf(content)).toEqual({ host: '0.0.0.0', port: 3080 })
-  })
-
-  it('operator: repeated writes leave one managed row and the latest bind', () => {
-    const home = tempHome()
-    // Given a flow-array profile the toggle has not touched yet.
-    const patch = join(home, 'profiles', 'web', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
-    writeFileSync(patch, '[ { id: keep, name: y } ]\n')
-    // When the toggle is flipped twice (LAN on, then off).
-    writeLanBind('0.0.0.0', 3080, 'web', home)
-    writeLanBind('127.0.0.1', 3191, 'web', home)
-    // Then the file holds one block and one webserver row carrying the last bind.
-    const content = readFileSync(patch, 'utf8')
-    expect(parsePatch(content)).toHaveLength(2)
-    expect(content.split(LAN_BIND_BLOCK_BEGIN)).toHaveLength(2)
-    expect(content.split('- id: webserver')).toHaveLength(2)
-    expect(managedBindOf(content)).toEqual({ host: '127.0.0.1', port: 3191 })
-  })
-
-  it('operator: an unparsable profile is refused instead of half-rewritten', () => {
-    const home = tempHome()
-    // Given a profile whose text is not a YAML patch list.
-    const patch = join(home, 'profiles', 'web', 'cordis.patch.yml')
-    mkdirSync(join(home, 'profiles', 'web'), { recursive: true })
-    writeFileSync(patch, '[ not: [a, patch, list]\n')
-    // When the LAN bind toggle runs.
-    // Then it reports the file it cannot update and leaves the bytes alone.
-    expect(() => { writeLanBind('0.0.0.0', 3080, 'web', home) }).toThrow(/cannot update the lan-bind block/)
-    expect(readFileSync(patch, 'utf8')).toBe('[ not: [a, patch, list]\n')
-  })
-});
-
+})

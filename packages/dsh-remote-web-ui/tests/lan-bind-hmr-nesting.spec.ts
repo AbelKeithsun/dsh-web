@@ -12,9 +12,13 @@
  * callback starts a fresh AsyncLocalStorage store. That belief is false and is
  * refuted in detached-work.spec.ts; the deferral now runs through the
  * module-scope AsyncResource in src/detached-work.ts, which really does start
- * clean. This file asserts the two placement rules that keep the write off the
- * save path at all: only the deferred worker touches the patch file and the
- * firewall, and the write sits behind the current-vs-desired guard.
+ * clean.
+ *
+ * Issue #1917 removes the write itself from the design (the LAN edge is a
+ * runtime forwarder), so what is left to hold is narrower and stricter: the
+ * deferred worker is the only place that may touch the profile file - and it
+ * only ever REMOVES the block an older version left, behind a once-per-process
+ * guard - and the firewall probes stay off the save path.
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -47,29 +51,33 @@ function bodyOf(name) {
 }
 
 describe('remote-web-ui LAN bind vs. the HMR transaction (issues #1751 and #1754)', () => {
-  it('operator keeps the patch write and the firewall probes off the sync path', () => {
+  it('operator keeps the profile cleanup and the firewall probes off the sync path', () => {
     // Given the host half that applies the settings
     // When the two functions that own the LAN bind work and the save path are read
-    // Then only the deferred worker touches the patch file and the firewall
+    // Then only the deferred worker reaches the profile file and the firewall
     const work = bodyOf('applyLanBindWork')
-    expect(work).toContain('writeLanBind(')
+    expect(work).toContain('cleanupLegacyBlock(value.profile)')
     expect(work).toContain('ensureFirewallRule(')
-    expect(bodyOf('sync')).not.toContain('writeLanBind(')
+    expect(bodyOf('sync')).not.toContain('removeManagedBlock(')
     expect(bodyOf('sync')).not.toContain('ensureFirewallRule(')
+    expect(bodyOf('sync')).not.toContain('forwarder.start(')
   })
 
-  it('operator writes the block only when the committed one differs from the desired one', () => {
-    // Given the deferred worker, the one thing that keeps the patch file out of
-    // a second save is that a settled profile produces no write at all
-    // When the current-vs-desired comparison that guards the write is read
-    // Then the write sits behind that comparison, and re-reading the same block
-    // therefore cannot touch the file a second time
-    const work = bodyOf('applyLanBindWork')
-    expect(work).toContain('current.host !== desiredHost || current.port !== desiredPort')
-    const guard = work.indexOf('current.host !== desiredHost || current.port !== desiredPort')
-    const write = work.indexOf('writeLanBind(')
+  it('operator touches the profile file at most once per process, and only to remove', () => {
+    // Given the deferred worker
+    // When the cleanup that runs from it is read
+    // Then it is guarded so a later sync cannot rewrite the file a second time,
+    // and the only file operation it can perform is the legacy block removal -
+    // nothing appends a row the HMR watcher would react to
+    const cleanup = bodyOf('cleanupLegacyBlock')
+    expect(cleanup).toContain('if (legacyCleanupDone) return')
+    expect(cleanup).toContain('removeManagedBlock(profile)')
+    expect(cleanup).not.toContain('writeFileSync')
+    expect(source).not.toContain('writeLanBind(')
+    const guard = cleanup.indexOf('if (legacyCleanupDone) return')
+    const remove = cleanup.indexOf('removeManagedBlock(profile)')
     expect(guard).toBeGreaterThan(-1)
-    expect(write).toBeGreaterThan(guard)
+    expect(remove).toBeGreaterThan(guard)
   })
 
   it('operator sees the deferred write leave the settings transaction', () => {

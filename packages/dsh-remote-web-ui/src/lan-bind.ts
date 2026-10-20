@@ -1,29 +1,29 @@
 /**
- * LAN bind toggle: the managed cordis patch block that pins the web
- * server's bind. On = a block binding the network, which is `0.0.0.0` only
- * while the installed webserver schema accepts the wildcard and otherwise this
- * machine's first LAN address (issue #1893); off = the same block binding
- * 127.0.0.1. The block takes effect on the next `dsh web` start (the live
- * patch watcher cannot rebind a running listener, and on this harness line
- * the user patch layer cannot evaluate webStartup-dependent expressions
- * reliably - static values are the only dependable form), so the plugin
- * re-asserts the block at every boot and the settings card reports the
- * running bind honestly.
+ * The lan-bind block this plugin used to write, and its removal (issue #1917).
  *
- * Same-id patch rows REPLACE the row config wholesale, so the block carries
- * the official web-app webserver row's full config (bind + compression)
- * with the bind values materialized. The CLI's --host 0.0.0.0 guard stays
- * intact: deliberate LAN exposure happens through this configuration layer
- * only. Until the user flips the toggle once, the plugin never touches the
- * patch file.
+ * Up to 0.4.8 the toggle pinned the LAN address into the profile's
+ * `cordis.patch.yml` as a managed `- id: webserver` row. That approach is
+ * retired for two measured reasons:
  *
- * The block discipline (markers, atomic write, strip-and-rewrite) follows
- * the dsh-LAN reference implementation (MIT).
+ * 1. A same-id patch row REPLACES the whole row config, so the block silently
+ *    swallowed the official row's own bind expression; the CLI `--host` /
+ *    `--port` never reached the running row, and the machine's port came from
+ *    a literal this plugin guessed.
+ * 2. The profile patch is exactly what the Host's HMR config watcher refreshes
+ *    from, so writing it recomposed the running process and rebound the live
+ *    listener - the "takes effect on the next start" premise was false, and a
+ *    write made mid-session moved the bind under the running host.
+ *
+ * LAN reachability now comes from a runtime forwarder instead (lan-forward.ts),
+ * so the host always listens on loopback and this module's only remaining job
+ * is to remove the block older versions left behind. The removal is
+ * strip-only: no write appends anything, so the official webserver row (and
+ * every other row) stays byte-identical. The block discipline (markers, atomic
+ * write) follows the dsh-LAN reference implementation (MIT).
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
-import { parseDocument } from 'yaml'
 import { dshHome } from './dsh-home.ts'
 
 /** Profile names safe to interpolate into the patch path: one path segment, no traversal. */
@@ -165,89 +165,7 @@ export function stripManagedBlock(content: string): string {
   }
 }
 
-/**
- * Render the managed block for one bind state. The values are static: the
- * user patch layer has no reliable lazy service evaluation, and the plugin
- * re-asserts the block at every boot so CLI flags (--port, --host) win by
- * rewriting it before the next start.
- */
-/**
- * Whether the base opens a flow collection at the root. That is the shape the
- * plugin manager's YAML document round-trip leaves behind when it appends rows
- * to the profile's placeholder `[]`: `[ { id: … }, … ]`. Every other base
- * (empty, block sequence, comment-only prefix) keeps the historical string
- * concatenation, so the common paths stay byte-identical.
- */
-function isFlowRoot(base: string): boolean {
-  return base.trimStart().startsWith('[')
-}
-
-/** Force one parsed collection (and its item collections) into block style. */
-function toBlockStyle(node: unknown): void {
-  if (typeof node !== 'object' || node === null) return
-  const collection = node as { flow?: boolean; items?: unknown[] }
-  if (!Array.isArray(collection.items) && typeof collection.flow !== 'boolean') return
-  collection.flow = false
-  for (const item of collection.items ?? []) toBlockStyle(item)
-}
-
-/** Plain-value view of one parsed node (YAML nodes keep their own accessors). */
-function plainOf(node: unknown): unknown {
-  if (typeof node !== 'object' || node === null) return node
-  const json = (node as { toJSON?: () => unknown }).toJSON
-  return typeof json === 'function' ? json.call(node) : node
-}
-
-/**
- * Produce the file text for one bind state. A flow-style base is re-emitted as
- * a block sequence before the managed block is appended, so the file stays
- * exactly one valid YAML document; concatenating the block onto a non-empty
- * flow array produced two root documents and the profile failed to parse at
- * `dsh web` startup (#1675). A base that cannot be parsed is refused with the
- * file path rather than written half-valid.
- */
-function mergePatchContent(base: string, block: string, file: string): string {
-  if (base.length === 0) return block
-  if (!isFlowRoot(base)) return `${base}\n\n${block}`
-  const doc = parseDocument(base, { uniqueKeys: false })
-  if (doc.errors.length > 0 || doc.contents === null) {
-    throw new Error(`remote-web-ui: cannot update the lan-bind block in ${file}: ${doc.errors[0]?.message ?? 'the patch file is not a YAML document'}`)
-  }
-  if (!('items' in (doc.contents as { items?: unknown[] }))) {
-    throw new Error(`remote-web-ui: cannot update the lan-bind block in ${file}: the patch file is not a top-level patch list`)
-  }
-  toBlockStyle(doc.contents)
-  const rendered = doc.toString({ lineWidth: 0 }).trimEnd()
-  return `${rendered}\n\n${block}`
-}
-
-/**
- * Render the managed block for one bind state. The values are static: the
- * user patch layer has no reliable lazy service evaluation, and the plugin
- * re-asserts the block at every boot so CLI flags (--port, --host) win by
- * rewriting it before the next start.
- *
- * The host is written verbatim, so this function must only be called with a
- * literal the running host accepts (see desiredBindHost in lan-bind-plan.ts):
- * the wildcard only where the installed schema still takes it.
- */
-export function managedBlock(host: LanBindHost, port: number): string {
-  return [
-    LAN_BIND_BLOCK_BEGIN,
-    '- id: webserver',
-    "  name: '@deepseek-ai/dsh-host-webserver'",
-    '  config:',
-    `    host: '${host}'`,
-    `    port: ${String(port)}`,
-    '    compression: gzip',
-    '    compressionLevel: 1',
-    '    compressionThresholdBytes: 1024',
-    LAN_BIND_BLOCK_END,
-    '',
-  ].join('\n')
-}
-
-/** The bind state a managed block pins (undefined when there is no block). */
+/** The bind state a managed block pinned (undefined when there is no block). */
 export interface ManagedBindState {
   host: LanBindHost | (string & {})
   port: number | undefined
@@ -278,40 +196,55 @@ export function managedBindOf(content: string): ManagedBindState | undefined {
   }
 }
 
-/** Full file-level state for the settings card and the boot re-assert. */
+/** File-level state of a patch file a previous version wrote to. */
 export function lanBindState(profile: string, home: string = dshHome()): { blockPresent: boolean; host?: string; port?: number } {
   const state = managedBindOf(readPatchContent(profilePatchFile(profile, home)))
   if (state === undefined) return { blockPresent: false }
   return { blockPresent: true, host: state.host, port: state.port }
 }
 
+/** What one legacy-block cleanup did, for the settings card and the log. */
+export interface LegacyBlockCleanup {
+  /** Whether the file actually carried the managed block. */
+  removed: boolean
+  /** The bind the removed block pinned, when it could be read. */
+  host: string | undefined
+  /** The port the removed block pinned, when it could be read. */
+  port: number | undefined
+}
+
 /**
- * Write (or rewrite) the managed block with the given bind. The rest of the
- * patch file is preserved; the block is rewritten atomically (unique temp
- * file + rename, so concurrent writers can never rename a half-written
- * file) with the original file's permissions preserved. A hand-truncated
- * unterminated block (BEGIN marker without END) is consumed by
- * stripManagedBlock as well - markers and managed row removed, foreign rows
- * kept - so the rewrite can never stack a second webserver row onto the
- * orphan.
+ * Remove the managed block a previous version wrote, and nothing else.
  *
- * The written file is always exactly one valid YAML document: a base the
- * plugin manager left in flow style is re-emitted as a block sequence before
- * the managed block is appended (see mergePatchContent).
+ * The file is rewritten atomically (unique temp file + rename, so a concurrent
+ * reader never sees a half-written patch) with its original permissions
+ * preserved, and only when the block is actually there: a second run finds no
+ * markers, writes nothing, and leaves the bytes identical, which is what makes
+ * the plugin's once-per-boot call idempotent.
  *
- * Only an approved literal reaches this function (see desiredBindHost in
- * lan-bind-plan.ts); on a host that rejects wildcard binds it never writes
- * `0.0.0.0`, because such a block refuses to boot.
+ * The official `- id: webserver` row every profile carries is a FOREIGN row -
+ * the strip keeps it verbatim (see stripManagedBlock). Nothing is appended, so
+ * the profile keeps the row's own bind expression and the CLI flags keep
+ * reaching it.
+ *
+ * A failure (an unreadable file, a read-only profile) is NOT swallowed here:
+ * callers report it, because a silent failure leaves a block that keeps
+ * swallowing the bind on every later start.
+ * @param profile - the managed profile name.
+ * @param home - DSH home (test seam).
+ * @returns what was removed; `removed: false` when there was nothing to do.
  */
-export function writeLanBind(host: LanBindHost, port: number, profile: string, home: string = dshHome()): void {
+export function removeManagedBlock(profile: string, home: string = dshHome()): LegacyBlockCleanup {
   const file = profilePatchFile(profile, home)
-  const rawBase = stripManagedBlock(readPatchContent(file)).trimEnd()
-  const base = rawBase.replace(/\[\s*\]\s*$/, '').trimEnd()
-  const block = managedBlock(host, port)
-  const content = mergePatchContent(base, block, file)
-  const mode = existsSync(file) ? statSync(file).mode & 0o777 : 0o600
+  if (!existsSync(file)) return { removed: false, host: undefined, port: undefined }
+  const content = readFileSync(file, 'utf8')
+  const state = managedBindOf(content)
+  const stripped = stripManagedBlock(content)
+  if (stripped === content) return { removed: false, host: undefined, port: undefined }
+  const mode = statSync(file).mode & 0o777
   mkdirSync(dirname(file), { recursive: true })
   const temp = `${file}.remote-web-ui-tmp-${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-  writeFileSync(temp, content, { mode })
+  writeFileSync(temp, stripped, { mode })
   renameSync(temp, file)
+  return { removed: true, host: state?.host, port: state?.port }
 }

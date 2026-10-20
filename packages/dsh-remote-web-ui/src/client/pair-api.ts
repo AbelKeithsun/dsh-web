@@ -214,21 +214,48 @@ export function stripParam(name: string): string {
   return url.search
 }
 
+/**
+ * The LAN edge forwarder's state (issue #1917: a runtime forwarder replaced the
+ * managed profile block). The wire key of the address is `host`.
+ */
+export interface LanForwardFrame {
+  /** Whether the forwarder is answering on the LAN right now. */
+  listening: boolean
+  /** The address it listens on; absent while it does not listen. */
+  host?: string | null
+  /** The port it listens on; absent while it does not listen. */
+  port?: number | null
+  /**
+   * Why it does not listen: 'off' (toggle off or never flipped), 'host-bind'
+   * (the operator bound a non-loopback address with --host, so the forwarder
+   * yields the port), 'no-address' (this machine has no LAN IPv4 to listen on).
+   */
+  reason?: string | null
+  /** The bind failure verbatim (EADDRINUSE, EADDRNOTAVAIL, ...). */
+  error?: string | null
+}
+
 /** LAN-bind status frame from the loopback-only card endpoint. */
 export interface LanBindFrame {
   profile: string
   /** The config toggle: true/false once flipped, null while untouched. */
   setting: boolean | null
-  /** The bind default the managed patch block currently pins. */
+  /** The bind default a pre-#1917 managed patch block still pins. */
   blockHost: string | null
-  /** The live bind of the running web server. */
-  bindHost: string
+  /** The address LAN clients actually dial: the forwarder, or the running bind. */
+  bindHost?: string
   port: number
   lanUrls: string[]
   firewall: { ok: boolean; managed: boolean; note?: string }
   platform: string
   /** true when the running bind has not caught up with the toggle yet. */
   pendingRestart?: boolean
+  /** The host process's own listener, when the LAN edge sits beside it (issue #1917). */
+  localBindHost?: string | null
+  /** A bind block a previous version wrote was removed by this process (issue #1917). */
+  legacyBlockRemoved?: boolean
+  /** The LAN edge this plugin runs itself; absent on a pre-#1917 host half. */
+  forward?: LanForwardFrame
   /**
    * What the next write or start will pin: a concrete LAN literal on a host
    * that refuses wildcard binds, '0.0.0.0' where the wildcard is still
