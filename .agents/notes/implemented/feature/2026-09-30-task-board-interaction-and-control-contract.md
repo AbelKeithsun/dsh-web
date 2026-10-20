@@ -125,3 +125,5 @@ and the toolbar wrapper is not yet a surface a skin needs to address.
   one component for six packages and needs its own change and evidence; this
   board's settings card keeps only its verification block, now on tokens in
   `board-settings.module.css`.
+
+The [card surface contract](2026-10-20-task-board-card-surface-contract.md) owns the type scale, outcome slots and fold behaviour of these surfaces.

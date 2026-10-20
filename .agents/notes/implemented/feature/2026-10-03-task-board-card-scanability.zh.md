@@ -36,3 +36,5 @@ Status: implemented
 ## Testing
 
 `tests/card-view.spec.ts` 覆盖视图模型、日界处按 Host 时区分组、密度偏好存储与摘要。`tests/compact-card.spec.tsx` 覆盖渲染后的卡片：类型徽章、摘要、手动结算、结算时间、会话快捷按钮与紧凑密度。`tests/board-view.spec.tsx` 端到端覆盖已完成列的分组、折叠与紧凑模式。`dsh-task-board-github/tests/github-ui.spec.tsx` 覆盖 Issue 链接及其非 http 回退。
+
+这些界面的字号尺度、结果槽位与折叠行为由[卡片界面呈现契约](2026-10-20-task-board-card-surface-contract.md)所有。

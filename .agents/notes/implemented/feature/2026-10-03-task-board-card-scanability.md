@@ -36,3 +36,5 @@ A board fed by GitHub issue sync held a Done column of more than a hundred cards
 ## Testing
 
 `tests/card-view.spec.ts` covers the view model, Host-zone recency at a day boundary, the stored density, and the excerpt. `tests/compact-card.spec.tsx` covers the rendered card: kind badge, excerpt, declared outcome, settlement time, session quick action, and compact density. `tests/board-view.spec.tsx` covers the grouped, folded, and compact Done column end to end. `dsh-task-board-github/tests/github-ui.spec.tsx` covers the issue link and its non-http fallback.
+
+The [card surface contract](2026-10-20-task-board-card-surface-contract.md) owns the type scale, outcome slots and fold behaviour of these surfaces.

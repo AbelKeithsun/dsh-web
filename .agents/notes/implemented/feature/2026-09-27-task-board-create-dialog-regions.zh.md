@@ -56,3 +56,5 @@ zh 与 en 字典在包内，ru 由 `packages/dsh-i18n` 镜像。`new.mode` 与 `
 - 覆盖：`tests/create-dialog-sections.spec.tsx` 覆盖默认展开/折叠布局、展开区域、折叠摘要、内置/自定义分组与继承默认、以及错误强制展开路径；`tests/responsive-css.spec.ts` 守住外壳的溢出契约与边框折角；既有对话框用例经 `tests/form-sections.ts` 先展开区域再驱动字段。
 - 单元用例之外的证据：一个临时脚手架（忽略提交，位于 `test-results/form-qa/`）在无头 Chromium 里渲染真实组件与样式表并测量外壳。1440x900 与 1180x720 下默认布局需要 533px 正文高度、可用也是 533px——没有滚动条也没有被裁掉的字段——只有用户展开某个区域后正文才滚动。
 - 本进程无法驱动真实 DSH Web GUI（拿不到宿主按进程生成的 token），因此聚合挂载 lane 仍是仓内的 GUI 检查，重建产物后仍欠一次真实 GUI 内的视觉走查。
+
+这些界面的字号尺度、结果槽位与折叠行为由[卡片界面呈现契约](2026-10-20-task-board-card-surface-contract.md)所有。

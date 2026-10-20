@@ -98,3 +98,5 @@ Tab 会走到浮层下面的卡片，弹窗也没有声明为模态。对键盘�
 - 共享设置卡外壳（`shared/client/settings/`）未改动。它是六个包共用的一个组件，需要
   独立变更与证据；本看板自己的设置卡只保留其验收区块，现已落到
   `board-settings.module.css` 的 token 上。
+
+这些界面的字号尺度、结果槽位与折叠行为由[卡片界面呈现契约](2026-10-20-task-board-card-surface-contract.md)所有。
