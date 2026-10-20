@@ -2,6 +2,8 @@
 
 Status: implemented
 
+由 [局域网转发器](../architecture/2026-10-20-lan-forwarder-replaces-bind-block.md) 部分取代：受管块已移除，能力探测现在决定运行时转发器可以监听哪个局域网地址、以及状态帧报告什么。这里记录的决策——先问已安装宿主接受哪些绑定、而不是猜——依然成立。
+
 ## Problem
 
 `packages/dsh-remote-web-ui` 把局域网绑定开关实现为 profile `cordis.patch.yml`

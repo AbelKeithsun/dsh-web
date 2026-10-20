@@ -2,6 +2,8 @@
 
 Status: implemented
 
+由 [局域网转发器](../architecture/2026-10-20-lan-forwarder-replaces-bind-block.md) 部分取代：本批次记录的 `pendingRestart` 语义所属的局域网绑定受管块已被移除，因此该条描述的是已经不存在的机制；批次内其余 Issue 不受影响。
+
 ## 问题
 
 本批次六条 Issue，四条是本仓可定位的缺陷，两条转交自 dsh-deep-whale：

@@ -2,6 +2,8 @@
 
 Status: implemented
 
+Superseded in part by [the LAN forwarder](../architecture/2026-10-20-lan-forwarder-replaces-bind-block.md): the LAN-bind managed block whose `pendingRestart` semantics this batch recorded is removed, so that item describes a mechanism that no longer exists; every other issue in the batch is unaffected.
+
 ## Problem
 
 Six issues in this batch, four of them located in this repository and two forwarded from dsh-deep-whale:

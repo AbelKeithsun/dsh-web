@@ -2,6 +2,8 @@
 
 Status: implemented
 
+Superseded in part by [the LAN forwarder](../architecture/2026-10-20-lan-forwarder-replaces-bind-block.md): the managed block is removed, and the capability probe now decides which LAN address the runtime forwarder may listen on and what the status frame reports. The decision recorded here — ask the installed host which binds it accepts instead of guessing — still holds.
+
 ## Problem
 
 `packages/dsh-remote-web-ui` ships the LAN-bind toggle as a managed block in

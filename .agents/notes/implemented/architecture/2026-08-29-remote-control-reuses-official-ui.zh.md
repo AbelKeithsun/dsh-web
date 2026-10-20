@@ -4,6 +4,8 @@ Status: implemented
 
 由 [远程插件适配宽栏桌面底栏](2026-09-23-remote-desktop-foot-row.md) 扩展：适配层同时负责宽栏桌面底栏的布局。
 
+由 [局域网转发器](2026-10-20-lan-forwarder-replaces-bind-block.md) 部分取代：局域网访问开关经运行时转发器触达网络，不再写 profile 的 webserver 行，因此下面那条受管块决策与它带来的 `pendingRestart` 后果描述的是已经不存在的机制。
+
 ## 问题
 
 dsh-remote-web-ui 此前自带一套移动端界面：独立的 `/m/` 界面（视图、markdown 渲染、mux 桥接、主题、PWA 壳、`/m/api` 白名单代理与配对模型目录）与官方桌面 GUI 并存。官方客户端每变一次，手机面就得手工追一次，且两个面在设计上就是分裂的：手机看到的是缩水产品（无设置、无插件卡片、无产出物），桌面看到的才是真产品。参考实现 [dsh-LAN](https://github.com/MrMu666/dsh-LAN) 从相反方向解决了同一问题——其 v48 起删除自写界面、改为在官方界面上注入竖屏触控适配——本仓库采纳了该方向。
