@@ -10,7 +10,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildConnectConfig, connectChain, connectClient, parseJumpSpec } from '../src/engine/connection-pool.ts'
+import { WINDOWS_AGENT_PIPE, buildConnectConfig, connectChain, connectClient, parseJumpSpec } from '../src/engine/connection-pool.ts'
 import type { SshHostEntry } from '../src/protocol.ts'
 import type { HostStore } from '../src/store.ts'
 
@@ -251,11 +251,55 @@ describe('buildConnectConfig agent auth', () => {
     const previous = process.env.SSH_AUTH_SOCK
     delete process.env.SSH_AUTH_SOCK
     const previousPlatform = process.platform
-    // Force the non-Windows branch (Pageant is the Windows fallback).
+    // Force the non-Windows branch (the native named pipe is the Windows fallback).
     Object.defineProperty(process, 'platform', { value: 'linux' })
     try {
       const entry = passwordEntry('agent-none', { auth: { kind: 'agent' } })
       expect(() => buildConnectConfig(entry, undefined, defaultOpts() as never)).toThrow(/ssh-agent is not available/)
+    } finally {
+      if (previous !== undefined) process.env.SSH_AUTH_SOCK = previous
+      Object.defineProperty(process, 'platform', { value: previousPlatform })
+    }
+  })
+
+  it('member leaving the agent path empty on Windows connects through the native OpenSSH pipe (#1910)', () => {
+    // Given a Windows machine with no SSH_AUTH_SOCK and an agent-auth host
+    // that left the agent path empty (the form's "auto-detect" choice)
+    const previous = process.env.SSH_AUTH_SOCK
+    delete process.env.SSH_AUTH_SOCK
+    const previousPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      const entry = passwordEntry('agent-win', { auth: { kind: 'agent' } })
+
+      // When the connect config is built
+      const config = buildConnectConfig(entry, undefined, defaultOpts() as never)
+
+      // Then it dials the pipe the native ssh-agent service listens on, not
+      // PuTTY's "pageant" protocol name
+      expect(config.agent).toBe(WINDOWS_AGENT_PIPE)
+      expect(config.agent).toBe('\\\\.\\pipe\\openssh-ssh-agent')
+      expect(config.agent).not.toBe('pageant')
+    } finally {
+      if (previous !== undefined) process.env.SSH_AUTH_SOCK = previous
+      Object.defineProperty(process, 'platform', { value: previousPlatform })
+    }
+  })
+
+  it('member pinning pageant on Windows keeps the PuTTY endpoint', () => {
+    // Given a Windows user who explicitly chose PuTTY Pageant
+    const previous = process.env.SSH_AUTH_SOCK
+    delete process.env.SSH_AUTH_SOCK
+    const previousPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    try {
+      const entry = passwordEntry('agent-pageant', { auth: { kind: 'agent', agentPath: 'pageant' } })
+
+      // When the connect config is built
+      const config = buildConnectConfig(entry, undefined, defaultOpts() as never)
+
+      // Then the explicit endpoint wins over the new default
+      expect(config.agent).toBe('pageant')
     } finally {
       if (previous !== undefined) process.env.SSH_AUTH_SOCK = previous
       Object.defineProperty(process, 'platform', { value: previousPlatform })

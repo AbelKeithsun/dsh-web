@@ -517,6 +517,22 @@ describe('partial updates', () => {
       .toThrow(/password/)
   })
 
+  it('member switching a key host to agent auth without an agent path stores the new kind (#1910)', () => {
+    // Given a stored key-auth host (what an imported host with IdentityFile is)
+    const store = makeStore()
+    store.create({ ...basePayload, auth: { kind: 'key', keyPath: '~/keys/id_ed25519' } })
+
+    // When the host form submits agent auth with no agent path, which is the
+    // documented auto-detect value it now always sends
+    const switched = store.update('web-01', { auth: { kind: 'agent' } })
+
+    // Then the stored kind really changes, and no agent path is pinned so the
+    // engine resolves the platform default at connect time
+    expect(switched.auth.kind).toBe('agent')
+    expect(switched.auth.agentPath).toBeUndefined()
+    expect(store.find('web-01')?.auth.kind).toBe('agent')
+  })
+
   it('updates agent auth and keeps the stored agent path when omitted', () => {
     const store = makeStore()
     store.create({ ...basePayload, auth: { kind: 'agent', agentPath: 'pageant' } })
