@@ -223,6 +223,11 @@ const MANIFEST = [
       // re-seats itself with the same page-wide invalidation hub the sidebar
       // foot card uses instead of paying for a second body observer.
       'packages/dsh-plugin-manager/src/client/body-mutations.ts',
+      // The task board hides the official automation-tasks sidebar row while
+      // it is on, and the shell owns that row: it may mount or replace it at
+      // any time, so the guard re-applies its write through the same hub
+      // instead of paying for a second body observer.
+      'packages/dsh-task-board/src/client/body-mutations.ts',
     ],
   },
   {

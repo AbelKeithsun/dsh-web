@@ -30,7 +30,8 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // binds a family namespace (7 today). Every family panel now renders through
   // the native layout seats, so the panel-mount-core and sidebar-entry-core
   // copies are gone and body-mutations serves the aggregate shell, the usage
-  // card and the plugin-manager's list-level update toolbar. run-guarded.ts is
+  // card, the plugin-manager's list-level update toolbar and the task board's
+  // official schedule-row guard. run-guarded.ts is
   // not synced here: no in-repo package imports
   // it (the satellite repositories that do carry their own copies), so only the
   // shared source and its spec remain in this repository. The plugin-card seat
@@ -46,9 +47,9 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // renders through the same chrome), which adds three client copies: the card
   // chrome, its form primitives, and the card stylesheet. It carries no
   // entry-bound form fallback, because it binds no Host settings namespace.
-  assert.equal(entries.length, 110)
+  assert.equal(entries.length, 111)
   const clientTrio = entries.filter(entry => entry.target.includes('/src/client/'))
-  assert.equal(clientTrio.length, 46)
+  assert.equal(clientTrio.length, 47)
   const hostCopies = entries.filter(entry => entry.target.includes('/src/host/')
     || entry.target.includes('/src/dsh-home.ts')
     || entry.target.includes('/src/mount-once.ts')
