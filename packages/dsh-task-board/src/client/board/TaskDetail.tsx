@@ -141,16 +141,23 @@ function ActionMenu({ label, items, disabled }: {
  * module to extend its copy, so the shape is mirrored here rather than forked
  * into a third disclosure style.
  */
-function FoldSection({ title, summary, children }: {
+function FoldSection({ title, summary, hint, children }: {
   title: string
   /** One-line echo of what the folded region holds, shown while it is closed. */
   summary: string
+  /**
+   * The whole line, tooltip only. The row drops whatever does not fit, so what
+   * the summary had to give up — a rule's cron expression, a one-shot's instant
+   * — stays one hover away instead of being lost with the ellipsis.
+   */
+  hint?: string
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const presence = usePresence(open)
   const panelId = useId()
   const headerRef = useRef<HTMLButtonElement | null>(null)
+  const fullLine = hint ?? summary
   // Collapsing a region whose body holds the focus hands the focus back to the
   // region row instead of dropping it on the document body.
   const toggle = (): void => {
@@ -168,6 +175,7 @@ function FoldSection({ title, summary, children }: {
         className={css.formSectionHeader}
         aria-expanded={open}
         aria-controls={panelId}
+        title={fullLine === '' ? undefined : fullLine}
         onClick={toggle}
       >
         <span className={css.formSectionChevron} aria-hidden="true" />
@@ -559,16 +567,21 @@ function ScheduleSection({ controller, task, pending }: { controller: BoardContr
   const planLabel = mode === 'once'
     ? t('detail.schedule.summary.planOnce', { time: plannedAt === undefined ? '—' : formatHostTimestamp(plannedAt, effectiveZone) })
     : t('detail.schedule.summary.planCron', { cron: cron.trim() === '' ? '—' : cron.trim() })
+  // The row itself carries only the next instant; the rule that produced it is
+  // the fold's tooltip, so a narrow panel clips the row without losing the rule.
+  const scheduleHint = enabled && ended === undefined
+    ? t('detail.schedule.summary.onFull', { plan: planLabel, next: nextLabel })
+    : undefined
   const scheduleSummary = ended !== undefined
     ? t('detail.schedule.ended', { reason: ended })
     : enabled
-      ? t('detail.schedule.summary.on', { plan: planLabel, next: nextLabel })
+      ? t('detail.schedule.summary.on', { next: nextLabel })
       : skipped !== undefined
         ? t('detail.schedule.skipped', { reason: skipped })
         : t('detail.schedule.summary.off')
 
   return (
-    <FoldSection title={t('detail.schedule')} summary={scheduleSummary}>
+    <FoldSection title={t('detail.schedule')} summary={scheduleSummary} hint={scheduleHint}>
       <label className={css.scheduleToggle}>
         <input
           type="checkbox"
@@ -1007,31 +1020,37 @@ export function TaskDetail({ controller, task, phase = 'open' }: { controller: B
                 <p className={css.detailMeta}>{t('detail.permissionConfirmed', { time: formatHostTimestamp(current.permissionConfirmedAt, timeZone) })}</p>
               )}
 
-              {!archived && (
-                <>
-                  <ExecutionSettingsSection
-                    controller={controller}
-                    task={current}
-                    pending={pending}
-                    executionOptions={snapshot.executionOptions}
-                    teamRunAvailable={snapshot.host?.teamRunAvailable === true}
-                    goalRunEnabled={snapshot.host?.goalRunEnabled === true}
-                  />
-                  <ScheduleSection controller={controller} task={current} pending={pending} />
-                </>
-              )}
-
-              <FoldSection title={t('detail.execution')} summary={historySummary}>
-                {current.executions.length === 0 ? (
-                  <p className={css.detailText}>{t('detail.noExecution')}</p>
-                ) : (
-                  <ExecutionLog
-                    executions={current.executions}
-                    timeZone={timeZone}
-                    onOpenSession={sessionId => { controller.openSession(sessionId) }}
-                  />
+              {/* The three folds read as one list. The settings fold closes the
+                  section above it, so the group's 8px rhythm governs both the
+                  gap it trails and the gap before the history fold, while the
+                  blocks around the group keep the panel's 16px rhythm. */}
+              <div className={css.detailFolds}>
+                {!archived && (
+                  <>
+                    <ExecutionSettingsSection
+                      controller={controller}
+                      task={current}
+                      pending={pending}
+                      executionOptions={snapshot.executionOptions}
+                      teamRunAvailable={snapshot.host?.teamRunAvailable === true}
+                      goalRunEnabled={snapshot.host?.goalRunEnabled === true}
+                    />
+                    <ScheduleSection controller={controller} task={current} pending={pending} />
+                  </>
                 )}
-              </FoldSection>
+
+                <FoldSection title={t('detail.execution')} summary={historySummary}>
+                  {current.executions.length === 0 ? (
+                    <p className={css.detailText}>{t('detail.noExecution')}</p>
+                  ) : (
+                    <ExecutionLog
+                      executions={current.executions}
+                      timeZone={timeZone}
+                      onOpenSession={sessionId => { controller.openSession(sessionId) }}
+                    />
+                  )}
+                </FoldSection>
+              </div>
 
               {!archived && (
                 <section className={css.detailSection}>

@@ -380,14 +380,42 @@ describe('folded execution column', () => {
     // When the panel renders in its default state
     const summary = foldHeader(container, t('detail.schedule')).textContent ?? ''
 
-    // Then one line says it is armed, what the rule is and when it fires next
+    // Then the row says it is armed and when it fires next, and the rule that
+    // produced that instant is not on the row at all
     expect(summary).toContain('已启用')
-    expect(summary).toContain(t('detail.schedule.summary.planCron', { cron: '0 9 * * *' }))
+    expect(summary).not.toContain('0 9 * * *')
     expect(container.querySelector('input[aria-label="' + t('detail.schedule.cron') + '"]')).toBeNull()
+
+    // And the rule rides the row's tooltip instead, so hovering the row still
+    // reads the whole line the folded summary had to drop
+    const hint = foldHeader(container, t('detail.schedule')).getAttribute('title') ?? ''
+    expect(hint).toContain(t('detail.schedule.summary.planCron', { cron: '0 9 * * *' }))
+    expect(hint).toContain('已启用')
 
     // And a card without a rule says so in one line
     const { container: idle } = renderDetail(card())
     expect(foldHeader(idle, t('detail.schedule')).textContent).toContain(t('detail.schedule.summary.off'))
+  })
+
+  it('user reading the three closed folds sees one group with one tooltip each', () => {
+    // Given a card whose execution column renders all three folds closed
+    const { container } = renderDetail(card({ skipVerification: true }))
+    const advanced = foldHeader(container, t('detail.settings.advanced'))
+    const schedule = foldHeader(container, t('detail.schedule'))
+    const history = foldHeader(container, t('detail.execution'))
+
+    // When the panel paints them
+    // Then the three hang off one group element, which is what spaces them as a
+    // list instead of three separate sections
+    const group = schedule.parentElement?.parentElement
+    expect(group).toBe(history.parentElement?.parentElement)
+    expect(group?.parentElement).toBe(rightColumn(container))
+    expect(group?.contains(advanced)).toBe(true)
+
+    // And each of the three carries the whole line as its tooltip
+    for (const header of [advanced, schedule, history]) {
+      expect(header.getAttribute('title') ?? '').not.toBe('')
+    }
   })
 
   it('user opening the schedule fold gets the editor with every field it always had', () => {

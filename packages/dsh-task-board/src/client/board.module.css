@@ -1194,7 +1194,18 @@
 .detailColumn {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* The panel's folded regions read as one list. A group container — not a
+   per-row margin — owns the tighter spacing, so the 8px between two folds
+   cannot leak onto the sections above and below them: those keep the panel's
+   16px section rhythm because they are siblings of the group, not of a fold. */
+.detailFolds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -1794,13 +1805,56 @@
  * keep their own scale. Nothing here is a second disclosure style.
  * --------------------------------------------------------------------------- */
 
+/* A fold row is 30px tall and its pointer target is still the board's 44px
+   minimum, expanded past the row exactly like `.cardAction`. A target that
+   overflows the row cannot live inside a clipping section, so the section stops
+   clipping and the header carries the section's inner radius itself — which is
+   what `overflow: hidden` used to do. */
 .detailBody .formSection {
   min-width: 0;
+  overflow: visible;
 }
 
 .detailBody .formSectionHeader {
-  min-height: 32px;
+  position: relative;
+  box-sizing: border-box;
+  min-height: 28px;
+  padding: 4px 10px;
   font-size: 12px;
+  line-height: 16px;
+  border-radius: 9px;
+}
+
+.detailBody .formSection[data-open='true'] .formSectionHeader {
+  border-radius: 9px 9px 0 0;
+}
+
+.detailBody .formSectionHeader::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--dsh-tb-hit-size);
+  height: var(--dsh-tb-hit-size);
+  transform: translate(-50%, -50%);
+}
+
+/* Title and summary both shrink, so a long summary never takes the row: the
+   label keeps its own width and the line that gives way is the one that
+   ellipsizes. The summary's auto margin is what puts every fold's summary on
+   the panel's one right-hand track, two glyphs or clipped alike. */
+.detailBody .formSectionTitle {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailBody .formSectionSummary {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
 }
 
 .detailBody .formSectionBody {

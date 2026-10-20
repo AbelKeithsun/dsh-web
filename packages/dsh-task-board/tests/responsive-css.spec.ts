@@ -114,7 +114,7 @@ describe('task detail panel layout and type hierarchy', () => {
     // 8px multiples on both tracks
     expect(phone).toMatch(/\.detailColumns \{[^}]*grid-template-columns: minmax\(0, 1fr\)/s)
     expect(phone).toMatch(/\.detailColumn \{[^}]*gap: 16px/s)
-    expect(detailRegion).toMatch(/\.detailColumn \{[^}]*gap: 24px/s)
+    expect(detailRegion).toMatch(/\.detailColumn \{[^}]*gap: 16px/s)
     expect(detailRegion).toMatch(/\.detailSection \{[^}]*gap: 8px/s)
   })
 
@@ -316,5 +316,81 @@ describe('task board columns and cards share the panel visual contract', () => {
     for (const selector of ['.cardAction', '.densityToggle', '.tagChip']) {
       expect(block(selector), selector).toContain('position: relative')
     }
+  })
+})
+
+describe('task detail panel fold rhythm and summary track', () => {
+  /** One rule body of the stylesheet, by exact selector. */
+  const block = (selector: string): string => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return css.match(new RegExp('(?:^|\\n)' + escaped + '\\s*\\{([^}]*)\\}', 'm'))?.[1] ?? ''
+  }
+  const px = (body: string, property: string): number =>
+    Number(body.match(new RegExp(property + ':\\s*(-?[0-9.]+)px'))?.[1])
+
+  it('user reading three closed folds sees them on a 38px pitch instead of a 58px one', () => {
+    // Given the fold group's gap, the section rhythm around it and the fold row
+    const groupGap = px(block('.detailFolds'), 'gap')
+    const sectionGap = px(block('.detailColumn'), 'gap')
+    const rowBox = px(block('.detailBody .formSectionHeader'), 'min-height')
+      + (/border:\s*1px solid/.test(block('.formSection')) ? 2 : 0)
+
+    // When two folds sit next to each other
+    // Then the whitespace between the rows and the row pitch are the tight ones
+    expect(rowBox).toBeLessThanOrEqual(30)
+    expect(groupGap).toBeLessThanOrEqual(12)
+    expect(rowBox + groupGap).toBeLessThanOrEqual(44)
+
+    // And the blocks around the group keep the panel's 16..20px section rhythm
+    expect(sectionGap).toBeGreaterThanOrEqual(16)
+    expect(sectionGap).toBeLessThanOrEqual(20)
+  })
+
+  it('user pointer-reaching a fold row still gets the board 44px target', () => {
+    // Given the fold header and the board's hit-size token
+    expect(block('.board')).toContain('--dsh-tb-hit-size: 44px')
+    expect(block('.detailBody .formSectionHeader')).toContain('position: relative')
+
+    // When the row is reached
+    // Then the target expands to the same token a card quick action uses
+    const target = block('.detailBody .formSectionHeader::after')
+    expect(target).toContain('width: var(--dsh-tb-hit-size)')
+    expect(target).toContain('height: var(--dsh-tb-hit-size)')
+
+    // And a target that overflows the row is not clipped away by the section
+    expect(block('.detailBody .formSection')).toContain('overflow: visible')
+  })
+
+  it('user reading three fold summaries sees them end on the panel one right track', () => {
+    // Given the panel's own title and summary rules
+    const title = block('.detailBody .formSectionTitle')
+    const summary = block('.detailBody .formSectionSummary')
+
+    // When a summary needs the room the label would otherwise take
+    // Then both boxes shrink, so the label never pushes the summary off the row
+    expect(title).toContain('flex: 0 1 auto')
+    expect(title).toContain('min-width: 0')
+    expect(summary).toContain('flex: 0 1 auto')
+    expect(summary).toContain('min-width: 0')
+
+    // And the summary's auto margin is what holds every row's line on one track
+    expect(summary).toContain('margin-left: auto')
+
+    // And what does not fit ellipsizes inside the row, never at the panel edge
+    expect(title).toContain('text-overflow: ellipsis')
+    expect(block('.formSectionSummary')).toContain('text-overflow: ellipsis')
+    expect(block('.formSectionSummary')).toContain('white-space: nowrap')
+
+    // The row is border-box, so 100% width plus its padding cannot spill out
+    expect(block('.detailBody .formSectionHeader')).toContain('box-sizing: border-box')
+  })
+
+  it('the form dialogs keep their own region scale beside the panel folds', () => {
+    // Given the region contract the dialogs share with the panel
+    // Then the panel's rules are scoped and the dialog body is untouched
+    expect(block('.formSectionTitle')).toContain('flex: none')
+    expect(block('.formSectionSummary')).toContain('flex: 1 1 auto')
+    expect(block('.formSection')).toContain('overflow: hidden')
+    expect(block('.formSectionHeader')).not.toContain('::after')
   })
 })
