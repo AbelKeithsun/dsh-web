@@ -153,6 +153,11 @@ export interface TaskBoardSettings {
   announceToAgent?: boolean
   /** Prevent host idle sleep while sessions run or schedules are armed. */
   preventIdleSleep?: boolean
+  /**
+   * Whether the operator's own reverse proxy or tunnel may speak for the
+   * browser (default off). Volatile, so the board's fence reads it per request.
+   */
+  trustForwardedProxy?: boolean
   /** Subtask depth limit (1..3); 1 means a single level of subtasks. */
   maxSubtaskDepth?: number
   /** Roster-poll cadence in seconds while the board has work to reconcile. */
@@ -204,6 +209,8 @@ export interface TaskBoardSettingsCardState extends CardShell {
   announceToAgent: CardFieldState
   /** Idle-system-sleep protection flag. */
   preventIdleSleep: CardFieldState
+  /** Forwarded-request trust flag. */
+  trustForwardedProxy: CardFieldState
   /** Subtask depth limit field. */
   maxSubtaskDepth: CardFieldState
   /** Roster-poll cadence field. */
@@ -259,6 +266,7 @@ export class TaskBoardSettingsCardController {
       booleanField('enabled'),
       booleanField('announceToAgent'),
       booleanField('preventIdleSleep'),
+      booleanField('trustForwardedProxy'),
       subtaskDepthField(),
       sessionPollField(),
       runLaunchWidthField(),
@@ -284,6 +292,7 @@ export class TaskBoardSettingsCardController {
       enabled: this.form.field('enabled'),
       announceToAgent: this.form.field('announceToAgent'),
       preventIdleSleep: this.form.field('preventIdleSleep'),
+      trustForwardedProxy: this.form.field('trustForwardedProxy'),
       maxSubtaskDepth: this.form.field('maxSubtaskDepth'),
       sessionPollSeconds: this.form.field('sessionPollSeconds'),
       runLaunchWidth: this.form.field('runLaunchWidth'),
@@ -522,6 +531,18 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
             {...state.preventIdleSleep}
             onEdit={(text) => { props.edit('preventIdleSleep', text) }}
             onReset={() => { props.resetField('preventIdleSleep') }}
+          />
+          <BooleanField
+            id="settings-task-board-trust-forwarded-proxy"
+            label={t('settings.trustForwardedProxy')}
+            hint={t('settings.trustForwardedProxyHint')}
+            inheritLabel={t('settings.inherit')}
+            onLabel={t('settings.on')}
+            offLabel={t('settings.off')}
+            {...fieldProps}
+            {...state.trustForwardedProxy}
+            onEdit={(text) => { props.edit('trustForwardedProxy', text) }}
+            onReset={() => { props.resetField('trustForwardedProxy') }}
           />
           <ValueField
             id="settings-task-board-session-poll"

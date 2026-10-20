@@ -89,6 +89,19 @@ export interface Config {
   /** Environment variable whose value the authenticated proxy injects upstream. */
   proxyTokenEnv?: string
   /**
+   * Whether the operator's OWN reverse proxy or tunnel may speak for the
+   * browser (default OFF). Off keeps the pre-existing fence exactly: a request
+   * that carries a forwarding header is never local, so only a direct loopback
+   * client or an allowlisted token-injecting proxy reaches the board (issue
+   * #1906). On admits one narrower case — a forwarded request whose socket and
+   * Host are both this machine's loopback upstream, i.e. the proxy dials the
+   * board itself (issue #1918) — and still requires the browser same-origin
+   * marker, so a third party's tunnel is only trusted while the operator says
+   * it is. Volatile: the fence reads it at each request, so an edit binds the
+   * next request without re-registering the routes.
+   */
+  trustForwardedProxy?: Volatile<boolean>
+  /**
    * An explicit baseline for the permission confirmation gate. Left unset, the
    * board follows the Host's own default permission preset — the value new DSH
    * sessions start at — and falls back to `read-only` when the deployment
@@ -251,6 +264,8 @@ export interface ConfigInput {
   trustedProxyHosts?: string[]
   /** Environment variable whose value the authenticated proxy injects. */
   proxyTokenEnv?: string
+  /** Trust a forwarded request that landed on this machine's loopback upstream; default off. */
+  trustForwardedProxy?: boolean
   /** Explicit baseline for the permission confirmation gate; unset follows the Host default. */
   sessionDefaultPermission?: TaskPermission
   /** Subtask depth limit, 1..3. */
@@ -291,6 +306,7 @@ export const Config: z<ConfigInput, Config> = z.object({
   preventIdleSleep: z.boolean().default(false).volatile(),
   trustedProxyHosts: z.array(z.string()).default([]),
   proxyTokenEnv: z.string().min(1).default(DEFAULT_PROXY_TOKEN_ENV),
+  trustForwardedProxy: z.boolean().default(false).volatile(),
   sessionDefaultPermission: z.union(TASK_PERMISSIONS),
   maxSubtaskDepth: z.number().min(SUBTASK_DEPTH_MIN).max(SUBTASK_DEPTH_MAX).default(DEFAULT_SUBTASK_DEPTH).volatile(),
   sessionPollSeconds: z.number().min(SESSION_POLL_MIN_SECONDS).max(SESSION_POLL_MAX_SECONDS).default(DEFAULT_SESSION_POLL_SECONDS).volatile(),
@@ -352,18 +368,39 @@ export function readConfigField<T>(field: Volatile<T> | T | undefined, fallback:
   return field as T
 }
 
-/** Resolve proxy access without ever placing the token value in plugin config. */
-export function resolveProxyAccess(config: Config | undefined, env: NodeJS.ProcessEnv = process.env): { trustedProxyHosts: string[]; proxyToken?: string } {
+/**
+ * Resolve proxy access without ever placing the token value in plugin config.
+ *
+ * The forwarded-proxy switch travels as a reader rather than a value: it is
+ * schema-volatile, so the fence must read it when a request arrives instead of
+ * when the routes are registered.
+ * @param config - the resolved plugin config.
+ * @param env - environment holding the proxy token value.
+ * @returns the route access handed to {@link makeTaskBoardRoutes}.
+ */
+export function resolveProxyAccess(config: Config | undefined, env: NodeJS.ProcessEnv = process.env): {
+  trustedProxyHosts: string[]
+  proxyToken?: string
+  trustForwardedProxy: () => boolean
+} {
+  const trustForwardedProxy = (): boolean => readConfigField(config?.trustForwardedProxy, DEFAULT_TRUST_FORWARDED_PROXY)
   const trustedProxyHosts = config?.trustedProxyHosts ?? []
-  if (trustedProxyHosts.length === 0) return { trustedProxyHosts }
+  if (trustedProxyHosts.length === 0) return { trustedProxyHosts, trustForwardedProxy }
   const proxyTokenEnv = config?.proxyTokenEnv ?? DEFAULT_PROXY_TOKEN_ENV
   if (proxyTokenEnv.trim() === '') throw new Error('task-board: proxyTokenEnv must not be empty')
   const proxyToken = env[proxyTokenEnv]
   if (proxyToken === undefined || proxyToken === '') {
     throw new Error(`task-board: trustedProxyHosts requires a non-empty ${proxyTokenEnv} environment variable`)
   }
-  return { trustedProxyHosts, proxyToken }
+  return { trustedProxyHosts, proxyToken, trustForwardedProxy }
 }
+
+/**
+ * Schema default for the forwarded-proxy switch, re-read for hand-built
+ * contexts. Deliberately false: a deployment that never configured it keeps
+ * refusing every forwarded request, which is the #1906 fence.
+ */
+export const DEFAULT_TRUST_FORWARDED_PROXY = false
 
 /** The registry face the agent tools register into. */
 interface AgentToolRegistry {

@@ -16,6 +16,11 @@
  * request. Forwarding headers are the signal that a hop stands in between: a
  * request that carries CF-Connecting-IP or X-Forwarded-For is answered through
  * a proxy and is never treated as a local one (issue #1906).
+ *
+ * An operator who runs that proxy or tunnel themselves can opt into the
+ * narrower case: isForwardedLoopbackRequest describes a forwarded request that
+ * still landed on this machine's loopback upstream, and a route family admits
+ * it only behind its own default-off switch (issue #1918).
  * @module dsh-web-shared/host/loopback
  */
 
@@ -81,6 +86,33 @@ export function isLoopbackRequest(request: IncomingMessage): boolean {
   if (origin === undefined) return true
   try {
     return new URL(origin).host === hostUrl.host
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether a forwarded request landed on this machine's loopback upstream: a
+ * forwarding header (the proxy's own stamp), a loopback socket address (the
+ * proxy dials 127.0.0.1:<port>), and a loopback Host header (the proxy rewrote
+ * the authority to its upstream literal).
+ *
+ * This is a fact about the route, not a trust decision. A public request to a
+ * tunnel satisfies all three by construction, because the proxy is the client
+ * of this process: only a caller that operates the proxy can decide it stands
+ * for the browser, which is why every consumer keeps this behind an explicit
+ * default-off switch and its own browser markers. isLoopbackRequest is
+ * unchanged and still refuses a forwarded request (issue #1906).
+ * @param request - node HTTP request.
+ * @returns true when a forwarding header, a loopback socket, and a loopback Host all hold.
+ */
+export function isForwardedLoopbackRequest(request: IncomingMessage): boolean {
+  if (!isProxiedRequest(request)) return false
+  if (!isLoopbackAddress(request.socket.remoteAddress)) return false
+  const host = request.headers.host
+  if (typeof host !== 'string') return false
+  try {
+    return isLoopbackHostname(new URL('http://' + host).hostname)
   } catch {
     return false
   }

@@ -58,6 +58,7 @@ function cardState(runLaunchWidth = ''): TaskBoardSettingsCardState {
     enabled: { ...field, text: 'true' },
     announceToAgent: field,
     preventIdleSleep: field,
+    trustForwardedProxy: field,
     maxSubtaskDepth: field,
     sessionPollSeconds: field,
     runLaunchWidth: { ...field, text: runLaunchWidth },

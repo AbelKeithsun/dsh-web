@@ -67,7 +67,7 @@
 - `src/client/native-panel.tsx` 注册看板的侧栏行与中栏页面（官方 `sidebar.panellist` 列表座位与 keyed `main` 座位），并维护与 ssh 面板的中栏互斥协议。
 - `src/client/host-api.ts` 单次导入旧浏览器数据、提交幂等动作，并把 Host snapshot 当作唯一已确认 UI 状态。
 - 同源接口为 `GET /api/task-board/state`、`GET /api/task-board/events` 和 `POST /api/task-board/action`。
-- 所有接口都要求浏览器同源标记：`sec-fetch-site: same-origin`、`Origin` 头，或 Host 的 `dsh-auth-*` 浏览器认证 cookie。最后一种是 DSH 桌面版到达看板的方式：它从 `dsh-app://app/` 提供 Web GUI，并自行转发该页面的请求，转发时删掉 `Origin` 与 `sec-fetch-site`，改为附上启动时用 Host 启动链接换来的、与 authority 绑定的 cookie。直接访问只允许 DSH loopback origin；同机认证反向代理必须使用显式 Host 白名单和服务端注入 token。POST 还必须为 JSON。普通动作上限 64 KiB，导入上限 2 MiB。action 联合中没有命令、可执行路径、shell 文本或任意参数字段。
+- 所有接口都要求浏览器同源标记：`sec-fetch-site: same-origin`、`Origin` 头，或 Host 的 `dsh-auth-*` 浏览器认证 cookie。最后一种是 DSH 桌面版到达看板的方式：它从 `dsh-app://app/` 提供 Web GUI，并自行转发该页面的请求，转发时删掉 `Origin` 与 `sec-fetch-site`，改为附上启动时用 Host 启动链接换来的、与 authority 绑定的 cookie。直接访问只允许 DSH loopback origin；同机认证反向代理必须使用显式 Host 白名单和服务端注入 token，而部署自己的隧道拨的是本机回环上游时，也可以改为打开 `trustForwardedProxy`（见「配置」），该形态仅凭同源标记即可通过。POST 还必须为 JSON。普通动作上限 64 KiB，导入上限 2 MiB。action 联合中没有命令、可执行路径、shell 文本或任意参数字段。
 
 ## Agent 工具
 
@@ -113,6 +113,7 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board
 | `preventIdleSleep` | `false` | 存在运行中的 DSH 会话、已启用计划或未知会话状态时，持有一个系统空闲睡眠断言。 |
 | `trustedProxyHosts` | `[]` | 仅通过已认证 loopback 反向代理路径接受的规范 `host[:port]` authority 白名单。 |
 | `proxyTokenEnv` | `DSH_TASK_BOARD_PROXY_TOKEN` | 保存反向代理 token 的环境变量名；token 本身不会写入插件配置。 |
+| `trustForwardedProxy` | `false` | 放行落在本机回环上游的被转发请求——也就是你自己的反向代理或隧道拨 `127.0.0.1:<端口>` 时产生的形态——且仍以浏览器同源标记为前提。关闭时一切被转发请求都判为远程（issue #1906）；开启后显式 `sec-fetch-site: cross-site` 标记照旧拒绝，上面那条 token 白名单反代路径不变。volatile：每次请求实时读取，改动无需重启即对下一次请求生效。 |
 | `sessionDefaultPermission` | 跟随宿主 | 权限确认门的显式基线。未设置时跟随宿主自己的默认权限预设（DSH 新会话的起始权限），部署不提供权限目录时回退 `read-only`。卡片有效权限（交接包或钉住字段）高于该基线时，运行前必须经人工确认；cron 拒绝调度待确认卡片。 |
 | `maxSubtaskDepth` | `1` | 子任务深度上限，1 到 3。取 1 时一个任务只能有一层子任务，子任务不能再创建或关联子任务；每多一层，执行根任务一次开启的会话数就会成倍增加。 |
 | `sessionPollSeconds` | `5` | 看板有需要核对的事情（运行中的卡片或未结算执行）时，Host 重新读取 DSH 会话名册的间隔秒数。两者都没有的空闲看板完全不轮询。取值 1 到 300；间隔越短结算越快、Host 负载越高。 |
@@ -134,6 +135,8 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board
 
 浏览器直接访问仍限制为 DSH loopback origin。若使用同机认证反向代理，应让 DSH Web 绑定 loopback，配置 `trustedProxyHosts`，在 `proxyTokenEnv` 指定的环境变量中放置高熵 token，并让代理在完成认证后替换（不能透传客户端提供的）`X-Dsh-Task-Board-Proxy-Token`。代理 Host 必须在白名单内，浏览器 `Origin` 必须与其 authority 相同。修改这些 composition 级代理设置后需重启 Host。
 
+另一种形态是运维自己的隧道或反向代理转发到本机的请求。打开 `trustForwardedProxy` 后，携带转发头且落在回环上游（回环套接字与回环 Host）的请求仅凭浏览器同源标记即可通过；显式 `sec-fetch-site: cross-site` 标记照旧拒绝，经并非拨向本机的代理而来的请求仍判为远程。该开关是 volatile、按请求读取，改动对下一次请求生效；只有你自己运行那一跳时才打开它，因为不归你控制的代理可以替你伪造这些标记。
+
 macOS 后端启动 `/usr/bin/caffeinate -i -w <host-pid>`，绝不请求 `-d`。Windows 后端从 `SystemRoot` 启动绝对路径的 Windows PowerShell，固定 helper 只请求 `ES_CONTINUOUS | ES_SYSTEM_REQUIRED`；不请求 `ES_DISPLAY_REQUIRED`，不修改电源计划，也不需要管理员权限。Linux 后端只从 `/usr/bin/systemd-inhibit` 或 `/bin/systemd-inhibit` 启动 systemd-logind `idle` block inhibitor，不请求 `sleep`、`handle-lid-switch` 或显示器/屏保 inhibitor；没有 systemd-logind 时显示 `unsupported` 或可见错误，不启动桌面环境专用替代命令。其他平台报告 `unsupported`。
 
 ## 数据存储与迁移
@@ -151,7 +154,7 @@ macOS 后端启动 `/usr/bin/caffeinate -i -w <host-pid>`，绝不请求 `-d`。
 
 ## 安全模型
 
-- 插件仍处在 DSH Web 既有部署与网络边界内，不返回宽松 CORS 头。state、action 与 SSE 共用同一访问栅栏；裸本地命令行请求不会被当作浏览器请求接受。
+- 插件仍处在 DSH Web 既有部署与网络边界内，不返回宽松 CORS 头。state、action 与 SSE 共用同一访问栅栏；裸本地命令行请求不会被当作浏览器请求接受。除非打开 `trustForwardedProxy`，围栏拒绝一切被转发请求；即使打开，也只有落在本机回环上游、且不带跨站标记的那种被转发形态被放行。
 - 所有变更载荷使用严格、版本化的判别联合；浏览器不能写入 scheduler 独占时间戳或 execution 结果。
 - 工作区、预设、权限、cron、任务状态和导入记录都会在 Host 再校验。
 - 卡片有效权限高于配置的会话默认值时进入待确认状态：人工确认该确切绑定之前，Host 拒绝手动执行与 cron 触发；变更钉住权限或交接包会清除确认（封死先确认后替换的提权路径）。
