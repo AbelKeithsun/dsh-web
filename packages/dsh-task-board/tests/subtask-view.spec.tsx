@@ -197,8 +197,9 @@ describe('execution history provenance', () => {
       }],
     })])
 
-    // When the user opens the card
+    // When the user opens the card and its execution history
     const container = render(<TaskDetail controller={controller} task={tasks[0]!} />)
+    openFormSection(container, t('detail.execution'))
 
     // Then the row names the outside agent and is marked as external
     expect(container.textContent).toContain('codex')
@@ -221,8 +222,9 @@ describe('execution history provenance', () => {
       }],
     })])
 
-    // When the user opens the card
+    // When the user opens the card and its execution history
     const container = render(<TaskDetail controller={controller} task={tasks[0]!} />)
+    openFormSection(container, t('detail.execution'))
 
     // Then the row still carries the session and is not marked external
     expect(container.textContent).toContain(t('detail.execution.initiator', { session: 'session-a' }))

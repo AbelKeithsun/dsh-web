@@ -5,8 +5,9 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TaskBoardSettingsCardController } from '../src/client/TaskBoardSettingsCard.tsx'
+import { OVERLAY_EXIT_MS } from '../src/client/board/overlay.tsx'
 import { VerificationReport } from '../src/client/board/VerificationReport.tsx'
 import { verificationRunningKey } from '../src/client/board/status-key.ts'
 import type { ExecutionVerification } from '../src/core/verification.ts'
@@ -18,6 +19,7 @@ const roots: Root[] = []
 afterEach(() => {
   for (const root of roots.splice(0)) act(() => { root.unmount() })
   document.body.replaceChildren()
+  vi.useRealTimers()
 })
 
 /** A bound configuration form over one stored section, as the settings slot hands it over. */
@@ -94,14 +96,36 @@ function verification(): ExecutionVerification {
   }
 }
 
-/** Render one element into a fresh jsdom root and return its text. */
-function render(element: React.ReactElement): string {
+/** Render one element into a fresh jsdom root and return its container. */
+function mount(element: React.ReactElement): HTMLElement {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   roots.push(root)
   act(() => { root.render(element) })
+  return container
+}
+
+/** The visible text of one rendered tree. */
+function textOf(container: HTMLElement): string {
   return container.textContent ?? ''
+}
+
+/** Render one element into a fresh jsdom root and return its text. */
+function render(element: React.ReactElement): string {
+  return textOf(mount(element))
+}
+
+/**
+ * Render a report and open its fold, the way a reader reaches the detail: the
+ * row only carries the verdict until the disclosure is pressed.
+ */
+function renderExpanded(verification: ExecutionVerification): string {
+  const container = mount(<VerificationReport verification={verification} />)
+  const toggle = container.querySelector<HTMLButtonElement>('button[aria-expanded]')
+  if (toggle === null) throw new Error('the acceptance report has no disclosure')
+  act(() => { toggle.click() })
+  return textOf(container)
 }
 
 describe('goal acceptance view', () => {
@@ -145,8 +169,8 @@ describe('goal acceptance view', () => {
     // Given: a stored acceptance block
     const block = verification()
 
-    // When: the report renders in the execution row
-    const text = render(<VerificationReport verification={block} />)
+    // When: the reader opens the report in the execution row
+    const text = renderExpanded(block)
 
     // Then: the verdict, the per-criterion scores with their threshold, the
     // finding, the evidence scope and the token usage are all visible, and the
@@ -177,6 +201,55 @@ describe('goal acceptance view', () => {
     expect(text).toBe('')
   })
 
+  it('user scanning a card with many runs sees one verdict line per row and folds the machine detail away', () => {
+    // Given: a stored acceptance block
+    const block = verification()
+
+    // When: the report renders in its default state
+    const container = mount(<VerificationReport verification={block} />)
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-expanded]')
+
+    // Then: the row states the verdict and offers the fold, and none of the
+    // explanation every row used to repeat is on screen before it is opened.
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+    expect(textOf(container)).toContain('验收报告')
+    expect(textOf(container)).toContain('通过')
+    expect(textOf(container)).not.toContain('有效质量判定')
+    expect(textOf(container)).not.toContain('裁判模型')
+    expect(textOf(container)).not.toContain('证据范围')
+    expect(textOf(container)).not.toContain('Specification Adherence')
+    expect(textOf(container)).not.toContain('用量：请求')
+
+    // When: the reader opens it
+    act(() => { toggle!.click() })
+
+    // Then: the fold still carries the fields the report always had, so nothing
+    // was lost to the collapse.
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true')
+    expect(textOf(container)).toContain('有效质量判定')
+    expect(textOf(container)).toContain('裁判模型 deepseek-official/deepseek-flash')
+    expect(textOf(container)).toContain('证据范围：1234 字符')
+    expect(textOf(container)).toContain('Specification Adherence：90.0%（阈值 65.0%）')
+
+    // When: the reader folds it again
+    vi.useFakeTimers()
+    try {
+      act(() => { toggle!.click() })
+
+      // Then: the fold plays its exit leg instead of vanishing on the click
+      expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+      expect(container.querySelectorAll('[data-state="closing"]')).toHaveLength(1)
+      expect(textOf(container)).toContain('有效质量判定')
+
+      // And only once that leg has run does the detail leave the row
+      act(() => { vi.advanceTimersByTime(OVERLAY_EXIT_MS + 1) })
+      expect(textOf(container)).not.toContain('有效质量判定')
+      expect(textOf(container)).toContain('验收报告')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('user reading an INVALID acceptance row sees why the veto was unusable without reading it as a failure', () => {
     // Given: an execution whose acceptance produced an invalid verdict, with a
     // structured finding that is still kept for the human review
@@ -201,8 +274,8 @@ describe('goal acceptance view', () => {
       }],
     }
 
-    // When: the report renders
-    const text = render(<VerificationReport verification={block} />)
+    // When: the reader opens the report
+    const text = renderExpanded(block)
 
     // Then: it names the invalid acceptance and its reason, shows the structured
     // finding with its location, and never claims the run failed or passed.
@@ -244,8 +317,8 @@ describe('goal acceptance view', () => {
       },
     }
 
-    // When: the report renders
-    const text = render(<VerificationReport verification={block} />)
+    // When: the reader opens the report
+    const text = renderExpanded(block)
 
     // Then: the cleanup is stated as a cleanup, and the kept credential shows
     // the verdict and the evidence hash the pass is bound to.
@@ -269,8 +342,8 @@ describe('goal acceptance view', () => {
       contract: { enabled: true, modelSource: 'inherit', preset: 'coding', threshold: 0.65 },
     }
 
-    // When: the report renders
-    const text = render(<VerificationReport verification={block} />)
+    // When: the reader opens the report
+    const text = renderExpanded(block)
 
     // Then: it names the global switch, states that no goal acceptance ran and
     // that the run is neither accepted nor failed, and never claims a verdict.
@@ -288,8 +361,8 @@ describe('goal acceptance view', () => {
       contract: { enabled: false, modelSource: 'inherit', preset: 'coding', threshold: 0.65 },
     }
 
-    // When: the report renders
-    const text = render(<VerificationReport verification={block} />)
+    // When: the reader opens the report
+    const text = renderExpanded(block)
 
     // Then: the run is NOT claimed verified, but the reason is visible and it
     // names the card rather than the board-wide switch.

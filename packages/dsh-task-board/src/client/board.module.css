@@ -949,12 +949,22 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* --- detail ------------------------------------------------------------------- */
+/* --- detail -------------------------------------------------------------------
+ * Two columns on a wide panel, one column under 1024px: the card's content
+ * (description, prompt, labels, subtasks, freeze/handover) reads on the left and
+ * what the board does with it (execution settings, schedule, history, status) on
+ * the right. Both columns open on the same baseline, and every padding and gap
+ * here is a multiple of 8 so the two tracks keep one rhythm.
+ *
+ * The view's whole type scale is three steps: 15 title, 13 body, 12 meta.
+ * Hierarchy inside that scale comes from weight and the label colour role,
+ * never from a fourth size (the old 11px meta line is gone).
+ * --------------------------------------------------------------------------- */
 
 .detail {
   display: flex;
   flex-direction: column;
-  width: min(640px, calc(100vw - 48px));
+  width: min(960px, calc(100vw - 48px));
   max-height: calc(100vh - 80px);
   background: var(--dsw-alias-bg-base);
   border: 1px solid var(--dsw-alias-border-l2);
@@ -965,10 +975,12 @@
 }
 
 .detailHeader {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 18px;
+  gap: 8px;
+  padding: 16px 24px;
   border-bottom: 1px solid var(--dsw-alias-separator-primary);
   flex: none;
 }
@@ -976,8 +988,10 @@
 .detailTitle {
   margin: 0;
   flex: 1;
+  min-width: 0;
   font-size: 15px;
   font-weight: 700;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
@@ -1006,26 +1020,49 @@
 }
 
 .detailBody {
-  padding: 14px 18px;
+  padding: 16px 24px 24px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
   flex: 1;
+  min-height: 0;
+}
+
+.detailColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+
+.detailColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+/* The two tracks only exist while the panel can carry them; below this the
+   reading order is the single column above. */
+@media (min-width: 1024px) {
+  .detailColumns {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  }
 }
 
 .detailSection {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .detailSection h4 {
   margin: 0;
   font-size: 12px;
   font-weight: 700;
-  color: var(--dsw-alias-label-tertiary);
-  text-transform: none;
+  color: var(--dsw-alias-label-secondary);
 }
 
 .detailText {
@@ -1035,6 +1072,21 @@
   color: var(--dsw-alias-label-primary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The view's controls are shared with the board's form dialogs, where this
+   scale does not apply; inside the panel they read as body copy or as meta so
+   the three-step budget holds. */
+.detailBody .scheduleInput,
+.detailBody .schedulePreset,
+.detailBody .promptBlock {
+  font-size: 13px;
+}
+
+.detailBody .scheduleZone,
+.detailBody .scheduleMeta,
+.detailBody .cardTag {
+  font-size: 12px;
 }
 
 /* --- scheduled runs ---------------------------------------------------------- */
@@ -1063,7 +1115,6 @@
   flex: 1;
   min-width: 0;
   font-family: var(--dsw-font-markdown-code-block-small);
-  font-size: 12.5px;
 }
 
 .scheduleInputInvalid {
@@ -1079,7 +1130,6 @@
   box-sizing: border-box;
   height: var(--dsh-tb-control-h);
   padding: 0 8px;
-  font-size: 12.5px;
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-specific-input-major);
   border: 1px solid var(--dsw-alias-border-l2);
@@ -1093,7 +1143,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
   color: var(--dsw-alias-label-secondary);
 }
 
@@ -1104,7 +1153,6 @@
 
 .scheduleMeta {
   margin: 0;
-  font-size: 12px;
   color: var(--dsw-alias-label-secondary);
   overflow-wrap: anywhere;
 }
@@ -1112,7 +1160,6 @@
 .promptBlock {
   margin: 0;
   padding: 10px 12px;
-  font-size: 12.5px;
   line-height: 1.5;
   font-family: var(--dsw-font-markdown-code-block-small);
   color: var(--dsw-alias-label-primary);
@@ -1157,6 +1204,21 @@
   align-self: flex-start;
 }
 
+/* --- execution history -------------------------------------------------------
+ * One row per run, two lines each: identity on the head line (status, start and
+ * end in one absolute format, the session jump) and the evidence the run
+ * produced underneath. The newest five rows are always visible; the rest sit
+ * behind one disclosure whose open and close legs are the same motion reversed
+ * (see `dshTbRowsIn` / `dshTbRowsOut`).
+ * --------------------------------------------------------------------------- */
+
+.executionLog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 .executionList {
   list-style: none;
   margin: 0;
@@ -1164,23 +1226,50 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+}
+
+.executionExtra {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 
 .executionRow {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 8px;
-  flex-wrap: wrap;
+  min-width: 0;
 }
 
+.executionRowHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.executionRowEvidence {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* One filled slot per outcome: the secondary state surface carries the state
+   colour as text, so running, succeeded, failed and cancelled read with the
+   same weight instead of mixing a filled and an unfilled badge. */
 .executionBadge {
   flex: none;
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 18px;
   border-radius: 999px;
   color: var(--dsw-alias-state-warn-primary);
   background: var(--dsw-alias-state-warn-secondary);
@@ -1188,50 +1277,379 @@
 
 .executionBadge[data-result='succeeded'] {
   color: var(--dsw-alias-state-success-primary);
-  background: transparent;
+  background: var(--dsw-alias-state-success-secondary);
 }
 
 .executionBadge[data-result='failed'] {
   color: var(--dsw-alias-state-error-primary);
-  background: transparent;
+  background: var(--dsw-alias-state-error-secondary);
 }
 
 .executionBadge[data-result='cancelled'] {
-  color: var(--dsw-alias-label-tertiary);
-  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .executionTimes {
   font-size: 12px;
+  line-height: 1.5;
   color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
 }
 
 .executionError {
-  width: 100%;
   font-size: 12px;
+  line-height: 1.5;
   color: var(--dsw-alias-state-error-primary);
   overflow-wrap: anywhere;
 }
 
-.moveRow {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+/* The session jump rides the row's head line, pushed to its trailing edge; its
+   pointer target is grown to the 44px minimum without moving the glyph. */
+.executionSession {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 0 2px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--dsw-alias-state-business-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
 }
+
+.executionSession::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  height: var(--dsh-tb-hit-size);
+  transform: translate(-50%, -50%);
+}
+
+.executionSession:hover {
+  text-decoration: underline;
+}
+
+.executionDisclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+}
+
+/* One disclosure chevron for every folded region of the panel: drawn from
+   borders so it never depends on a glyph font, and it turns by the same 120ms
+   motion the rest of the board uses. */
+.disclosureChevron {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 120ms var(--dsh-tb-ease);
+}
+
+.disclosureChevron[data-open='true'] {
+  transform: rotate(225deg);
+}
+
+/* --- acceptance report -------------------------------------------------------
+ * The row carries the verdict only. Everything the board decided on stays one
+ * press away inside the fold: counts, judge route, per-criterion scores, the
+ * findings, the evidence scope and the usage are all rendered there, unchanged.
+ * --------------------------------------------------------------------------- */
+
+.verifyReport {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.verifyBadge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.verifyBadge::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: var(--dsh-tb-hit-size);
+  transform: translateY(-50%);
+}
+
+.verifyBadge[data-tone='warn'] {
+  color: var(--dsw-alias-state-warn-primary);
+  background: var(--dsw-alias-state-warn-secondary);
+  border-color: transparent;
+}
+
+.verifyBadge[data-tone='success'] {
+  color: var(--dsw-alias-state-success-primary);
+  background: var(--dsw-alias-state-success-secondary);
+  border-color: transparent;
+}
+
+.verifyBadge[data-tone='error'] {
+  color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-state-error-secondary);
+  border-color: transparent;
+}
+
+.verifyVerdict {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.verifyPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.attemptRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.attemptHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* --- free-text references (handover bundle) --------------------------------- */
+
+.referenceList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.referenceRow {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* --- compact action menu (status moves, secondary card actions) ---------------
+ * One trigger on the control track, the choices only while it is open. Escape
+ * and an outside press close it and focus returns to the trigger; the panel
+ * paints above the scrolling body, so the menu never clips against it.
+ * --------------------------------------------------------------------------- */
+
+.menuRoot {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.menuChevron {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-top: -3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 120ms var(--dsh-tb-ease);
+}
+
+.menuChevron[data-open='true'] {
+  margin-top: 0;
+  transform: rotate(225deg);
+}
+
+.menuPanel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  box-shadow: var(--dsw-shadow-lv2);
+}
+
+/* The header's menu hangs from the panel's trailing edge instead. */
+.detailHeader .menuPanel {
+  left: auto;
+  right: 0;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  min-height: var(--dsh-tb-hit-size);
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.menuItem:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.menuItem:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* --- detail footer -----------------------------------------------------------
+ * Exactly three controls on the normal track: edit (ghost), run (primary) and
+ * delete (danger). The stamp separates the destructive control from the primary
+ * action, so the two are never adjacent.
+ * --------------------------------------------------------------------------- */
 
 .detailFooter {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 18px;
+  gap: 8px;
+  padding: 16px 24px;
   border-top: 1px solid var(--dsw-alias-separator-primary);
   flex: none;
 }
 
 .detailMeta {
-  margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.detailFooter > .detailMeta {
+  margin-left: 0;
+}
+
+.detailStamp {
+  margin-left: auto;
+  text-align: end;
+}
+
+/* --- disclosure motion -------------------------------------------------------
+ * The folded regions of the panel (the rest of the history, the acceptance
+ * detail) appear and leave as one reversed pair: the same 6px travel on the
+ * same curve, only opposite in direction. `usePresence` keeps the node mounted
+ * through the exit leg, so the close never snaps.
+ * --------------------------------------------------------------------------- */
+
+.executionExtra,
+.verifyPanel,
+.detailBody .formSectionBody {
+  animation: dshTbRowsIn var(--dsh-tb-motion-enter) var(--dsh-tb-ease) both;
+}
+
+.executionExtra[data-execution-fold='closing'],
+.verifyPanel[data-state='closing'],
+.detailBody .formSectionBody[data-state='closing'] {
+  animation: dshTbRowsOut var(--dsh-tb-motion-close) var(--dsh-tb-ease) both;
+}
+
+@keyframes dshTbRowsIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes dshTbRowsOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-6px); }
+}
+
+@keyframes dshTbFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dshTbFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Reduced motion: the same folds keep their short fade and drop only the
+   spatial travel. Both legs stay the reversed pair and `usePresence` still
+   unmounts on the close duration. */
+@media (prefers-reduced-motion: reduce) {
+  .executionExtra,
+  .verifyPanel,
+  .detailBody .formSectionBody {
+    animation: dshTbFadeIn var(--dsh-tb-motion-close) linear both;
+  }
+
+  .executionExtra[data-execution-fold='closing'],
+  .verifyPanel[data-state='closing'],
+  .detailBody .formSectionBody[data-state='closing'] {
+    animation: dshTbFadeOut var(--dsh-tb-motion-close) linear both;
+  }
+}
+
+/* --- folded regions of the panel ---------------------------------------------
+ * The panel folds reuse the task form's own region contract (`.formSection`);
+ * only the sizes and the spacing rhythm are the panel's, so the form dialogs
+ * keep their own scale. Nothing here is a second disclosure style.
+ * --------------------------------------------------------------------------- */
+
+.detailBody .formSection {
+  min-width: 0;
+}
+
+.detailBody .formSectionHeader {
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.detailBody .formSectionBody {
+  gap: 8px;
 }
 
 /* --- constrained board containers ------------------------------------------ */
@@ -1393,26 +1811,40 @@
 
   .detailHeader {
     flex-wrap: wrap;
-    padding-top: max(12px, env(safe-area-inset-top));
-    padding-right: max(14px, env(safe-area-inset-right));
-    padding-left: max(14px, env(safe-area-inset-left));
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-left: max(16px, env(safe-area-inset-left));
   }
 
   .detailTitle {
     min-width: 0;
   }
 
+  /* One reading column: the panel is narrower than the two tracks can carry. */
+  .detailColumns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .detailColumn {
+    gap: 16px;
+  }
+
   .detailBody {
     overscroll-behavior-y: contain;
-    padding-right: max(14px, env(safe-area-inset-right));
-    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-left: max(16px, env(safe-area-inset-left));
   }
 
   .detailFooter {
     flex-wrap: wrap;
-    padding-right: max(14px, env(safe-area-inset-right));
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
-    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    padding-left: max(16px, env(safe-area-inset-left));
+  }
+
+  .menuPanel {
+    min-width: 200px;
   }
 
   .detailFooter > button {
@@ -1448,6 +1880,9 @@
 .dangerButton:focus-visible,
 .iconButton:focus-visible,
 .linkButton:focus-visible,
+.menuItem:focus-visible,
+.verifyBadge:focus-visible,
+.executionSession:focus-visible,
 .search:focus-visible,
 .input:focus-visible,
 .select:focus-visible,
@@ -1464,6 +1899,9 @@
 .dangerButton,
 .iconButton,
 .linkButton,
+.menuItem,
+.verifyBadge,
+.executionSession,
 .search,
 .input,
 .select,
@@ -1526,6 +1964,11 @@
   .dangerButton,
   .iconButton,
   .linkButton,
+  .menuItem,
+  .verifyBadge,
+  .executionSession,
+  .disclosureChevron,
+  .menuChevron,
   .search,
   .input,
   .select,
@@ -1555,6 +1998,7 @@
   .modalBackdrop[data-state='closing'] .detail {
     animation: dshTbBackdropOut var(--dsh-tb-motion-close) linear both;
   }
+
 }
 
 /* --- task tags (issue #1521) ---------------------------------------------------

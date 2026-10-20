@@ -10,6 +10,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TaskDetail } from '../src/client/board/TaskDetail.tsx'
 import type { BoardController, ControllerSnapshot } from '../src/core/controller.ts'
+import { t } from '../src/client/locales.ts'
+import { openFormSection } from './form-sections.ts'
 import { createTask, type TaskRecord } from '../src/core/tasks.ts'
 import type { TaskUpdatePatch } from '../src/core/use-cases/task-update.ts'
 
@@ -114,6 +116,7 @@ describe('Agent Team opt-in in the execution settings', () => {
     // Given a task on a deployment that serves Agent Teams
     const updates: TaskUpdatePatch[] = []
     const { container } = await renderDetail(task(), async (id, patch) => { updates.push(patch); return true })
+    openFormSection(container, '高级设置')
     const toggle = teamToggleOf(container)
     if (toggle === undefined) throw new Error('no Agent Team toggle')
 
@@ -128,12 +131,15 @@ describe('Agent Team opt-in in the execution settings', () => {
   it('operator on a deployment without Agent Teams sees the toggle disabled with the reason', async () => {
     // Given a task on a deployment that serves no Agent Teams service
     const { container } = await renderDetail(task(), undefined, false)
+    openFormSection(container, '高级设置')
     const toggle = teamToggleOf(container)
 
     // When the user inspects the execution settings
-    // Then the opt-in is offered read-only and the reason is stated
+    // Then the opt-in is offered read-only, the one-line reason is on the
+    // surface, and the full reason stays on the switch's own title
     expect(toggle?.disabled).toBe(true)
-    expect(container.textContent).toContain('当前部署未提供 Agent Teams 服务')
+    expect(container.textContent).toContain(t('exec.teamRunUnavailable.short'))
+    expect(toggle?.closest('label')?.getAttribute('title')).toBe(t('exec.teamRunUnavailable'))
   })
 })
 describe('task content editing before execution (issue #1110)', () => {
@@ -226,6 +232,7 @@ describe('session reuse toggle (#1419)', () => {
   it('starts unchecked and opts the task in through the controller', async () => {
     const updateTask = vi.fn(async () => true)
     const { container } = await renderDetail(task(), updateTask)
+    openFormSection(container, '高级设置')
     const checkbox = reuseCheckbox(container)
     expect(checkbox.checked).toBe(false)
     await act(async () => { checkbox.click() })
@@ -235,6 +242,7 @@ describe('session reuse toggle (#1419)', () => {
   it('shows an opted-in task as checked and clears the opt-in on unclick', async () => {
     const updateTask = vi.fn(async () => true)
     const { container } = await renderDetail(task({ reuseSession: true }), updateTask)
+    openFormSection(container, '高级设置')
     const checkbox = reuseCheckbox(container)
     expect(checkbox.checked).toBe(true)
     await act(async () => { checkbox.click() })
@@ -255,6 +263,7 @@ describe('goal run toggle', () => {
     const { container } = await renderDetail(task(), updateTask)
 
     // When the detail view renders it
+    openFormSection(container, '高级设置')
     const checkbox = goalCheckbox(container)
 
     // Then the checkbox shows the default, and checking writes the opt-in
@@ -270,6 +279,7 @@ describe('goal run toggle', () => {
     }))
 
     // When the user picks a different zone and then the Host default
+    openFormSection(container, '定时运行')
     const zoneSelect = [...container.querySelectorAll<HTMLSelectElement>('select')]
       .find(candidate => candidate.getAttribute('aria-label') === '时区')!
     expect(zoneSelect.value).toBe('Asia/Shanghai')
@@ -293,6 +303,7 @@ describe('goal run toggle', () => {
     const { container } = await renderDetail(task({ goalRun: true }), updateTask)
 
     // When the detail view renders it
+    openFormSection(container, '高级设置')
     const checkbox = goalCheckbox(container)
 
     // Then it shows checked, and unchecking writes the default back
@@ -307,16 +318,20 @@ describe('goal run toggle', () => {
     const { container } = await renderDetail(task(), updateTask, true, false)
 
     // When: the detail view renders and the user checks the option anyway
+    openFormSection(container, '高级设置')
     const checkbox = goalCheckbox(container)
     expect(checkbox.checked).toBe(false)
     expect(checkbox.disabled).toBe(false)
-    expect(container.textContent).toContain('全局「原生 /goal 执行」总开关已关闭')
+    // The one-line note sits under the switch; the full explanation stays on
+    // its title so the surface never grows back into a paragraph.
+    expect(container.textContent).toContain(t('exec.goalRunGlobalOff'))
+    expect([...container.querySelectorAll('p')].some(node => node.getAttribute('title') === t('settings.goalRunGlobalDisabledTaskOption'))).toBe(true)
     await act(async () => { checkbox.click() })
 
     // Then: the edit is accepted, the stored preference is written, and the
     // explanation still says the master switch has to be enabled for it to apply
     expect(updateTask).toHaveBeenCalledWith('t1', { goalRun: true })
-    expect(container.textContent).toContain('全局「原生 /goal 执行」总开关已关闭')
+    expect(container.textContent).toContain(t('exec.goalRunGlobalOff'))
   })
 
   it('operator re-enabling the GLOBAL switch sees the card keep the preference it never rewrote', async () => {
@@ -324,11 +339,13 @@ describe('goal run toggle', () => {
     // was off (the stored value is not touched), then rendered again with it on
     const optedIn = task({ goalRun: true })
     const off = await renderDetail(optedIn, undefined, true, false)
+    openFormSection(off.container, '高级设置')
     expect(goalCheckbox(off.container).checked).toBe(true)
     expect(goalCheckbox(off.container).disabled).toBe(false)
 
     // When: the master switch is turned back on
     const on = await renderDetail(optedIn, undefined, true, true)
+    openFormSection(on.container, '高级设置')
 
     // Then: the user's own stored preference is exactly what comes back
     expect(goalCheckbox(on.container).checked).toBe(true)
@@ -343,6 +360,7 @@ describe('schedule plan editing', () => {
     const { container, controller } = await renderDetail(task())
 
     // When the user picks the one-shot plan
+    openFormSection(container, '定时运行')
     const modeSelect = [...container.querySelectorAll<HTMLSelectElement>('select')]
       .find(candidate => candidate.getAttribute('aria-label') === '调度方式')!
     expect(modeSelect.value).toBe('cron')
@@ -376,6 +394,7 @@ describe('schedule plan editing', () => {
     }))
 
     // Then the ledger's own budget is shown, not a client-side guess
+    openFormSection(container, '定时运行')
     expect(container.textContent).toContain('1/2')
 
     // When the user clears the cap
@@ -411,6 +430,7 @@ describe('schedule plan editing', () => {
     }))
 
     // Then the detail states both the planned instant and how it ended
+    openFormSection(container, '定时运行')
     const atInput = container.querySelector<HTMLInputElement>('input[type="datetime-local"]')!
     expect(atInput.value).toBe('2026-10-09T04:00')
     expect(container.textContent).toContain('调度已结束')
