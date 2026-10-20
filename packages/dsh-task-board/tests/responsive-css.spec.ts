@@ -470,3 +470,125 @@ describe('task form dialogs speak the panel fold contract on one type scale', ()
     expect(block('.tagManageMerge')).toContain('font-size: 12px')
   })
 })
+
+describe('task markdown renderer speaks one three-step scale', () => {
+  /** The renderer's own stylesheet: the detail panel's description and prompt body. */
+  const markdownCss = readFileSync(new URL('../src/client/board/task-markdown.module.css', import.meta.url), 'utf8')
+
+  /** Every rule body of the renderer stylesheet under one exact selector. */
+  const rules = (selector: string): string[] => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const pattern = new RegExp('(?:^|\\n)' + escaped + '\\s*\\{([^}]*)\\}', 'gm')
+    return [...markdownCss.matchAll(pattern)].map(match => match[1])
+  }
+  /**
+   * One rule body by exact selector. The first match is the one that carries
+   * the property the caller reads, because a selector can also be the last
+   * entry of a shared list (h6 closes the heading list).
+   */
+  const block = (selector: string, property = 'font-size'): string =>
+    rules(selector).find(body => body.includes(property + ':')) ?? rules(selector)[0] ?? ''
+  /** One declaration of a rule body, or undefined when the rule leaves it to a shared block. */
+  const declaration = (body: string, property: string): string | undefined =>
+    body.match(new RegExp('(?:^|[\\s;])' + property + ':\\s*([^;]+);'))?.[1]?.trim()
+
+  it('user reading a task description meets three sizes only, never a seven-rung ladder', () => {
+    // Given every font size the renderer declares
+    const sizes = [...markdownCss.matchAll(/font-size:\s*([0-9.]+px)/g)].map(match => match[1])
+
+    // When a description or a prompt renders inside the detail panel
+    // Then the scale is the panel's own three steps: 16 headline, 13 body, 12 meta
+    expect(new Set(sizes)).toEqual(new Set(['12px', '13px', '16px']))
+
+    // And the retired sizes are gone from the file rather than left behind
+    for (const retired of ['11px', '12.5px', '14px', '15px']) {
+      expect(markdownCss, retired).not.toMatch(new RegExp('font-size:\\s*' + retired.replace('.', '\\.')))
+    }
+  })
+
+  it('user scanning h1-h6 sees two sizes, and the levels below them split by weight and colour', () => {
+    // Given the six heading rules and the block they inherit from
+    const headings = [1, 2, 3, 4, 5, 6].map(depth => block(`.heading${depth}`))
+    const shared = markdownCss.match(/\.heading1,[\s\S]*?\{([^}]*)\}/)?.[1] ?? ''
+    const size = (body: string): string | undefined => declaration(body, 'font-size')
+    const weight = (body: string): string | undefined => declaration(body, 'font-weight')
+    const colour = (body: string): string | undefined => declaration(body, 'color')
+
+    // When every depth paints
+    // Then the two top levels are the 16px step...
+    expect(headings.slice(0, 2).map(size)).toEqual(['16px', '16px'])
+    // ...and h3-h6 stay on the body's own 13px instead of opening a new step
+    expect(headings.slice(2).map(size)).toEqual(['13px', '13px', '13px', '13px'])
+    expect(size(block('.markdownRoot'))).toBe('13px')
+
+    // And the levels the ladder used to separate by size split by weight...
+    expect(headings.map(weight)).toEqual(['700', '600', '600', '600', '500', '500'])
+    expect(shared).toContain('color: var(--dsw-alias-label-primary)')
+    // ...and the deep levels take the secondary and tertiary label roles, so
+    // nothing below h3 needs a fourth size to read as deeper
+    expect(colour(headings[2])).toBeUndefined()
+    expect(colour(headings[3])).toBe('var(--dsw-alias-label-secondary)')
+    expect(colour(headings[4])).toBe('var(--dsw-alias-label-secondary)')
+    expect(colour(headings[5])).toBe('var(--dsw-alias-label-tertiary)')
+  })
+})
+
+describe('task dialog folds ride the panel fold motion pair', () => {
+  /** The detail region, where the one disclosure pair is declared. */
+  const detailRegion = css.slice(
+    css.indexOf('/* --- detail ---'),
+    css.indexOf('/* --- constrained board containers ---'),
+  )
+
+  /** The rule body of one selector inside a slice that carries an animation. */
+  const animatedRule = (source: string, selector: string): string => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const pattern = new RegExp('(?:^|\\n)[ \\t]*' + escaped + '\\s*\\{([^}]*)\\}', 'gm')
+    return [...source.matchAll(pattern)].map(match => match[1]).find(body => body.includes('animation:')) ?? ''
+  }
+  /** The animation shorthand one rule declares. */
+  const animationOf = (body: string): string => body.match(/animation:\s*([^;]+);/)?.[1]?.trim() ?? ''
+
+  it('user folding a dialog region gets the panel pair instead of a third disclosure style', () => {
+    // Given the panel's fold body and the dialog's fold body
+    const panelIn = animatedRule(detailRegion, '.detailBody .formSectionBody')
+    const panelOut = animatedRule(detailRegion, ".detailBody .formSectionBody[data-state='closing']")
+    const dialogIn = animatedRule(css, '.formSectionBody')
+    const dialogOut = animatedRule(css, ".formSectionBody[data-state='closing']")
+
+    // When either surface opens or closes
+    // Then the entry legs are one animation on one travel and one duration token
+    expect(animationOf(panelIn)).toBe('dshTbRowsIn var(--dsh-tb-motion-enter) var(--dsh-tb-ease) both')
+    expect(animationOf(dialogIn)).toBe(animationOf(panelIn))
+    // And the exit legs are the reverse of that same pair
+    expect(animationOf(panelOut)).toBe('dshTbRowsOut var(--dsh-tb-motion-close) var(--dsh-tb-ease) both')
+    expect(animationOf(dialogOut)).toBe(animationOf(panelOut))
+
+    // And the pair stays the one keyframe pair the stylesheet declares
+    expect(css.match(/@keyframes dshTbRowsIn \{/g)).toHaveLength(1)
+    expect(css.match(/@keyframes dshTbRowsOut \{/g)).toHaveLength(1)
+    expect(css).toMatch(/@keyframes dshTbRowsIn \{\s*from \{ opacity: 0; transform: translateY\(-6px\); \}/)
+    expect(css).toMatch(/@keyframes dshTbRowsOut \{\s*from \{ opacity: 1; transform: translateY\(0\); \}/)
+  })
+
+  it('user with reduced motion sees both folds fade only, and unmount waits the close duration', () => {
+    // Given the reduced-motion block the pair degrades to
+    const reduced = detailRegion.slice(detailRegion.indexOf('@media (prefers-reduced-motion: reduce)'))
+    const panelIn = animatedRule(reduced, '.detailBody .formSectionBody')
+    const panelOut = animatedRule(reduced, ".detailBody .formSectionBody[data-state='closing']")
+    const dialogIn = animatedRule(reduced, '.formSectionBody')
+    const dialogOut = animatedRule(reduced, ".formSectionBody[data-state='closing']")
+
+    // When either fold opens or closes without motion
+    // Then both keep the same opacity-only fade...
+    expect(animationOf(panelIn)).toBe('dshTbFadeIn var(--dsh-tb-motion-close) linear both')
+    expect(animationOf(dialogIn)).toBe(animationOf(panelIn))
+    expect(animationOf(panelOut)).toBe('dshTbFadeOut var(--dsh-tb-motion-close) linear both')
+    expect(animationOf(dialogOut)).toBe(animationOf(panelOut))
+    // ...and the dialog's exit leg still runs on the close duration the
+    // presence timer waits on, since only the travel was dropped
+    expect(animationOf(dialogOut)).toContain('var(--dsh-tb-motion-close)')
+    expect(css).toMatch(/--dsh-tb-motion-close:\s*140ms/)
+    expect(animationOf(dialogOut)).not.toContain('translateY')
+  })
+})

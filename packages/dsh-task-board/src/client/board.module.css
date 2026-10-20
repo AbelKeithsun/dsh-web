@@ -1154,7 +1154,7 @@
  *
  * The view's whole type scale is three steps: 15 title, 13 body, 12 meta.
  * Hierarchy inside that scale comes from weight and the label colour role,
- * never from a fourth size (the old 11px meta line is gone).
+ * never from a fourth size.
  * --------------------------------------------------------------------------- */
 
 .detail {
@@ -1803,6 +1803,18 @@
   animation: dshTbRowsOut var(--dsh-tb-motion-close) var(--dsh-tb-ease) both;
 }
 
+/* The task dialogs' regions are the same fold body under another name, so they
+   ride the same pair rather than a third disclosure style: one keyframe pair,
+   one 6px travel, the panel's two duration tokens. `usePresence` in
+   `CollapsibleSection` keeps the body mounted through the exit leg. */
+.formSectionBody {
+  animation: dshTbRowsIn var(--dsh-tb-motion-enter) var(--dsh-tb-ease) both;
+}
+
+.formSectionBody[data-state='closing'] {
+  animation: dshTbRowsOut var(--dsh-tb-motion-close) var(--dsh-tb-ease) both;
+}
+
 @keyframes dshTbRowsIn {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1836,6 +1848,14 @@
   .executionExtra[data-execution-fold='closing'],
   .verifyPanel[data-state='closing'],
   .detailBody .formSectionBody[data-state='closing'] {
+    animation: dshTbFadeOut var(--dsh-tb-motion-close) linear both;
+  }
+
+  .formSectionBody {
+    animation: dshTbFadeIn var(--dsh-tb-motion-close) linear both;
+  }
+
+  .formSectionBody[data-state='closing'] {
     animation: dshTbFadeOut var(--dsh-tb-motion-close) linear both;
   }
 }
