@@ -29,7 +29,7 @@ export interface SshHostEntry {
     /**
      * ssh-agent endpoint for 'agent' auth. A socket path, the special value
      * 'pageant' (PuTTY Pageant on Windows), or undefined for auto-detect
-     * (SSH_AUTH_SOCK, then Pageant on Windows).
+     * (SSH_AUTH_SOCK, then the native OpenSSH named pipe on Windows).
      */
     agentPath?: string
   }

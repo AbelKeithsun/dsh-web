@@ -106,12 +106,15 @@ export function HostFormDialog({ api, editing, onClose, onSaved }: HostFormDialo
     }
     // Secrets are never echoed back by the API: when editing and the secret
     // fields are left empty, the auth block is omitted so the stored
-    // authentication is preserved.
+    // authentication is preserved. The agent path is not a secret — an empty
+    // one is the documented "auto-detect" choice — so an agent form always
+    // submits its auth block; omitting it would make the PATCH a silent no-op
+    // that keeps the previous auth kind (#1910).
     const secretEmpty = form.authKind === 'password'
       ? form.password === ''
       : form.authKind === 'key'
         ? form.keyPath.trim() === ''
-        : form.agentPath.trim() === ''
+        : false
     const auth: HostPayload['auth'] = editing != null && secretEmpty
       ? undefined
       : form.authKind === 'password'
