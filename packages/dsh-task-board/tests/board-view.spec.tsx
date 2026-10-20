@@ -363,3 +363,73 @@ describe('TaskBoard settled-column density and recency groups', () => {
     expect(globalThis.localStorage?.getItem('dsh.taskBoard.compactColumns.v1')).toBe('[]')
   })
 })
+
+describe('TaskBoard card rows, density switches and column rails', () => {
+  const openRun = { id: 'e-open', sessionId: 'session-1', startedAt: 0, endedAt: undefined, result: undefined, error: undefined }
+  const settledRun = (result: 'succeeded' | 'failed') => ({
+    id: 'e-' + result, sessionId: 'session-1', startedAt: 0, endedAt: 1, result, error: undefined,
+  })
+
+  it('operator sees the same card rows in every column, whether a card idles, runs or has settled', async () => {
+    // Given every column at full density and a board whose cards are idle,
+    // running, succeeded and failed
+    globalThis.localStorage?.setItem('dsh.taskBoard.compactColumns.v1', '[]')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    const controller = fakeController({
+      tasks: [
+        task({ id: 't-todo', status: 'todo', title: 'Todo card' }),
+        task({ id: 't-running', status: 'running', title: 'Running card', executions: [openRun] }),
+        task({ id: 't-done', status: 'done', title: 'Done card', executions: [settledRun('succeeded')] }),
+        task({ id: 't-failed', status: 'failed', title: 'Failed card', executions: [settledRun('failed')] }),
+      ],
+    })
+    await act(async () => { root.render(<TaskBoard controller={controller} />) })
+
+    // When the board paints the four columns
+    // Then every card shows the same rows: the status rail is reserved in all
+    // of them, so a column never reflows when a card changes state
+    const shapes = [...container.querySelectorAll('article[data-dsh-part="card"]')].map(
+      card => [...card.children].map(node => node.tagName).join(','),
+    )
+    expect(shapes).toHaveLength(4)
+    expect(new Set(shapes)).toEqual(new Set(['BUTTON,SPAN,SPAN,SPAN']))
+  })
+
+  it('operator finds one density switch in every board column header, and none in the archive header', async () => {
+    // Given the board view
+    const board = document.createElement('div')
+    document.body.appendChild(board)
+    const boardRoot = createRoot(board)
+    roots.push(boardRoot)
+    await act(async () => { boardRoot.render(<TaskBoard controller={fakeController()} />) })
+
+    // When each column header paints
+    // Then every board column offers exactly one density switch
+    const boardColumns = [...board.querySelectorAll('section[data-status]')]
+    expect(boardColumns.length).toBeGreaterThan(0)
+    for (const column of boardColumns) {
+      const header = column.querySelector('header')
+      expect(header).not.toBeNull()
+      expect(header!.querySelectorAll('button[data-dsh-part="density-toggle"]')).toHaveLength(1)
+    }
+
+    // And the archive column keeps its header without a density switch, so the
+    // header height is the only thing the two views have to agree on
+    const archive = document.createElement('div')
+    document.body.appendChild(archive)
+    const archiveRoot = createRoot(archive)
+    roots.push(archiveRoot)
+    await act(async () => {
+      archiveRoot.render(<TaskBoard controller={fakeController({
+        archiveView: true,
+        tasks: [task({ archivedAt: Date.now(), status: 'done' })],
+      })} />)
+    })
+    const archiveColumn = archive.querySelector('section[data-status="archived"]')!
+    expect(archiveColumn.querySelector('header')).not.toBeNull()
+    expect(archiveColumn.querySelectorAll('button[data-dsh-part="density-toggle"]')).toHaveLength(0)
+  })
+})

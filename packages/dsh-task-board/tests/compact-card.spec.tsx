@@ -162,3 +162,126 @@ describe('Given card time labels', () => {
     expect(utc).toBe('2026-01-02')
   })
 })
+
+describe('Given a card whose state changes', () => {
+  const openRun: ExecutionRecord = { id: 'e-open', sessionId: 'session-1', startedAt: 3_000, endedAt: undefined, result: undefined, error: undefined }
+
+  /** Mount one card, read what the test needs, and unmount before the next state. */
+  function readCard<T>(element: Parameters<Root['render']>[0], read: (card: HTMLElement) => T): T {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const local = createRoot(container)
+    act(() => local.render(element))
+    const card = container.querySelector<HTMLElement>('article[data-dsh-part="card"]')!
+    const value = read(card)
+    act(() => local.unmount())
+    container.remove()
+    return value
+  }
+
+  /** The card in every state the board can show it. */
+  const states: Array<{ name: string; task: TaskRecord; pending?: boolean }> = [
+    { name: 'idle', task: { ...baseTask, id: 'idle' } },
+    { name: 'running', task: { ...baseTask, id: 'running', status: 'running', executions: [openRun] } },
+    { name: 'succeeded', task: { ...baseTask, id: 'succeeded', status: 'done', executions: [settled('succeeded')] } },
+    { name: 'declared', task: { ...baseTask, id: 'declared', status: 'done', executions: [settled('failed')] } },
+    { name: 'archived', task: { ...baseTask, id: 'archived', status: 'done', archivedAt: 9, executions: [settled('succeeded')] } },
+    { name: 'pending', task: { ...baseTask, id: 'waiting' }, pending: true },
+  ]
+
+  it('user watching a card start, settle or archive sees the same rows, so the card never grows or shrinks', () => {
+    // Given a card rendered in every state the board can show
+    const rows = states.map(state => readCard(
+      <TaskCard task={state.task} pending={state.pending ?? false} onClick={() => {}} />,
+      card => [...card.children].map(node => node.tagName).join(','),
+    ))
+
+    // When each state paints
+    // Then the same rows exist in all of them: the title row, the meta row and
+    // the status rail are reserved whether or not they carry a label, a
+    // spinner or a result badge
+    expect(rows).toHaveLength(states.length)
+    expect(new Set(rows)).toEqual(new Set(['BUTTON,SPAN,SPAN,SPAN']))
+  })
+
+  it('user sees the status rail keep its two zones while a card idles, runs or archives', () => {
+    // Given the same six cards
+    const rails = states.map(state => readCard(
+      <TaskCard task={state.task} pending={state.pending ?? false} onClick={() => {}} />,
+      card => {
+        const rail = card.lastElementChild!
+        return rail.tagName + ':' + String(rail.children.length)
+      },
+    ))
+
+    // When a state paints a label, a result or nothing
+    // Then the rail's leading and trailing zones both stay in place
+    expect(new Set(rails)).toEqual(new Set(['SPAN:2']))
+  })
+
+  it('user sees the spinner box in place before a run starts, and only its content change while one runs', () => {
+    // Given an idle card, a running card and a settled card
+    const trailOf = (task: TaskRecord, pending: boolean) => readCard(
+      <TaskCard task={task} pending={pending} onClick={() => {}} />,
+      card => {
+        const trail = card.lastElementChild!.lastElementChild!
+        return { trail: trail.children.length, slot: trail.firstElementChild!.children.length }
+      },
+    )
+
+    // When the run opens and later settles
+    // Then the trailing zone keeps the same reserved slot and only the slot's
+    // content is painted into it
+    expect(trailOf({ ...baseTask, id: 'idle' }, false)).toEqual({ trail: 1, slot: 0 })
+    expect(trailOf({ ...baseTask, id: 'run', status: 'running', executions: [openRun] }, false)).toEqual({ trail: 2, slot: 1 })
+    expect(trailOf({ ...baseTask, id: 'settled', status: 'done', executions: [settled('succeeded')] }, false)).toEqual({ trail: 2, slot: 0 })
+  })
+
+  it('user scanning a compact column sees the same two rows in every state', () => {
+    // Given the same six cards in a compact column
+    const rows = states.map(state => readCard(
+      <TaskCard task={state.task} pending={state.pending ?? false} compact onClick={() => {}} />,
+      card => [...card.children].map(node => node.tagName).join(','),
+    ))
+
+    // When each state paints
+    // Then compact density is the same two rows with the spinner box reserved
+    expect(new Set(rows)).toEqual(new Set(['BUTTON,SPAN,SPAN']))
+  })
+
+  it('user seeing a task with no labels gets no empty label row', () => {
+    // Given a task whose label list is present but empty
+    const task: TaskRecord = { ...baseTask, tags: [] }
+    // When the card renders
+    const container = mount(<TaskCard task={task} pending={false} onClick={() => {}} />)
+    // Then no label badge is emitted and the card keeps its three rows
+    expect(container.querySelector('[data-dsh-part="tag-badge"]')).toBeNull()
+    expect(container.querySelectorAll('article[data-dsh-part="card"] > span')).toHaveLength(3)
+  })
+
+  it('user reading a settled card sees the outcome in a filled badge of its own', () => {
+    // Given a done card whose last run succeeded
+    const container = mount(<TaskCard task={{ ...baseTask, status: 'done', executions: [settled('succeeded')] }} pending={false} onClick={() => {}} />)
+    const run = container.querySelector<HTMLElement>('[data-dsh-part="card-run"]')!
+
+    // When the card reports the outcome
+    // Then the badge names the outcome and the run line still carries the count
+    expect(run.getAttribute('data-result')).toBe('succeeded')
+    const badge = run.firstElementChild!
+    expect(badge.getAttribute('data-result')).toBe('succeeded')
+    expect(badge.textContent).toBe(t('card.result.succeeded'))
+    expect(run.textContent).toContain(t('board.runs'))
+  })
+
+  it('user reading an archived card sees the outcome as plain text, not as a board verdict badge', () => {
+    // Given an archived card whose last run succeeded
+    const container = mount(<TaskCard task={{ ...baseTask, status: 'done', archivedAt: 9, executions: [settled('succeeded')] }} pending={false} onClick={() => {}} />)
+    const run = container.querySelector<HTMLElement>('[data-dsh-part="card-run"]')!
+
+    // When the archive renders it
+    // Then the outcome stays text, so no board column tone is painted on it
+    expect(run.getAttribute('data-result')).toBeNull()
+    expect(run.children).toHaveLength(1)
+    expect(run.textContent).toContain(t('card.result.succeeded'))
+  })
+})
