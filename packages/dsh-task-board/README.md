@@ -12,15 +12,15 @@ English | [中文](README.zh.md)
 
 <p align="center">
   <strong>Autonomous Kanban Task Board & Cron Scheduling for DeepSeek Harness (DSH)</strong><br>
-  <em>5-Column Kanban · Cron Background Scheduling · Real Agent Execution · Power Sleep Prevention · Verification Gate</em>
+  <em>Host-Authoritative Ledger · Multi-Agent Cascades & Teams · Double-Blind Verification · Sleep Inhibition · GitHub Issue-to-PR</em>
 </p>
 
 A hot-pluggable DeepSeek Harness (DSH) Web GUI and official desktop client task automation plugin with a Host-authoritative task ledger, real DSH agent session execution, cron background scheduling, cross-platform idle-sleep protection, multi-agent cascades, and automated verification quality gates. It executes unattended background workflows including automated code reviews, routine health checks, and scheduled pipelines without requiring an open browser window. It mounts cleanly via `cordis.patch.yml` and profiles without modifying DSH core code.
 
-- The browser is an asynchronous view; closing the page does not stop Host scheduling or execution settlement.
-- Every run applies the pinned workspace, agent preset, and permission before sending the task prompt; by default each run creates its own DSH session, and a task can opt into continuing in its previous session instead (issue #1419).
-- dsh's built-in `/goal` is armed for every run by default, so the session keeps working automatic continuation rounds until the goal completes and the board settles the execution on that goal's end; each task can turn the option off.
-- The display may turn off while optional power protection keeps the computer from entering idle system sleep.
+- Host-authoritative architecture and offline background execution: The browser is merely an asynchronous view; closing tabs or dropping connections will not interrupt Host scheduling, session execution, or atomic ledger settlement. Built-in cross-platform sleep inhibition (macOS, Windows, Linux) allows screens to power down while preventing system idle sleep for reliable unattended automation.
+- Multi-agent cascades and native Agent Teams orchestration: Supports hierarchical subtask trees (1-3 depth levels). Cascade execution triggers concurrent independent agent sessions via a rate-governed admission queue; native team mode integrates with official Agent Teams services, where a Team Lead session dynamically spawns and coordinates dedicated teammates.
+- Double-blind adversarial judge quality gates (No False Completion): Intercepts false agent completion claims; requires verification by an independent Judge Model using strict coding criteria, a 0.65 threshold, two-round A/B position swapping, and validation against real workspace filesystem diffs, returning actionable diagnostics for self-repair.
+- Automated GitHub loop, freeze handover, and agent tool surface: Real-time bidirectional GitHub Issues sync automates agent bug fixing and PR creation; supports `<<<FREEZE` session context snapshots with handover packages; exposes 8 native model tools for autonomous planning and external execution registration.
 
 ## Features
 
