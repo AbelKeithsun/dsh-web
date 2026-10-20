@@ -258,6 +258,7 @@ describe('task board columns and cards share the panel visual contract', () => {
 
   it('user sees the spinner, the result badge and the stamp inside reserved slots, so a state change cannot move the card', () => {
     // Given the card's rows and every transient box on them
+    // When a card paints its status, its result badge or a running stamp
     // Then each row reserves one slot height and every box inside takes it
     expect(block('.cardMeta')).toContain('min-height: var(--dsh-tb-card-row)')
     expect(block('.cardStatus')).toContain('min-height: var(--dsh-tb-card-row)')
@@ -385,8 +386,9 @@ describe('task detail panel fold rhythm and summary track', () => {
     expect(block('.detailBody .formSectionHeader')).toContain('box-sizing: border-box')
   })
 
-  it('the form dialogs keep their own spacing rhythm beside the panel folds', () => {
+  it('user filling a task dialog reads the dialog spacing rhythm beside the panel folds', () => {
     // Given the region contract the dialogs share with the panel
+    // When a dialog paints its fields and its folded regions
     // Then the rhythm around the regions is the dialog's own
     expect(block('.formSectionBody')).toContain('padding: 8px 10px 10px')
     expect(block('.modalBody')).toContain('gap: 8px')
@@ -416,12 +418,16 @@ describe('task form dialogs speak the panel fold contract on one type scale', ()
   })
 
   it('user never meets an 11px or 12.5px label anywhere in the stylesheet', () => {
+    // Given the whole task board stylesheet
+    // When any label, hint or meta line paints
+    // Then neither retired size is declared anywhere
     expect(css).not.toMatch(/font-size:\s*11px/)
     expect(css).not.toMatch(/font-size:\s*12\.5px/)
   })
 
   it('user collapsing a task form region gets the panel fold row contract', () => {
     // Given the dialog's region row and the rules the panel's folds use
+    // When the row paints its label, its summary and its chevron
     const header = block('.formSectionHeader')
     const title = block('.formSectionTitle')
     const summary = block('.formSectionSummary')
@@ -463,6 +469,9 @@ describe('task form dialogs speak the panel fold contract on one type scale', ()
   })
 
   it('user opening a task dialog reads one title size and one meta size', () => {
+    // Given the dialog's title, its confirmation copy and the label manager rows
+    // When a dialog or a label row paints
+    // Then the title takes the 16px step and every meta line the 12px one
     expect(block('.modalTitle')).toContain('font-size: 16px')
     expect(block('.confirmMessage')).toContain('font-size: 13px')
     expect(block('.tagManageName')).toContain('font-size: 13px')

@@ -205,7 +205,10 @@ describe('label manager action hierarchy', () => {
     click(container, t('tags.rename'))
     const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')]
     const save = buttons.find(button => button.textContent === t('tags.save'))
-    expect(save).toBeDefined()
+    // The row commit is an operable plain button, never the dialog's form submit
+    expect(save?.disabled).toBe(false)
+    expect(save?.getAttribute('type')).toBe('button')
+    expect(save?.closest('li')?.querySelector('input')?.value).toBe('ship')
     const saveClass = save?.className ?? ''
 
     // Then the row commit is the only filled control in the dialog, because
@@ -232,8 +235,8 @@ describe('label manager action hierarchy', () => {
 
     // Then the destructive commit wears its own role and the dismiss beside it
     // is a secondary control
-    expect(confirm).toBeDefined()
-    expect(cancel).toBeDefined()
+    // The footer offers exactly the dismiss and then the destructive commit
+    expect(buttons.map(button => button.textContent)).toEqual([t('delete.cancel'), t('tags.deleteOk')])
     expect(confirm?.className).not.toBe(cancel?.className)
   })
 })

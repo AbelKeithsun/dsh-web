@@ -266,6 +266,8 @@ describe('linking an existing task', () => {
     const free = task('free')
     const { controller } = fakeController([parent, free])
     const container = render(<LinkSubtaskModal controller={controller} parent={parent} onClose={() => {}} />)
+
+    // When the linker paints one row per candidate
     const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')]
     const cancel = buttons.find(button => button.textContent === t('new.cancel'))
     const rowActions = buttons.filter(button => button.textContent === t('link.subtask.confirm'))

@@ -411,9 +411,11 @@ describe('TaskBoard card rows, density switches and column rails', () => {
     const boardColumns = [...board.querySelectorAll('section[data-status]')]
     expect(boardColumns.length).toBeGreaterThan(0)
     for (const column of boardColumns) {
-      const header = column.querySelector('header')
-      expect(header).not.toBeNull()
-      expect(header!.querySelectorAll('button[data-dsh-part="density-toggle"]')).toHaveLength(1)
+      const header = column.querySelector('header')!
+      // The header is the column's own: the count it paints is the number of
+      // cards the column just rendered, so the switch sits on that column
+      expect(header.querySelector('h3 + span')?.textContent).toBe(String(column.querySelectorAll('article[data-dsh-part="card"]').length))
+      expect(header.querySelectorAll('button[data-dsh-part="density-toggle"]')).toHaveLength(1)
     }
 
     // And the archive column keeps its header without a density switch, so the
@@ -429,7 +431,9 @@ describe('TaskBoard card rows, density switches and column rails', () => {
       })} />)
     })
     const archiveColumn = archive.querySelector('section[data-status="archived"]')!
-    expect(archiveColumn.querySelector('header')).not.toBeNull()
+    // The archive keeps the column header shape and counts its one card, while
+    // the density switch stays out of it
+    expect(archiveColumn.querySelector('header h3 + span')?.textContent).toBe('1')
     expect(archiveColumn.querySelectorAll('button[data-dsh-part="density-toggle"]')).toHaveLength(0)
   })
 })

@@ -241,7 +241,9 @@ describe('create-task dialog action hierarchy and disclosure wiring', () => {
 
     // When the user looks for the control that commits the form
     const submit = container.querySelector<HTMLButtonElement>('button[type="submit"]')
-    expect(submit).not.toBeNull()
+    // The commit is operable and announces the dialog's own submit copy
+    expect(submit?.textContent).toBe(t('new.submit'))
+    expect(submit?.disabled).toBe(false)
     const submitClass = submit?.className ?? ''
     const filled = buttons.filter(button => button.className === submitClass)
 
@@ -262,15 +264,18 @@ describe('create-task dialog action hierarchy and disclosure wiring', () => {
     // Then the row declares its state, names its own body, and keeps the
     // collapsed line readable in full
     expect(header.getAttribute('aria-expanded')).toBe('false')
-    expect(controls).not.toBeNull()
+    // The row is the one claimant of that body id, declared before the body mounts
+    expect([...container.querySelectorAll('[aria-controls]')].filter(node => node.getAttribute('aria-controls') === controls)).toEqual([header])
     expect(header.getAttribute('title')).toBe(t('new.summary.none'))
 
     // When the user expands it
     act(() => { header.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
-    // Then the body it names is the one that rendered
+    // Then the body it names is the one that rendered, on this region's open leg
     expect(header.getAttribute('aria-expanded')).toBe('true')
-    expect(document.getElementById(controls ?? '')).not.toBeNull()
+    const body = document.getElementById(controls ?? '')
+    expect(body?.parentElement).toBe(header.closest('[data-dsh-part="form-section"]'))
+    expect(body?.getAttribute('data-state')).toBe('open')
   })
 })
 
