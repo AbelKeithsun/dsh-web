@@ -211,3 +211,119 @@ describe('session metadata over protocol v1', () => {
     expect(answer.r).toEqual({ titles: { ['__proto__']: '', constructor: '' } })
   })
 })
+
+describe('roster row titles over protocol v1', () => {
+  it('operator listing sessions sees the name a cold session carries in its own projection', async () => {
+    // Given a host whose roster carries the projection title of a session this
+    // process does not hold live, and which has resolved no title through session.titles
+    const titles = titlesDouble({}, [])
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    harness.gateway.handler = async () => ({
+      items: [
+        summary('s-cold', { projections: { values: { title: 'Plan the trip' } } }),
+        summary('s-live', { projections: { values: { title: 'Draft the copy', status: 'idle' } }, running: true }),
+      ],
+    })
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(1, 'session.list'))
+    // Then every row carries the name its own projection carried, cold or live,
+    // and no title lookup was spent on the listing
+    expect((answerOf(harness, 1).r as { sessions: { id: string; title: string }[] }).sessions).toEqual([
+      { id: 's-cold', title: 'Plan the trip', updatedAt: 5, agentRunning: false, blank: false },
+      { id: 's-live', title: 'Draft the copy', updatedAt: 5, agentRunning: true, blank: false },
+    ])
+    expect(titles.reads).toEqual([])
+  })
+
+  it('operator listing a row whose projection carries no name sees the title this connection already resolved', async () => {
+    // Given two live sessions whose titles this connection has resolved, and three
+    // rows whose projection block carries a null, no title key, or no projection at all
+    const titles = titlesDouble({ 's-1': 'Plan the trip', 's-2': 'Draft the copy' }, ['s-1', 's-2'])
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    harness.gateway.handler = async () => ({
+      items: [
+        summary('s-1', { projections: { values: { title: null } } }),
+        summary('s-2', { projections: { values: { status: 'idle' } } }),
+        summary('s-3'),
+      ],
+    })
+    await harness.connection.handleText(requestFrame(1, 'session.titles', { ids: ['s-1', 's-2'] }))
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(2, 'session.list'))
+    // Then each row falls back to the cache, and the session with neither source is empty
+    expect((answerOf(harness, 2).r as { sessions: { id: string; title: string }[] }).sessions.map(row => [row.id, row.title])).toEqual([
+      ['s-1', 'Plan the trip'],
+      ['s-2', 'Draft the copy'],
+      ['s-3', ''],
+    ])
+  })
+
+  it('operator listing a roster whose projection block is malformed is still sent every row', async () => {
+    // Given four live sessions whose titles this connection has resolved, and a host
+    // that answers a projection block in four shapes none of them has
+    const ids = ['s-1', 's-2', 's-3', 's-4']
+    const titles = titlesDouble(Object.fromEntries(ids.map(id => [id, 'Plan the trip'])), ids)
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    harness.gateway.handler = async () => ({
+      items: [
+        summary('s-1', { projections: 'Plan the trip' }),
+        summary('s-2', { projections: { values: 'Plan the trip' } }),
+        summary('s-3', { projections: { values: { title: 41 } } }),
+        summary('s-4', { projections: [] }),
+      ],
+    })
+    await harness.connection.handleText(requestFrame(5, 'session.titles', { ids }))
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(6, 'session.list'))
+    // Then no row failed the listing and every one of them fell back to the cache
+    expect((answerOf(harness, 6).r as { sessions: { title: string }[] }).sessions.map(row => row.title)).toEqual([
+      'Plan the trip',
+      'Plan the trip',
+      'Plan the trip',
+      'Plan the trip',
+    ])
+  })
+
+  it('operator listing a row that carries both a projected name and a resolved one sees the projected name', async () => {
+    // Given a live session whose resolved title differs from the one its row projects
+    const titles = titlesDouble({ 's-1': 'Name from the live service' }, ['s-1'])
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    harness.gateway.handler = async () => ({ items: [summary('s-1', { projections: { values: { title: 'Name from the projection' } } })] })
+    await harness.connection.handleText(requestFrame(5, 'session.titles', { ids: ['s-1'] }))
+    // When the operator lists sessions
+    await harness.connection.handleText(requestFrame(6, 'session.list'))
+    // Then the row carries its own projected name, and session.titles keeps
+    // answering the live service's name for that same id
+    expect((answerOf(harness, 6).r as { sessions: { title: string }[] }).sessions[0]?.title).toBe('Name from the projection')
+    await harness.connection.handleText(requestFrame(7, 'session.titles', { ids: ['s-1'] }))
+    expect(answerOf(harness, 7).r).toEqual({ titles: { 's-1': 'Name from the live service' } })
+  })
+
+  it('operator paging a compact roster sees the projected names on the page it is sent', async () => {
+    // Given a host whose rows carry projection titles and a client that declared the compact form
+    const titles = titlesDouble({}, [])
+    const harness = makeConnection({ paired: true, sessionMeta: metaOver(titles.faces) })
+    harness.gateway.handler = async () => ({
+      items: [
+        summary('s-1', { updatedAt: 9, cwd: '/Users/zcl/code/x', projections: { values: { title: 'Plan the trip' } } }),
+        summary('s-2', { updatedAt: 7, cwd: '/Users/zcl/code/x', projections: { values: { title: 'Draft the copy' } } }),
+        summary('s-3', { updatedAt: 5, cwd: '/Users/zcl/code/y' }),
+      ],
+    })
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.list.compact.v1'] }))
+    // When the operator reads one compact page of two rows
+    await harness.connection.handleText(requestFrame(2, 'session.list', { cwd: true, maxRows: 2 }))
+    // Then the page carries both projected names, the empty one for the row that has none,
+    // and the cursor for the rest
+    expect(answerOf(harness, 2).r).toEqual({
+      mode: 'reset',
+      token: '',
+      compact: true,
+      sessions: [
+        { id: 's-1', title: 'Plan the trip', updatedAt: 9, agentRunning: false, cwd: '/Users/zcl/code/x', blank: false },
+        { id: 's-2', title: 'Draft the copy', updatedAt: 7, agentRunning: false, cwd: '/Users/zcl/code/x', blank: false },
+      ],
+      nextAfter: 's-2',
+    })
+  })
+})

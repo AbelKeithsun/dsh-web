@@ -301,6 +301,31 @@ function optionalText(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
+/**
+ * One roster row's own title, as the host's projection carries it.
+ *
+ * `SessionSummary` has no top-level `title` — which is why this bridge once read
+ * its own live-title cache and nothing else. Every row nevertheless carries
+ * `projections.values.title`: the host folds that out of its projection cache
+ * synchronously for a cold session as well as a live one, with no log read and no
+ * follow stream, and its own desktop list renders exactly that field. Reading it
+ * costs no call, because it is already inside the listing the bridge just paid
+ * for.
+ *
+ * The guard is the one every optional field here takes: a `projections` block
+ * that is not an object, a `values` member that is not one, and a `title` that is
+ * not a non-empty string are all simply absent, so an answer of another shape
+ * costs a row its title rather than failing the listing.
+ * @param item - one row of the host's `session/list` answer.
+ * @returns the projected title, or undefined when the row carries none.
+ */
+function projectedTitleOf(item: Readonly<Record<string, unknown>>): string | undefined {
+  const projections = isRecord(item.projections) ? item.projections : undefined
+  if (projections === undefined) return undefined
+  const values = isRecord(projections.values) ? projections.values : undefined
+  return values === undefined ? undefined : optionalText(values.title)
+}
+
 /** @returns a non-negative safe integer page argument, or undefined. */
 function pageNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
@@ -984,10 +1009,13 @@ export class BridgeConnection {
       const parentSessionId = optionalText(item.parentSessionId)
       sessions.push({
         id: item.sessionId,
-        // The roster itself carries no title: `SessionSummary` has none. The
-        // connection fills in whatever `session.titles` already resolved for
-        // this id and never looks one up here, so listing stays one call.
-        title: this.#options.sessionMeta.cachedTitle(item.sessionId) ?? '',
+        // The row's own title. `SessionSummary` has no top-level `title`, but the
+        // projection block beside it does — `projections.values.title` — and the
+        // host answers that synchronously for a cold session too, which is the
+        // field its own desktop list renders. The live-title cache is the
+        // fallback for a row whose projection carries none, and no lookup is
+        // spent here, so listing stays one call either way.
+        title: projectedTitleOf(item) ?? this.#options.sessionMeta.cachedTitle(item.sessionId) ?? '',
         updatedAt: typeof item.updatedAt === 'number' ? item.updatedAt : 0,
         agentRunning: item.running === true,
         ...(cwd === undefined ? {} : { cwd }),

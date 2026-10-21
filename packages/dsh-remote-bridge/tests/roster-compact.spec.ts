@@ -28,11 +28,11 @@ const NOW_MS = 1_792_342_000_000
  *
  * Every row carries what the host answers: an id, a working directory drawn from
  * a small set of real project paths, a millisecond timestamp, the running and
- * blank flags, and a fifth of them the lineage of a delegated child. Titles are
- * absent on purpose: a roster row's title is the empty string until that id has
- * been resolved through `session.titles`, whose cache holds 512 ids, so an empty
- * title is exactly what a freshly connected phone is sent. Both sides of every
- * measurement below carry it, so the saving it reports is a lower bound.
+ * blank flags, and a fifth of them the lineage of a delegated child. No row
+ * carries a `projections` block, so every title falls back to the
+ * `session.titles` cache — which this connection never fills — and is the empty
+ * string. Both sides of every measurement below carry the same titles, so the
+ * saving it reports is a lower bound.
  */
 function synthesizedRoster(): Record<string, unknown>[] {
   return Array.from({ length: 663 }, (_, index) => {
