@@ -47,7 +47,7 @@ describe('DSH Remote wire argument layout', () => {
     const inventory = WIRE_TABLE.filter(row => row.wire === 'none').length
     // Then exactly the four zero-parameter endpoints are marked, and the rest carry named arguments
     expect(zeroArgument).toEqual(['session/modelCatalog', 'agentPresets/list', 'pluginInventory/list', 'pluginManager/listPlugins'])
-    expect(WIRE_TABLE.length - inventory).toBe(15)
+    expect(WIRE_TABLE.length - inventory).toBe(20)
   })
 
   it('user answers a continued question and every declared parameter travels as its own key', () => {
@@ -62,10 +62,10 @@ describe('DSH Remote wire argument layout', () => {
   it('operator adds an endpoint the table does not know and it defaults to the majority layout', () => {
     // Given an endpoint outside the tabulated set
     // When the bridge builds its named arguments and asks for its row
-    const args = wireArgs('session', 'rename', { sessionId: 's-1' })
-    const row = wireRowFor('session', 'rename')
+    const args = wireArgs('workspace', 'create', { path: '/Users/zcl/code/x' })
+    const row = wireRowFor('workspace', 'create')
     // Then the fallback is the plain request key, and the table reports no row rather than a wrong one
-    expect(args).toEqual({ request: { sessionId: 's-1' } })
+    expect(args).toEqual({ request: { path: '/Users/zcl/code/x' } })
     expect(row).toBeUndefined()
   })
 })

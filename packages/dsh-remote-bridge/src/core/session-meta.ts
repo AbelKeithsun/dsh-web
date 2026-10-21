@@ -38,17 +38,58 @@ export interface ArchiveSetFace {
 }
 
 /**
+ * One workspace registration, as far as `workspace.list` publishes it.
+ *
+ * The host's entity carries more — its `sessionIds` account above all — and the
+ * face deliberately does not declare it: a row this bridge publishes must not be
+ * able to carry an array that grows with the session count.
+ */
+export interface WorkspaceFace {
+  readonly id: string
+  readonly path: string
+  readonly title: string
+  readonly createdAt?: string
+  readonly updatedAt?: string
+}
+
+/**
+ * The slice of `ctx.workspaceRegistry` `workspace.list` reads: the registry
+ * itself.
+ *
+ * Wider than {@link ArchiveSetFace} by the ordered projection and the pin set,
+ * because one method publishes all three: a client pins a session and reads
+ * both sets back in one frame. Every member is synchronous — `list()` answers a
+ * fresh array and both sets are getters over the durable registry — which is
+ * what lets the answer be built without awaiting anything.
+ */
+export interface WorkspacesFace extends ArchiveSetFace {
+  list(): readonly WorkspaceFace[]
+  readonly pinnedSessionIds: readonly string[]
+}
+
+/** The body `workspace.list` answers. */
+export interface WorkspaceListAnswer {
+  readonly workspaces: readonly WorkspaceFace[]
+  readonly archivedSessionIds: readonly string[]
+  readonly pinnedSessionIds: readonly string[]
+}
+
+/**
  * The in-process services one metadata read may use.
  *
  * Every field is optional on purpose. The bridge does not require the title or
  * workspace plugins to be installed — the protocol's roster and title methods
  * stay answerable with them absent, and a field that is missing degrades one
- * key of one row instead of failing a method.
+ * key of one row instead of failing a method. `workspaces` is the member that
+ * breaks that rule on purpose: `workspace.list` exists only to publish the
+ * registry, so its absence is reported as a host without one rather than
+ * answered with an empty list.
  */
 export interface SessionMetaFaces {
   readonly sessions?: SessionStoreFace | undefined
   readonly titles?: SessionTitleFace | undefined
   readonly archive?: ArchiveSetFace | undefined
+  readonly workspaces?: WorkspacesFace | undefined
 }
 
 /** Largest id batch one `session.titles` call accepts. */
@@ -147,6 +188,37 @@ export class SessionMeta {
     } catch (error) {
       this.#log(`the session archive set could not be read: ${failureText(error)}`)
       return undefined
+    }
+  }
+
+  /**
+   * The host's workspaces and its two registry-global session sets.
+   *
+   * One synchronous projection and nothing more: `list()` already answers a
+   * fresh array in registry order, and both sets are getters over the durable
+   * registry, so this read awaits nothing, opens no follow stream and touches no
+   * persistence. Workspaces are neither sorted nor filtered — the registry's own
+   * order is the display order — and a row carries exactly the fields protocol
+   * v1 names, `sessionIds` never among them.
+   *
+   * An unmounted registry answers undefined instead of an empty list: "this host
+   * has no workspaces" and "this host has no registry to ask" are two different
+   * facts, and only the caller can say which one it must report.
+   * @returns the answer, or undefined when this host composes no workspace registry.
+   */
+  workspaceList(): WorkspaceListAnswer | undefined {
+    const registry = this.#faces().workspaces
+    if (registry === undefined) return undefined
+    return {
+      workspaces: registry.list().map(workspace => ({
+        id: workspace.id,
+        path: workspace.path,
+        title: workspace.title,
+        ...(workspace.createdAt === undefined ? {} : { createdAt: workspace.createdAt }),
+        ...(workspace.updatedAt === undefined ? {} : { updatedAt: workspace.updatedAt }),
+      })),
+      archivedSessionIds: [...registry.archivedSessionIds],
+      pinnedSessionIds: [...registry.pinnedSessionIds],
     }
   }
 

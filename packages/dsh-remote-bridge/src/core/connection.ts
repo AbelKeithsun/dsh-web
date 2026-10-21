@@ -36,11 +36,13 @@ import {
   CAP_QUESTIONS,
   CAP_QUESTION_LIST,
   CAP_ROSTER_COMPACT,
+  CAP_SESSION_ADMIN,
   CAP_SESSION_FORK,
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_SESSION_SNAPSHOT_SINCE,
   CAP_SESSION_SNAPSHOT_TRIM,
   CAP_SUBAGENT_THREAD,
+  CAP_WORKSPACE,
   CODE_APPROVAL_UNKNOWN,
   CODE_COMMANDS_UNAVAILABLE,
   CODE_INTERNAL,
@@ -64,6 +66,7 @@ import {
   METHOD_PRESETS_LIST,
   METHOD_QUESTION_ANSWER,
   METHOD_QUESTION_LIST,
+  METHOD_SESSION_ARCHIVE,
   METHOD_SESSION_ATTACHMENT,
   METHOD_SESSION_COMMAND,
   METHOD_SESSION_COMMANDS,
@@ -75,11 +78,16 @@ import {
   METHOD_SESSION_LIST,
   METHOD_SESSION_MODELS,
   METHOD_SESSION_PERMISSIONS,
+  METHOD_SESSION_PIN,
   METHOD_SESSION_PROMPT,
+  METHOD_SESSION_RENAME,
   METHOD_SESSION_SET_MODEL,
   METHOD_SESSION_SET_PERMISSION,
   METHOD_SESSION_SNAPSHOT,
   METHOD_SESSION_TITLES,
+  METHOD_SESSION_UNARCHIVE,
+  METHOD_SESSION_UNPIN,
+  METHOD_WORKSPACE_LIST,
   MINOR,
   PROTO,
   SERVED_CAPABILITIES,
@@ -743,6 +751,24 @@ export class BridgeConnection {
     if ((frame.m === METHOD_SESSION_COMMANDS || frame.m === METHOD_SESSION_COMMAND) && !this.declares(CAP_COMMANDS)) {
       return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
+    // Reading workspaces is its own capability, apart from the five writes beside
+    // it: a client may ask what this host has and where without ever renaming,
+    // pinning or archiving anything, so the reading half is declared on its own
+    // and a client that declared only the writing half reads no registry.
+    if (frame.m === METHOD_WORKSPACE_LIST && !this.declares(CAP_WORKSPACE)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
+    // The session-admin writes are one capability: without it none of the five is
+    // part of this client's protocol, so no title is written and no set is
+    // mutated on behalf of a client that predates the channel.
+    if (!this.declares(CAP_SESSION_ADMIN)
+      && (frame.m === METHOD_SESSION_RENAME
+        || frame.m === METHOD_SESSION_PIN
+        || frame.m === METHOD_SESSION_UNPIN
+        || frame.m === METHOD_SESSION_ARCHIVE
+        || frame.m === METHOD_SESSION_UNARCHIVE)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // Unconditional: a loopback Host buys nothing here. Without a device token
     // only the handshake and the two pairing steps run.
     if (!this.paired && !UNPAIRED_METHODS.has(frame.m)) return refusal(CODE_UNPAIRED, 'this connection is not paired')
@@ -776,6 +802,12 @@ export class BridgeConnection {
       case METHOD_SESSION_FORK: return await this.#sessionFork(frame.p)
       case METHOD_SESSION_COMMANDS: return await this.#sessionCommands(frame.p)
       case METHOD_SESSION_COMMAND: return await this.#sessionCommand(frame.p)
+      case METHOD_WORKSPACE_LIST: return this.#workspaceList()
+      case METHOD_SESSION_RENAME: return await this.#sessionRename(frame.p)
+      case METHOD_SESSION_PIN: return await this.#sessionSetWrite(METHOD_SESSION_PIN, 'pinSession', frame.p)
+      case METHOD_SESSION_UNPIN: return await this.#sessionSetWrite(METHOD_SESSION_UNPIN, 'unpinSession', frame.p)
+      case METHOD_SESSION_ARCHIVE: return await this.#sessionArchive(frame.p)
+      case METHOD_SESSION_UNARCHIVE: return await this.#sessionSetWrite(METHOD_SESSION_UNARCHIVE, 'unarchiveSession', frame.p)
       default: return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
   }
@@ -1565,6 +1597,96 @@ export class BridgeConnection {
       ...(atSeq === undefined ? {} : { atSeq }),
     })
     return call.ok ? { ok: true, r: call.value } : call
+  }
+
+  /**
+   * Answer `workspace.list`: the host's workspaces and its two global sets.
+   *
+   * A pure in-process read: `list()` answers a fresh array in registry order and
+   * both sets are synchronous getters, so nothing here awaits, subscribes or
+   * touches persistence, and a write this bridge forwarded a moment ago is
+   * visible to the very next call. Nothing is sorted — the registry's own order
+   * is the display order — and no row carries a workspace's `sessionIds`: the
+   * roster already carries every session's `cwd`, a client groups for itself, and
+   * that account would make one frame grow with the session count.
+   *
+   * A host that composes no registry is refused rather than answered with an
+   * empty list: an empty list says "this host has no workspaces", which is a
+   * different sentence from "there is nothing here to ask".
+   */
+  #workspaceList(): DispatchOutcome {
+    const listed = this.#options.sessionMeta.workspaceList()
+    if (listed === undefined) return refusal(CODE_INTERNAL, 'this host composes no workspaceRegistry service')
+    return { ok: true, r: listed }
+  }
+
+  /**
+   * Answer `session.rename`: forward one `SessionRenameRequest` and hand back
+   * the host's own `SessionRenameValue`.
+   *
+   * The write goes through the gateway — `session/rename`, never the title
+   * service this process holds — because that endpoint restores a cold session
+   * before it writes, so a client needs no resume path of its own. The title is
+   * required and is text: an empty string is not a name anyone could have meant,
+   * and it is refused here instead of being written. Everything after that is
+   * the host's: the normalized title, the durable seq that committed it, and a
+   * refusal such as `session/not-found` cross verbatim.
+   * @param payload - `{sessionId, title}`.
+   */
+  async #sessionRename(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    const title = stringArg(payload, 'title')
+    if (sessionId === undefined || title === undefined) {
+      return refusal(CODE_INVALID_ARGS, 'session.rename requires sessionId and title')
+    }
+    const call = await this.#unary('session', 'rename', { sessionId, title })
+    return call.ok ? { ok: true, r: call.value } : call
+  }
+
+  /**
+   * Forward one registry set mutation and answer `{ok:true}`.
+   *
+   * Three of the five session-admin writes are the same call under a different
+   * endpoint name, so they share one body: `{sessionId}` in, one decided answer
+   * out. Nothing is branched on — pin, unpin and unarchive take no second
+   * argument to branch on — and the host's own set answer
+   * (`WorkspacePinValue` / `WorkspaceArchiveValue`) is deliberately not
+   * republished: a client that wants the new set reads `workspace.list`, the one
+   * read that serves both. An archive's optional `stopActivity` is
+   * `#sessionArchive`'s own concern.
+   * @param method - the protocol method being answered, named in the refusal.
+   * @param endpoint - the `workspace` registry method behind it.
+   * @param payload - `{sessionId}`.
+   */
+  async #sessionSetWrite(method: string, endpoint: string, payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, `${method} requires sessionId`)
+    const call = await this.#unary('workspace', endpoint, { sessionId })
+    return call.ok ? { ok: true, r: { ok: true } } : call
+  }
+
+  /**
+   * Answer `session.archive`, whose request may ask the host to stop the
+   * session's running work first.
+   *
+   * `stopActivity` is the host's own choice and only a boolean may cross: sent
+   * without it, a session that is still running is refused by the host as
+   * `workspace/session-active`; sent as `true`, the archive is written and that
+   * work is stopped. Archiving is a session-level act — it never touches the
+   * workspace the session belongs to — and the archived session keeps its slot,
+   * so `session.unarchive` puts it back where it was. None of that is modelled
+   * here.
+   * @param payload - `{sessionId, stopActivity?}`.
+   */
+  async #sessionArchive(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const sessionId = stringArg(payload, 'sessionId')
+    if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'session.archive requires sessionId')
+    const stopActivity = payload.stopActivity
+    if (stopActivity !== undefined && typeof stopActivity !== 'boolean') {
+      return refusal(CODE_INVALID_ARGS, 'session.archive stopActivity must be a boolean when present')
+    }
+    const call = await this.#unary('workspace', 'archiveSession', { sessionId, ...(stopActivity === undefined ? {} : { stopActivity }) })
+    return call.ok ? { ok: true, r: { ok: true } } : call
   }
 
   /**

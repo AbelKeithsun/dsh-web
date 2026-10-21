@@ -45,7 +45,7 @@ import { createOwnerPeer } from './core/owner-peer.ts'
 import { PairingService } from './core/pairing.ts'
 import { QuestionClaims } from './core/questions.ts'
 import { WS_PATH } from './core/protocol.ts'
-import { SessionMeta, type ArchiveSetFace, type SessionStoreFace, type SessionTitleFace } from './core/session-meta.ts'
+import { SessionMeta, type SessionStoreFace, type SessionTitleFace, type WorkspacesFace } from './core/session-meta.ts'
 import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
 import { dshHome } from './host/dsh-home.ts'
 import { mountOnce } from './mount-once.ts'
@@ -115,20 +115,26 @@ function makeUpgradeHandler(hub: BridgeHub, roster: DeviceRoster, log: (message:
 /**
  * Resolve the host services session metadata is read from, now.
  *
- * All three are read per call rather than captured at mount: none of them is in
- * this plugin's `inject` list, because requiring them would let the title or
+ * All of them are read per call rather than captured at mount: none is in this
+ * plugin's `inject` list, because requiring them would let the title or
  * workspace plugin's absence take the whole bridge down with it. An unmounted
  * service simply reads as undefined, and the protocol degrades one key of one
  * row instead of failing a method. The faces are structural — this package
  * imports no part of those services' own types.
+ *
+ * One registry answers two faces: `archive` is the slice a roster row reads and
+ * `workspaces` the wider slice `workspace.list` publishes, so a single lookup
+ * serves both and a host either composes a registry or composes none.
  * @param ctx - the plugin's context.
  * @returns the metadata faces as they stand right now.
  */
 function sessionMetaFaces(ctx: Context) {
+  const registry = ctx.get('workspaceRegistry') as WorkspacesFace | undefined
   return {
     sessions: ctx.get('sessions') as SessionStoreFace | undefined,
     titles: ctx.get('sessionTitle') as SessionTitleFace | undefined,
-    archive: ctx.get('workspaceRegistry') as ArchiveSetFace | undefined,
+    archive: registry,
+    workspaces: registry,
   }
 }
 
