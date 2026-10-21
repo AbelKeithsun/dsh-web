@@ -18,7 +18,7 @@
 
 import type { ApprovalRegistry } from './approvals.ts'
 import { commandItems, commandsUnavailable } from './commands.ts'
-import type { DeviceRoster } from './devices.ts'
+import type { DeviceRoster, PushEnvironment, PushLiveActivityToken, PushRegistration } from './devices.ts'
 import { ROSTER_DELTA_MAX_ROWS, RemoteBridgeDeltas, type DeltaRow } from './delta.ts'
 import { deltaOfFollowFrame, MessageIndex, oldestEntrySeq, pageTurns, readFollowBaseline, SpawnCallIndex, ToolCallIndex, trimUnrenderedEntries, turnsAbove, turnsOfRecords, type FollowBaseline, type SnapshotTurn } from './dsh-frames.ts'
 import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, encodeFrame, errorFrame, responseFrame, type ReqFrame, type ServerFrame } from './envelope.ts'
@@ -26,6 +26,8 @@ import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import { scopeKey, type JobRoster, type JobsPayload } from './jobs.ts'
 import type { PairingService } from './pairing.ts'
+import type { PushNotifier } from './push.ts'
+import { pushEventOfTurnEnd } from './push.ts'
 import type { ListedQuestion, QuestionAnswerItem, QuestionClaims, QuestionListPayload } from './questions.ts'
 import {
   CAP_AGENTS,
@@ -33,6 +35,7 @@ import {
   CAP_DELTA,
   CAP_FRAME_DEFLATE,
   CAP_JOBS,
+  CAP_PUSH,
   CAP_QUESTIONS,
   CAP_QUESTION_LIST,
   CAP_ROSTER_COMPACT,
@@ -66,6 +69,7 @@ import {
   METHOD_PAIR_BEGIN,
   METHOD_PAIR_FINISH,
   METHOD_PRESETS_LIST,
+  METHOD_PUSH_REGISTER,
   METHOD_QUESTION_ANSWER,
   METHOD_QUESTION_LIST,
   METHOD_SESSION_ARCHIVE,
@@ -206,6 +210,14 @@ export interface BridgeConnectionOptions {
    * a call that needs the domain answers `squads-unavailable`.
    */
   readonly squads?: SquadTransport
+  /**
+   * The outbound notification path, behind the `push.v1` channel. Absent is a
+   * bridge that sends nothing: `push.register` still answers `ok:true` (the
+   * device row is written either way), and no notification is ever built. That
+   * is the default, because a sender needs an Apple signing key this bridge is
+   * not shipped with.
+   */
+  readonly push?: PushNotifier
 }
 
 /** A device the connection proved itself to be, resolved from the upgrade request. */
@@ -814,6 +826,13 @@ export class BridgeConnection {
     if (SQUAD_METHODS.has(frame.m) && !this.declares(CAP_SQUADS)) {
       return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
+    // Registering an APNs token is its own capability: without `push.v1` the
+    // method does not exist for this client, and no device row is written on its
+    // behalf. The capability gates the WRITE only — whether a notification ever
+    // leaves this process is a deployment fact the wire cannot express (§28.3).
+    if (frame.m === METHOD_PUSH_REGISTER && !this.declares(CAP_PUSH)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // Unconditional: a loopback Host buys nothing here. Without a device token
     // only the handshake and the two pairing steps run.
     if (!this.paired && !UNPAIRED_METHODS.has(frame.m)) return refusal(CODE_UNPAIRED, 'this connection is not paired')
@@ -841,6 +860,7 @@ export class BridgeConnection {
       case METHOD_APPROVAL_RESOLVE: return this.#approvalResolve(frame.p)
       case METHOD_QUESTION_ANSWER: return await this.#questionAnswer(frame.p)
       case METHOD_QUESTION_LIST: return this.#questionList(frame.p)
+      case METHOD_PUSH_REGISTER: return await this.#pushRegister(frame.p)
       case METHOD_JOBS_LIST: return await this.#jobsList(frame.p)
       case METHOD_PRESETS_LIST: return await this.#presetsList()
       case METHOD_SESSION_CREATE: return await this.#sessionCreate(frame.p)
@@ -1054,6 +1074,11 @@ export class BridgeConnection {
     // child's durable parent is on its own row, so a client that lists before it
     // opens a session never costs a second read to address that session.
     this.#rememberLineage(sessions)
+    // The workspace short name a notification carries is picked up from a roster
+    // this bridge just served, because the alternative is a gateway read on the
+    // notification path. Best effort by construction: a session never listed
+    // simply produces a payload without `w`.
+    this.#options.push?.noteSessions(sessions)
     return { ok: true, rows: sessions }
   }
 
@@ -1991,6 +2016,71 @@ export class BridgeConnection {
   }
 
   /**
+   * The body of `push.register` (protocol §28.3).
+   *
+   * A write, and the only one this channel has: the device's APNs registration
+   * lands in its own row of the roster file, beside the identity it already
+   * proved, so revoking the device revokes its notifications with it and no
+   * second identity or second table exists.
+   *
+   * The answer is `{ok:true}` and nothing else. There is deliberately no echo of
+   * the token and no "ready" flag: this bridge cannot know whether APNs will
+   * accept the token, and a field claiming it did would be a lie a client might
+   * render. A bridge with no signing key answers identically — a client has no
+   * second code path for that difference.
+   * @param payload - `{deviceToken, environment, bundle, liveActivityTokens?, locale?}`.
+   */
+  async #pushRegister(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const deviceToken = payload.deviceToken
+    const environment = payload.environment
+    const bundle = payload.bundle
+    if (typeof deviceToken !== 'string' || deviceToken === '' || !/^[0-9a-fA-F]+$/.test(deviceToken)) {
+      return refusal(CODE_INVALID_ARGS, 'deviceToken must be the hex string APNs handed the app')
+    }
+    if (environment !== 'sandbox' && environment !== 'production') {
+      return refusal(CODE_INVALID_ARGS, 'environment must be "sandbox" or "production"')
+    }
+    if (typeof bundle !== 'string' || bundle === '') return refusal(CODE_INVALID_ARGS, 'bundle must be a non-empty string')
+    const locale = optionalText(payload.locale)
+    let liveActivityTokens: readonly PushLiveActivityToken[] | undefined
+    if (payload.liveActivityTokens !== undefined) {
+      const raw = payload.liveActivityTokens
+      if (!Array.isArray(raw)) return refusal(CODE_INVALID_ARGS, 'liveActivityTokens must be an array')
+      const collected: PushLiveActivityToken[] = []
+      for (const entry of raw) {
+        if (!isRecord(entry)) return refusal(CODE_INVALID_ARGS, 'each liveActivityTokens entry needs an activityId and a token')
+        const activityId = entry.activityId
+        const token = entry.token
+        if (typeof activityId !== 'string' || activityId === '' || typeof token !== 'string' || token === '') {
+          return refusal(CODE_INVALID_ARGS, 'each liveActivityTokens entry needs an activityId and a token')
+        }
+        collected.push({ activityId, token })
+      }
+      liveActivityTokens = collected
+    }
+    const deviceId = this.#deviceId
+    if (deviceId === undefined) return refusal(CODE_UNPAIRED, 'this connection is not paired')
+    const registration: PushRegistration = {
+      deviceToken,
+      environment: environment as PushEnvironment,
+      bundle,
+      ...(locale === undefined ? {} : { locale }),
+      ...(liveActivityTokens === undefined ? {} : { liveActivityTokens }),
+      registeredAt: this.#options.now(),
+    }
+    try {
+      const stored = await this.#options.roster.registerPush(deviceId, registration)
+      if (!stored) return refusal(CODE_INTERNAL, 'this connection names no paired device')
+    } catch (error) {
+      // Registration failing has to reach the client: it decides whether to
+      // retry, and a token that never reached the disk is a device that will
+      // never be notified.
+      return refusal(CODE_INTERNAL, `could not write the device roster: ${failureText(error)}`)
+    }
+    return { ok: true, r: { ok: true } }
+  }
+
+  /**
    * Answer one `jobs.list` and start watching that scope.
    *
    * The scope is the host registry's own: naming a session reads that session's
@@ -2224,6 +2314,11 @@ export class BridgeConnection {
         const delta = deltaOfFollowFrame(next.value, this.#toolCalls, this.#messages, memory)
         if (delta === undefined) continue
         this.#emit(TOPIC_SESSION_DELTA, { sessionId: subscription.sessionId, ...delta })
+        // One turn ended, so a phone that is not holding this socket may want to
+        // know. The call returns before anything is sent and swallows its own
+        // failures: the frame above is already gone, and a notification is not
+        // worth a delayed or aborted stream (protocol §28.5).
+        if (delta.kind === 'turn-end') this.#options.push?.notify(pushEventOfTurnEnd(delta.reason), subscription.sessionId)
       }
     } catch (error) {
       if (!subscription.controller.signal.aborted) {

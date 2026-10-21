@@ -40,6 +40,7 @@ export const METHOD_SQUADS_LIST = 'squads.list'
 export const METHOD_SQUADS_RUNS = 'squads.runs'
 export const METHOD_SQUADS_RUN_MEMBER = 'squads.runMember'
 export const METHOD_SQUADS_RUN_SQUAD = 'squads.runSquad'
+export const METHOD_PUSH_REGISTER = 'push.register'
 
 /** Server-pushed topics of protocol v1. */
 export const TOPIC_SESSION_DELTA = 'session.delta'
@@ -193,6 +194,26 @@ export const CAP_AGENTS = 'agents.v1'
  * squad domain instead of deriving agents from anything else.
  */
 export const CAP_SQUADS = 'squads.v1'
+
+/**
+ * Capability a client declares in `hello`'s `cap` array to register the APNs
+ * token this device wants to be notified on.
+ *
+ * Declaring it is what makes `push.register` part of that client's protocol at
+ * all: a client that does not declare it — including every client written before
+ * this channel existed — is refused that frame as an unknown method, and no
+ * device row is written on its behalf.
+ *
+ * The name announces that this bridge can REMEMBER a token, not that it will
+ * send anything. Whether a notification ever leaves the process is a deployment
+ * fact (is an APNs signing key configured?) that the wire deliberately cannot
+ * express: a bridge with no key answers `ok:true` exactly like one with a key,
+ * because a client has no second code path to keep for the difference. Every
+ * notification this channel produces is an outbound APNs request and nothing
+ * else — no topic, no frame and no state is added to `/ios/v1` (see the
+ * protocol's §28).
+ */
+export const CAP_PUSH = 'push.v1'
 
 /**
  * Capability a client declares in `hello`'s `cap` array to be answered with
@@ -391,6 +412,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_SQUADS_RUNS,
   METHOD_SQUADS_RUN_MEMBER,
   METHOD_SQUADS_RUN_SQUAD,
+  METHOD_PUSH_REGISTER,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
@@ -462,6 +484,12 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 16 when the push channel shipped: behind {@link CAP_PUSH} a client may call
+ * {@link METHOD_PUSH_REGISTER} and have the device table remember an APNs token,
+ * so a phone learns a turn ended — or that a question is waiting — while its
+ * socket is not open. No frame, no topic and no existing method changes shape;
+ * the minor is raised because a new reply body and a new announcement appear on
+ * the wire, and because a client has to read the name before it registers.
  * 15 when the squads channel shipped: behind {@link CAP_SQUADS} a client may
  * call {@link METHOD_SQUADS_STATE}, {@link METHOD_SQUADS_LIST},
  * {@link METHOD_SQUADS_RUNS}, {@link METHOD_SQUADS_RUN_MEMBER} and
@@ -526,7 +554,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 15
+export const MINOR = 16
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -554,6 +582,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_WORKSPACE,
   CAP_SESSION_ADMIN,
   CAP_SQUADS,
+  CAP_PUSH,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'

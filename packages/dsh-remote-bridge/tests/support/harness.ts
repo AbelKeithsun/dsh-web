@@ -19,6 +19,7 @@ import { PairingService } from '../../src/core/pairing.ts'
 import { QuestionClaims } from '../../src/core/questions.ts'
 import { SessionMeta, type SessionMetaFaces } from '../../src/core/session-meta.ts'
 import { SessionPermissions } from '../../src/core/session-permissions.ts'
+import type { PushNotifier } from '../../src/core/push.ts'
 import type { SquadTransport } from '../../src/core/squads.ts'
 import type { BridgeGateway, GatewayInvokeRequest, GatewayPeer } from '../../src/core/wire.ts'
 
@@ -279,6 +280,8 @@ export interface HarnessOptions {
   readonly questionNow?: () => number
   /** Squad domain source; the default models a host with no `dsh-agents` domain. */
   readonly squads?: SquadTransport
+  /** The outbound notification path; the default models a bridge with no APNs key. */
+  readonly push?: PushNotifier
 }
 
 /** Session metadata for a host whose session services are all present. */
@@ -359,6 +362,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     jobs: jobsOf(options, message => { logs.push(message) }),
     ownerPeer,
     ...(options.squads === undefined ? {} : { squads: options.squads }),
+    ...(options.push === undefined ? {} : { push: options.push }),
     now: () => Date.now(),
     clientTimeZone: () => 'Asia/Shanghai',
     log: (message: string) => { logs.push(message) },
@@ -463,6 +467,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     jobs: jobsOf(options, message => { logs.push(message) }),
     ownerPeer,
     ...(options.squads === undefined ? {} : { squads: options.squads }),
+    ...(options.push === undefined ? {} : { push: options.push }),
     now: () => Date.now(),
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },

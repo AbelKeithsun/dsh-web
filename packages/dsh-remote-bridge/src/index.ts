@@ -43,11 +43,13 @@ import { JobRoster, type JobRegistryFace } from './core/jobs.ts'
 import { BridgeHub } from './core/hub.ts'
 import { createOwnerPeer } from './core/owner-peer.ts'
 import { PairingService } from './core/pairing.ts'
+import { PushNotifier } from './core/push.ts'
 import { QuestionClaims } from './core/questions.ts'
 import { WS_PATH } from './core/protocol.ts'
 import { SessionMeta, type SessionStoreFace, type SessionTitleFace, type WorkspacesFace } from './core/session-meta.ts'
 import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
 import { dshHome } from './host/dsh-home.ts'
+import { ApnsSender, apnsConfigFromEnv } from './host/apns.ts'
 import { LoopbackSquads } from './host/squads.ts'
 import { mountOnce } from './mount-once.ts'
 import { makePairTokenRoute } from './host/routes.ts'
@@ -202,6 +204,22 @@ function applyImpl(ctx: Context): void {
   // about the host, not about the device that asked about it.
   const jobs = new JobRoster({ faces: () => jobFaces(ctx), log })
   const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
+  // The push channel is OFF unless this machine holds an Apple signing key: no
+  // key, no sender, and every notification path is a no-op — which is what keeps
+  // the protocol byte-identical for every deployment that has none (§28).
+  const apns = apnsConfigFromEnv()
+  const push = new PushNotifier({
+    targets: () => roster.pushTargets().map(({ push: registration }) => ({
+      deviceToken: registration.deviceToken,
+      environment: registration.environment,
+      bundle: registration.bundle,
+      ...(registration.locale === undefined ? {} : { locale: registration.locale }),
+    })),
+    ...(apns === undefined ? {} : { sender: new ApnsSender({ config: apns, log }) }),
+    titles: id => sessionMeta.title(id),
+    now: () => Date.now(),
+    log,
+  })
   const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
   // The extension seam publishes no protocol vocabulary of its own: another
   // plugin registers the method names, payloads and topics it owns, and this
@@ -235,6 +253,7 @@ function applyImpl(ctx: Context): void {
     permissions,
     ownerPeer,
     squads,
+    push,
     now: () => Date.now(),
     clientTimeZone: localTimeZone,
     log,
@@ -255,6 +274,9 @@ function applyImpl(ctx: Context): void {
     })
     const disposeRoute = ctx.webServer.register(makePairTokenRoute({ pairing, log }))
     log(`protocol v1 listening on ${WS_PATH}`)
+    log(apns === undefined
+      ? `push: off (set ${'DSH_REMOTE_BRIDGE_APNS_KEY_FILE'}, ${'DSH_REMOTE_BRIDGE_APNS_KEY_ID'} and ${'DSH_REMOTE_BRIDGE_APNS_TEAM_ID'} to enable APNs)`
+      : `push: on (APNs key ${apns.keyId} of team ${apns.teamId})`)
     return () => {
       disposeUpgrade()
       disposeRoute()

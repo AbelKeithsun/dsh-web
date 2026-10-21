@@ -205,6 +205,10 @@ export class BridgeHub {
     // A question nobody could receive is withdrawn immediately instead of
     // waiting out the phone's timeout with the agent blocked on it.
     if (delivered === 0) this.#options.approvals.abandon([prompt.id])
+    // Only a claim that reached someone is worth a notification: the question a
+    // withdrawn claim stood for can no longer be answered by any phone, and a
+    // notification about it would be a card with nothing behind it (§28.5).
+    else this.#options.push?.notify('approval', sessionId)
     const answer = await prompt.answer
     return answer === undefined ? await next() : answer
   }
@@ -275,6 +279,10 @@ export class BridgeHub {
     // *can* receive it but was reconnecting is a different case — it is handed the
     // live claims by `onDeclare` when it comes back.
     if (delivered === 0) this.#options.questions.withdraw([callId])
+    // Same rule as the approval above: a question this bridge could not hand to
+    // a connected phone is withdrawn at once, so a notification would announce
+    // something already gone.
+    else this.#options.push?.notify('question', sessionId)
     return await claim.answer
   }
 
