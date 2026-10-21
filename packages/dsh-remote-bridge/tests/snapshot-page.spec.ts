@@ -59,11 +59,11 @@ function rawBytesOf(harness: ConnectionHarness, id: number): number {
 }
 
 /** Feed one follow baseline to a connection and await its snapshot answer. */
-async function openSession(harness: ConnectionHarness, id: number, records: unknown[], cursor: number, payload: Record<string, unknown> = {}): Promise<void> {
+async function openSession(harness: ConnectionHarness, id: number, records: unknown[], cursor: number, payload: Record<string, unknown> = {}, windowHasMore = false): Promise<void> {
   const follow = new ControllableStream()
   harness.gateway.follow = call => follow.attach(call.signal).iterable()
   const pending = harness.connection.handleText(requestFrame(id, 'session.snapshot', { sessionId: 's-1', ...payload }))
-  follow.push({ type: 'snapshot', header: {}, cursor, hasMore: false, projections: {}, records })
+  follow.push({ type: 'snapshot', header: {}, cursor, hasMore: windowHasMore, projections: {}, records })
   await pending
 }
 
@@ -71,6 +71,14 @@ async function openSession(harness: ConnectionHarness, id: number, records: unkn
 function snapshotOf(harness: ConnectionHarness, id: number): { turns: WireTurn[]; lastSeq: number; hasMore?: boolean } {
   return answerOf(harness, id).r as { turns: WireTurn[]; lastSeq: number; hasMore?: boolean }
 }
+
+/** One completed turn of two small entries: a window one page holds whole. */
+const ONE_SMALL_TURN = [
+  record('turn/start', 1, 100, { turn: 1 }),
+  record('user/message', 2, 101, { text: 'hello' }),
+  record('assistant/message', 3, 102, { text: 'hi' }),
+  record('turn/end', 4, 103, { turn: 1, reason: { kind: 'completed' } }),
+]
 
 /** Twelve completed turns of 60 KiB each: one window well past a page, 36 entries in all. */
 const WINDOW_TURNS = 12
@@ -220,5 +228,116 @@ describe('paged opening snapshots over protocol v1', () => {
     await harness.connection.handleText(requestFrame(5, 'session.snapshot', { sessionId: 's-1', maxBytes: MAX_FRAME_BYTES + 1 }))
     // Then each is refused as malformed arguments rather than answered with a guess
     expect([3, 4, 5].map(id => answerOf(harness, id).e?.code)).toEqual(['invalid-args', 'invalid-args', 'invalid-args'])
+  })
+  it('user declaring the page capability learns a single turn was cut short by the budget', async () => {
+    // Given one turn whose own entries are several pages long
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
+    const records = [
+      record('turn/start', 1, 100, { turn: 1 }),
+      ...Array.from({ length: 20 }, (_, index) => record('assistant/message', 2 + index, 101 + index, { text: 'y'.repeat(40 * 1024) })),
+      record('turn/end', 22, 130, { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    // When it opens that session
+    await openSession(harness, 2, records, 22)
+    // Then the page carries part of that same turn and still reports older entries
+    const page = snapshotOf(harness, 2)
+    expect(page.turns).toHaveLength(1)
+    expect(page.turns[0]?.seq).toBe(1)
+    expect(page.hasMore).toBe(true)
+    expect(seqsOf(page.turns).length).toBeGreaterThan(1)
+    expect(seqsOf(page.turns).length).toBeLessThan(20)
+    // And the cursor stays that page's own oldest entry, with no second field
+    expect(Math.min(...seqsOf(page.turns))).toBeGreaterThan(2)
+    expect('nextBefore' in page).toBe(false)
+  })
+
+  it('user declaring the page capability learns nothing is older when one turn fits the page', async () => {
+    // Given one turn that fits one page whole
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
+    // When it opens that session
+    await openSession(harness, 2, ONE_SMALL_TURN, 4)
+    // Then the page carries the whole turn and reports nothing below it
+    const page = snapshotOf(harness, 2)
+    expect(page.turns).toHaveLength(1)
+    expect(seqsOf(page.turns)).toEqual([2, 3])
+    expect(page.hasMore).toBe(false)
+  })
+
+  it('user declaring the page capability still learns more remains when whole turns fall outside the page', async () => {
+    // Given a window of twelve turns, of which one page holds only the newest
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
+    // When it opens that session
+    await openSession(harness, 2, WHOLE_WINDOW, 40)
+    // Then the answer is unchanged: fewer turns than the window holds, and more below them
+    const page = snapshotOf(harness, 2)
+    expect(page.hasMore).toBe(true)
+    expect(page.turns.length).toBeGreaterThan(0)
+    expect(page.turns.length).toBeLessThan(WINDOW_TURNS)
+    expect(seqsOf(page.turns).length).toBeLessThan(WHOLE_WINDOW_SEQS.length)
+    expect('nextBefore' in page).toBe(false)
+  })
+
+  it('the page answers hasMore only about its own projection, even when the window stopped short', async () => {
+    // Given a window whose every entry fits one page, over a session the window cannot reach the start of
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
+    // When it opens that session
+    await openSession(harness, 2, ONE_SMALL_TURN, 510, {}, true)
+    // Then the page is whole and reports nothing older, because nothing older exists in
+    // the projection it was cut from: the harness's own window flag is not folded in, so
+    // this field never claims a page the bridge cannot serve. Durable history below the
+    // window is session.history.deep's question, not this field's.
+    const page = snapshotOf(harness, 2)
+    expect(seqsOf(page.turns)).toEqual([2, 3])
+    expect(page.lastSeq).toBe(510)
+    expect(page.hasMore).toBe(false)
+    expect('nextBefore' in page).toBe(false)
+  })
+
+  it('user declaring the page capability ends the walk on a page that reports nothing older', async () => {
+    // Given an opened first page over a window of twelve turns
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
+    await openSession(harness, 2, WHOLE_WINDOW, 40)
+    // When it walks back from that page's own oldest entry until one reports no more
+    const first = snapshotOf(harness, 2)
+    const seen = seqsOf(first.turns)
+    let before = oldestSeqOf(first.turns)
+    let last: { turns: WireTurn[]; nextBefore?: number; hasMore: boolean } | undefined
+    let rounds = 0
+    for (; rounds < 12 && before !== undefined; rounds += 1) {
+      const id = 20 + rounds
+      await harness.connection.handleText(requestFrame(id, 'session.history', { sessionId: 's-1', before }))
+      last = answerOf(harness, id).r as { turns: WireTurn[]; nextBefore?: number; hasMore: boolean }
+      seen.push(...seqsOf(last.turns))
+      if (!last.hasMore) break
+      before = last.nextBefore
+    }
+    // Then the walk stops on the window's own oldest entries, reporting nothing older and no cursor
+    expect(last?.hasMore).toBe(false)
+    expect(Math.min(...seqsOf(last?.turns ?? []))).toBe(2)
+    expect(last?.nextBefore).toBeUndefined()
+    // And it got there in finitely many pages, every entry exactly once
+    expect(rounds).toBeLessThan(12)
+    expect(seen.length).toBe(new Set(seen).size)
+  })
+
+  it('user declaring the page capability asking below a window that stopped short gets a terminal empty page', async () => {
+    // Given a page carrying the whole of a window that the harness reports as cut
+    const harness = makeConnection({ paired: true })
+    await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
+    await openSession(harness, 2, ONE_SMALL_TURN, 510, {}, true)
+    const first = snapshotOf(harness, 2)
+    // When it asks that same page's projection for the page below its oldest entry
+    await harness.connection.handleText(requestFrame(3, 'session.history', { sessionId: 's-1', before: oldestSeqOf(first.turns) }))
+    const below = answerOf(harness, 3).r as { turns: WireTurn[]; nextBefore?: number; hasMore: boolean }
+    // Then the answer is empty and terminal rather than another cursor to loop on, so a
+    // client that reads this field as "ask for more" always reaches a false
+    expect(below.turns).toEqual([])
+    expect(below.hasMore).toBe(false)
+    expect(below.nextBefore).toBeUndefined()
   })
 })
