@@ -49,6 +49,17 @@ export interface MemberRunGateway {
    */
   listPresets(): Promise<readonly PresetInfo[] | undefined>
   /**
+   * Read the host model catalog — the same `session/modelCatalog` reply the task
+   * board's runner reads, so a route the panel offers is a route this Host
+   * itself publishes.
+   *
+   * Optional on purpose: a deployment that serves no catalog leaves the face
+   * out, and the panel then offers no model picker at all instead of an empty
+   * one. Normalization is `host/model-catalog.ts`'s job, not this seam's.
+   * @returns the raw catalog reply, or undefined when this deployment serves none.
+   */
+  modelCatalog?(): Promise<unknown>
+  /**
    * Create one session.
    * @throws AgentsError `session-create-failed` when the host refuses.
    */
@@ -92,12 +103,14 @@ export interface HostRunFaces {
 }
 
 /**
- * Args shape per endpoint: `agentPresets/list` declares no parameters, so its
- * args must be `{}`; every other call this package makes wraps its payload in
- * `request`.
+ * Args shape per endpoint: `agentPresets/list` and `session/modelCatalog` both
+ * declare no parameters, so their args must be `{}`; every other call this
+ * package makes wraps its payload in `request`.
  */
 function wireArgs(namespace: string, method: string, request: Record<string, unknown>): Record<string, unknown> {
-  return namespace === 'agentPresets' && method === 'list' ? {} : { request }
+  if (namespace === 'agentPresets' && method === 'list') return {}
+  if (namespace === 'session' && method === 'modelCatalog') return {}
+  return { request }
 }
 
 function describe(error: unknown): string {
@@ -140,6 +153,9 @@ export function createHostRunGateway(faces: HostRunFaces): MemberRunGateway {
         // namespace; that is "no registry", not "unknown preset".
         return undefined
       }
+    },
+    async modelCatalog() {
+      return await call('session', 'modelCatalog', {})
     },
     async createSession(input) {
       const created = await call('session', 'create', {

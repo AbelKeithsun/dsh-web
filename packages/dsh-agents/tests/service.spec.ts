@@ -358,6 +358,54 @@ describe('the preset list the state view reports', () => {
   })
 })
 
+describe('the model catalog the state view reports', () => {
+  /** A reply shaped like the `session/modelCatalog` this Host serves. */
+  const catalogReply = {
+    groups: [{ id: 'deepseek', models: [{ id: 'deepseek-v4', name: 'DeepSeek V4', reasoning: { efforts: [{ id: 'low' }, { id: 'high' }] } }] }],
+  }
+
+  it('user reads the routes and the levels this deployment serves', async () => {
+    // Given a readable catalog, When the panel reads state, Then it receives one row per route and every declared level.
+    const instance = service({ gateway: gateway({ modelCatalog: vi.fn(async () => catalogReply) }) })
+    expect(await instance.stateView()).toMatchObject({
+      models: [{ provider: 'deepseek', model: 'deepseek-v4', label: 'DeepSeek V4', efforts: ['low', 'high'] }],
+      efforts: ['low', 'high'],
+    })
+  })
+
+  it('operator omits both fields when the deployment serves no catalog', async () => {
+    // Given a gateway with no catalog face, When the panel reads state, Then neither key is present, so no picker claims "no model exists".
+    const state = await service().stateView()
+    expect('models' in state).toBe(false)
+    expect('efforts' in state).toBe(false)
+  })
+
+  it('operator omits both fields when the catalog holds nothing usable', async () => {
+    // Given a catalog reply with no route in it, When the panel reads state, Then the fields are absent rather than empty lists.
+    const instance = service({ gateway: gateway({ modelCatalog: vi.fn(async () => ({ groups: [] })) }) })
+    const state = await instance.stateView()
+    expect('models' in state).toBe(false)
+    expect('efforts' in state).toBe(false)
+  })
+
+  it('operator omits both fields when the catalog read itself fails', async () => {
+    // Given a catalog read that throws, When the panel reads state, Then the body still answers and carries neither key.
+    const instance = service({ gateway: gateway({ modelCatalog: vi.fn(async () => { throw new Error('no session namespace here') }) }) })
+    const state = await instance.stateView()
+    expect(state.host).toEqual({ ownerPid: process.pid })
+    expect('models' in state).toBe(false)
+    expect('efforts' in state).toBe(false)
+  })
+
+  it('operator omits the level list when no offered model declares one', async () => {
+    // Given a catalog whose only model declares no level, When the panel reads state, Then the routes are served and the level list is absent.
+    const instance = service({ gateway: gateway({ modelCatalog: vi.fn(async () => ({ groups: [{ id: 'deepseek', models: [{ id: 'quiet', reasoning: { efforts: [] } }] }] })) }) })
+    const state = await instance.stateView()
+    expect(state.models).toEqual([{ provider: 'deepseek', model: 'quiet', efforts: [] }])
+    expect('efforts' in state).toBe(false)
+  })
+})
+
 describe('a ledger this host cannot read', () => {
   it('operator refuses every operation with the named failure and leaves the file alone', () => {
     // Given a corrupt ledger, When definitions are read or written, Then each call answers ledger-corrupt and the bytes are untouched.

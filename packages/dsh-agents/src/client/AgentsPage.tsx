@@ -18,6 +18,7 @@ import type { ReactNode } from 'react'
 import { failureOf } from './host-api.ts'
 import type { AgentsFailure, AgentsTransport } from './host-api.ts'
 import { t } from './locales.ts'
+import { effortsOf, modelsOf } from './model-options.ts'
 import { newestSquadRun } from './runs.ts'
 import { teamDraftOf, TeamForm, MemberForm } from './Forms.tsx'
 import { SquadList } from './SquadList.tsx'
@@ -202,7 +203,21 @@ export function AgentsPage({ transport, openSession, teamSource }: AgentsPagePro
       return <TeamForm team={form.team} busy={busy} onSubmit={submitTeam} onCancel={() => { setForm(undefined) }} />
     }
     if (form !== undefined && form.kind === 'member') {
-      return <MemberForm teamId={form.teamId} member={form.member} busy={busy} onSubmit={submitMember} onCancel={() => { setForm(undefined) }} />
+      // The pickers read the catalog of the last good read: a failed poll keeps
+      // the previous snapshot on screen, so the form keeps offering exactly what
+      // this Host last published.
+      const catalog = load.phase === 'ready' ? load.state : undefined
+      return (
+        <MemberForm
+          teamId={form.teamId}
+          member={form.member}
+          busy={busy}
+          models={catalog === undefined ? undefined : modelsOf(catalog)}
+          efforts={catalog === undefined ? undefined : effortsOf(catalog)}
+          onSubmit={submitMember}
+          onCancel={() => { setForm(undefined) }}
+        />
+      )
     }
     if (load.phase === 'loading') {
       return <p className={css.state} role="status" data-dsh-part="agents-loading">{t('agents.loading')}</p>

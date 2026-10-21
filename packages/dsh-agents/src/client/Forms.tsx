@@ -6,12 +6,19 @@
  * empty strings when the user submits - leaving them empty is how a member
  * asks the Host to inherit its default, and clearing an existing value has to
  * be expressible too.
+ *
+ * The member's permission, model and reasoning effort are PICKERS, never text
+ * boxes: every one of them stores an id the Host resolves later, and free
+ * typing is exactly how a member ends up pinning an id no Host will honour. The
+ * model and effort rows come from the catalog the Host publishes, and the
+ * inherit row is the first one in each.
  */
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { t } from './locales.ts'
+import { effortLevels, effortRows, modelDeclaresNoLevels, modelRows } from './model-options.ts'
 import { PERMISSION_MODES, permissionLabel } from './permissions.ts'
-import type { MemberDraft, MemberDefinition, AgentsPermission, TeamDefinition, TeamDraft } from '../protocol.ts'
+import type { AgentsModelOption, MemberDraft, MemberDefinition, AgentsPermission, TeamDefinition, TeamDraft } from '../protocol.ts'
 import css from './agents.module.css'
 
 /**
@@ -106,6 +113,13 @@ export interface MemberFormProps {
   /** The member being edited; omitted when adding one. */
   member: MemberDefinition | undefined
   busy: boolean
+  /**
+   * The model catalog the Host published. Absent when it published none, and
+   * the form then offers no model picker at all instead of an empty one.
+   */
+  models?: readonly AgentsModelOption[]
+  /** The deployment-wide reasoning levels the Host published, when it published any. */
+  efforts?: readonly string[]
   onSubmit: (teamId: string, draft: MemberDraft) => void
   onCancel: () => void
 }
@@ -114,7 +128,7 @@ export interface MemberFormProps {
  * Render the member form.
  * @param props - the member under edit and the page actions.
  */
-export function MemberForm({ teamId, member, busy, onSubmit, onCancel }: MemberFormProps): ReactNode {
+export function MemberForm({ teamId, member, busy, models, efforts, onSubmit, onCancel }: MemberFormProps): ReactNode {
   const [name, setName] = useState(member?.name ?? '')
   const [preset, setPreset] = useState(member?.preset ?? '')
   const [permission, setPermission] = useState<string>(member?.permission ?? '')
@@ -122,6 +136,9 @@ export function MemberForm({ teamId, member, busy, onSubmit, onCancel }: MemberF
   const [reasoningEffort, setReasoningEffort] = useState(member?.reasoningEffort ?? '')
   const [brief, setBrief] = useState(member?.brief ?? '')
   const [error, setError] = useState('')
+  // Read per render: the picker follows the model currently chosen, not the one
+  // the member arrived with.
+  const levels = effortLevels(models, efforts, model)
   const submit = (): void => {
     if (name.trim() === '') {
       setError(t('form.nameRequired'))
@@ -156,14 +173,33 @@ export function MemberForm({ teamId, member, busy, onSubmit, onCancel }: MemberF
           {PERMISSION_MODES.map(mode => <option key={mode} value={mode}>{permissionLabel(mode)}</option>)}
         </select>
       </label>
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('form.model')}</span>
-        <input className={css.input} value={model} placeholder={t('form.modelPlaceholder')} onChange={(event) => { setModel(event.target.value) }} />
-      </label>
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('form.reasoningEffort')}</span>
-        <input className={css.input} value={reasoningEffort} onChange={(event) => { setReasoningEffort(event.target.value) }} />
-      </label>
+      {models === undefined ? null : (
+        <label className={css.field}>
+          <span className={css.fieldLabel}>{t('form.model')}</span>
+          <select className={css.input} name="model" value={model} onChange={(event) => { setModel(event.target.value) }}>
+            <option value="">{t('member.inherit')}</option>
+            {modelRows(models, model).map(row => <option key={row.value} value={row.value}>{row.label}</option>)}
+          </select>
+        </label>
+      )}
+      {models === undefined && efforts === undefined ? null : (
+        <label className={css.field}>
+          <span className={css.fieldLabel}>{t('form.reasoningEffort')}</span>
+          {/* The explicit name keeps the control's own label free of the hint
+              beside it, which states why the picker offers so little. */}
+          <select
+            className={css.input}
+            name="reasoningEffort"
+            aria-label={t('form.reasoningEffort')}
+            value={reasoningEffort}
+            onChange={(event) => { setReasoningEffort(event.target.value) }}
+          >
+            <option value="">{t('form.effortInherit')}</option>
+            {effortRows(levels, reasoningEffort).map(row => <option key={row.value} value={row.value}>{row.label}</option>)}
+          </select>
+          {modelDeclaresNoLevels(models, model) ? <span className={css.fieldHint}>{t('form.effortNoLevels')}</span> : null}
+        </label>
+      )}
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('form.brief')}</span>
         <textarea className={css.textarea} value={brief} placeholder={t('form.briefPlaceholder')} onChange={(event) => { setBrief(event.target.value) }} />

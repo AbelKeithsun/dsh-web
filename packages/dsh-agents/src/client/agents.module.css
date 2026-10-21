@@ -509,6 +509,15 @@
   color: var(--dsw-alias-label-secondary, #4b5563);
 }
 
+/* The statement under a picker that has nothing to offer beyond its inherit
+   choice: the same secondary label token and 12px step as the field label right
+   above it, so it reads as part of that one field and not as a new group. */
+.fieldHint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+
 .input,
 .textarea {
   box-sizing: border-box;

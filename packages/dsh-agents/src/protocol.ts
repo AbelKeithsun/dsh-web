@@ -167,6 +167,26 @@ export type MemberDraft = Omit<MemberDefinition, 'id' | 'teamId' | 'createdAt' |
 /** Definition fields a caller may write; `id` addresses an existing team. */
 export type TeamDraft = Omit<TeamDefinition, 'id' | 'createdAt' | 'updatedAt' | 'members'> & { id?: string }
 
+/**
+ * One model route the Host's own model catalog offers, as a picker row of the
+ * member form.
+ */
+export interface AgentsModelOption {
+  /** Provider the route belongs to; the picker shows `provider/model`. */
+  provider: string
+  /** Model id inside that provider. */
+  model: string
+  /** Display label the catalog publishes; absent means show the route itself. */
+  label?: string
+  /**
+   * The reasoning levels the catalog declares for this route. Absent when the
+   * catalog published no reasoning metadata for the model at all; an empty list
+   * means it published some and the model declares no level. The picker treats
+   * the two differently, so they are not collapsed into one.
+   */
+  efforts?: readonly string[]
+}
+
 /** `GET {DSH_AGENTS_API_PREFIX}/state`: everything the browser panel renders. */
 export interface AgentsStateView {
   teams: TeamDefinition[]
@@ -179,6 +199,21 @@ export interface AgentsStateView {
    * uses it to offer the Lead preset of a whole-squad run.
    */
   presets?: readonly string[]
+  /**
+   * Model routes this deployment's own catalog offers. Additive and optional,
+   * under the same rule as `presets`: a Host whose catalog service is absent,
+   * empty or failing answers without the key, and the member form then offers no
+   * model picker instead of an empty one that reads as "no model exists here".
+   */
+  models?: readonly AgentsModelOption[]
+  /**
+   * Every reasoning-effort level the offered models declare, in catalog order.
+   * Absent whenever `models` is absent, and absent when no offered model
+   * declares a level. A picker reads one model's own levels off
+   * {@link AgentsModelOption.efforts} and falls back to this list only for a
+   * route the catalog does not describe.
+   */
+  efforts?: readonly string[]
 }
 
 /** `POST {DSH_AGENTS_API_PREFIX}/team` body. */

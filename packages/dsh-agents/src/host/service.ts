@@ -23,6 +23,7 @@ import { applyMemberDraft, applyTeamDraft, createMember, createTeam, findMember,
 import { parseModelPin } from '../core/model-pin.ts'
 import { AgentsLedger, AGENTS_LEDGER_FILE, AGENTS_LEDGER_LOCK_FILE, RUN_HISTORY_LIMIT, type AgentsLedgerData } from './ledger.ts'
 import { agentsHomeDirectory } from './home.ts'
+import { listOfferedModelCatalog } from './model-catalog.ts'
 import { listOfferedPresets, resolvePinnedPreset, type MemberRunGateway, type WorkspaceRegistryFace } from './run-gateway.ts'
 import { isSquadSession, squadContextText } from './squad.ts'
 import type {
@@ -117,20 +118,29 @@ export class AgentsHostService {
   }
 
   /**
-   * The whole `GET /state` body: the ledger snapshot plus the agent presets this
-   * deployment serves, which is what the squad page offers as a Lead preset.
+   * The whole `GET /state` body: the ledger snapshot, the agent presets this
+   * deployment serves, and the model catalog its own gateway publishes.
    *
-   * The list comes from the same registry read every preset pin resolves
-   * through, so the picker can never offer an id a run would then refuse. A
-   * deployment whose registry is absent or failing answers without `presets`
-   * instead of with an empty list, and the page then states the squad's own pin.
-   * @returns the served state view; `presets` is present only when the host
-   *   serves a readable preset registry.
+   * The preset list comes from the same registry read every preset pin resolves
+   * through, and the catalog from the same face a run's model pin is applied
+   * through, so a picker can never offer an id or a route a run would then
+   * refuse. Each field is OMITTED rather than emptied when this deployment has
+   * nothing to offer — no readable registry, no readable catalog, or nothing
+   * usable inside one — because an empty list reads as "none exist here", which
+   * the panel would then repeat as fact.
+   * @returns the served state view; `presets`, `models` and `efforts` are present
+   *   only when the host really serves something to offer.
    */
   async stateView(): Promise<AgentsStateView> {
     const state = this.state
     const presets = await listOfferedPresets(this.gateway)
-    return presets === undefined ? state : { ...state, presets }
+    const catalog = await listOfferedModelCatalog(this.gateway)
+    return {
+      ...state,
+      ...(presets === undefined ? {} : { presets }),
+      ...(catalog === undefined ? {} : { models: catalog.models }),
+      ...(catalog === undefined || catalog.efforts.length === 0 ? {} : { efforts: catalog.efforts }),
+    }
   }
 
   /**
