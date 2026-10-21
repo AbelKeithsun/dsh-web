@@ -6,9 +6,9 @@
 /** Serialized Team transactions over the exact live Lead Session log. */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Context } from '@deepseek-ai/cordis'
 import type { SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
 import type { TeamEventType, TeamState } from './projection.ts'
+import type { TeamServiceFaces } from './services.ts'
 
 type AppendTeamEvent = <T extends TeamEventType>(type: T, data: SessionEventMap[T]) => void
 type MutableTeamEventType = 'team/member' | 'team/task'
@@ -18,11 +18,11 @@ export class TeamJournal {
   private readonly tails = new Map<SessionId, Promise<void>>()
 
   /**
-   * @param ctx - Team service context with the injected Session service.
+   * @param faces - the Host Session faces resolved once at mount.
    * @param onCommit - synchronous notification after the Team event flush succeeds.
    */
   constructor(
-    private readonly ctx: Context,
+    private readonly faces: TeamServiceFaces,
     private readonly onCommit: (root: Agent) => void,
   ) {}
 
@@ -32,7 +32,7 @@ export class TeamJournal {
    * @returns current projected state selected by the Lead Team id.
    */
   state(root: Agent): TeamState {
-    const projection = this.ctx.sessionProjections.stateOf(root.session, 'agentTeam')
+    const projection = this.faces.sessionProjections.stateOf(root.session, 'agentTeam')
     if (projection === undefined) throw new Error('Agent Teams projection is not registered')
     if (projection.failure !== undefined) throw new Error(projection.failure)
     return projection
@@ -72,7 +72,7 @@ export class TeamJournal {
     // preserving the event-key/payload correlation.
     const append = root.session.append.bind(root.session) as unknown as AppendTeamEvent
     append(type, data)
-    await this.ctx.sessions.flush(root.session)
+    await this.faces.sessions.flush(root.session)
     this.onCommit(root)
   }
 }

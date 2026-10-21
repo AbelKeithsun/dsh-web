@@ -22,6 +22,7 @@ import { assembleIdentity, registerMemberPromptSeam, type MemberPromptRegistry }
 import { makeAgentsRoutes } from './host/routes.ts'
 import { createHostRunGateway, createTeammatePins, type CommandDispatcherFace, type TypertGatewayFace, type WorkspaceRegistryFace } from './host/run-gateway.ts'
 import { AgentsHostService } from './host/service.ts'
+import { readService } from './host/services.ts'
 import { TeamService, type TeamServiceContext } from './team/index.ts'
 import { installTeamTools, type TeamToolInstallation } from './tools/index.ts'
 
@@ -76,12 +77,8 @@ function resolveSystemPrompt(ctx: Context): MemberPromptRegistry | undefined {
  * a capture-only test context or a stripped deployment simply has none.
  */
 export function resolveWorkspaceRegistry(ctx: Context): WorkspaceRegistryFace | undefined {
-  try {
-    const registry = (ctx as { get?: (name: string) => unknown }).get?.('workspaceRegistry') as WorkspaceRegistryFace | undefined
-    return registry !== undefined && typeof registry.list === 'function' ? registry : undefined
-  } catch {
-    return undefined
-  }
+  const registry = readService<WorkspaceRegistryFace>(ctx, 'workspaceRegistry')
+  return registry !== undefined && typeof registry.list === 'function' ? registry : undefined
 }
 
 /**
@@ -89,12 +86,8 @@ export function resolveWorkspaceRegistry(ctx: Context): WorkspaceRegistryFace | 
  * session (the same path the task board's runner uses).
  */
 export function resolveCommandDispatcher(ctx: Context): CommandDispatcherFace | undefined {
-  try {
-    const commands = (ctx as { commands?: CommandDispatcherFace }).commands
-    return commands !== undefined && typeof commands.execute === 'function' ? commands : undefined
-  } catch {
-    return undefined
-  }
+  const commands = readService<CommandDispatcherFace>(ctx, 'commands', false)
+  return commands !== undefined && typeof commands.execute === 'function' ? commands : undefined
 }
 
 /**
@@ -102,12 +95,8 @@ export function resolveCommandDispatcher(ctx: Context): CommandDispatcherFace | 
  * live Agent to dispatch `/permission`.
  */
 export function resolveAgents(ctx: Context): { get(sessionId: string): Agent | undefined } | undefined {
-  try {
-    const agents = (ctx as { agents?: { get?: unknown } }).agents
-    return agents !== undefined && typeof agents.get === 'function' ? agents as { get(sessionId: string): Agent | undefined } : undefined
-  } catch {
-    return undefined
-  }
+  const agents = readService<{ get?: unknown }>(ctx, 'agents', false)
+  return agents !== undefined && typeof agents.get === 'function' ? agents as { get(sessionId: string): Agent | undefined } : undefined
 }
 
 /** Read the injected typert gateway (the Host's own service call surface). */
@@ -121,21 +110,23 @@ function resolveTypertGateway(ctx: Context): TypertGatewayFace | undefined {
  * one keeps M1's ledger, routes and member brief and loses only the team runtime.
  */
 export function servesTeamRuntime(ctx: Context): boolean {
-  const surface = ctx as unknown as {
-    agents?: { get?: unknown; list?: unknown }
-    sessions?: { get?: unknown; flush?: unknown }
-    sessionPersistence?: unknown
-    sessionProjections?: { register?: unknown; stateOf?: unknown }
-    subagents?: { startActivation?: unknown; drainChildren?: unknown }
-  }
-  return typeof surface.agents?.get === 'function'
-    && typeof surface.agents?.list === 'function'
-    && typeof surface.sessions?.get === 'function'
-    && typeof surface.sessions?.flush === 'function'
-    && surface.sessionPersistence !== undefined
-    && typeof surface.sessionProjections?.register === 'function'
-    && typeof surface.sessionProjections?.stateOf === 'function'
-    && typeof surface.subagents?.startActivation === 'function'
+  // Every face is read through `ctx.get`: this fiber injects three services, so
+  // a property read of any other service throws "cannot get property ... without
+  // inject" and the whole row would fail to mount instead of skipping the
+  // optional runtime.
+  const agents = readService<{ get?: unknown; list?: unknown }>(ctx, 'agents', false)
+  const sessions = readService<{ get?: unknown; flush?: unknown }>(ctx, 'sessions', false)
+  const sessionPersistence = readService<unknown>(ctx, 'sessionPersistence', false)
+  const sessionProjections = readService<{ register?: unknown; stateOf?: unknown }>(ctx, 'sessionProjections', false)
+  const subagents = readService<{ startActivation?: unknown }>(ctx, 'subagents', false)
+  return typeof agents?.get === 'function'
+    && typeof agents?.list === 'function'
+    && typeof sessions?.get === 'function'
+    && typeof sessions?.flush === 'function'
+    && sessionPersistence !== undefined
+    && typeof sessionProjections?.register === 'function'
+    && typeof sessionProjections?.stateOf === 'function'
+    && typeof subagents?.startActivation === 'function'
 }
 
 /**

@@ -10,6 +10,7 @@
 | 不关闭任何原生 `tool-subagent*` 工具行 | 两套委派面并存是对上游取舍的拒绝；为了「少一次工具选择」关掉原生 subagent，普通会话就失去官方委派能力 | `tests/team-runtime.spec.ts` 遍历 `src/`、`cordis.patch.yml` 与 `package.json`，断言包内不出现 `tool-subagent` |
 | 投影 key 固定 `agentTeam`、`stateVersion` 固定 4 | 已落盘的投影与读取该 key 的消费方（浏览器半区的 `src/client/team-source.ts`）都依赖这两个值；改名或升版等于让历史会话的实时视图全部消失 | `tests/team-runtime.spec.ts`：两个常量，以及每次挂载在 root 上恰好注册一次 |
 | 权限与模型钉住在首条提示 checkpoint **之前**应用 | 先 checkpoint 再钉，首条提示已经以部署默认的身份与模型落盘，钉住只是事后改写；顺序是 preset → start → permission/model → checkpoint | `tests/team-runtime.spec.ts` 的 pin 顺序用例 |
+| 五个 Host 服务在挂载时经 `ctx.get` 解析一次，而不是按属性读取 | 本包在自己的插件 fiber 上挂载运行期，该 fiber 的 `inject` 只有 `systemPrompt` / `typertGateway` / `webServer`；cordis 对未注入服务的属性读取直接抛 `cannot get property "<name>" without inject`，整行 `apply` 失败，页面会报「Host API 未挂载」 | `tests/apply-inject.spec.ts`：真实 cordis 树上五个服务由兄弟 fiber 提供时，运行期仍能构造、注册一次投影并回答 Lead 成员身份 |
 | 浏览器读会话投影，而不是读 Host 路由 | 投影是官方 UI 已经在算的共享状态，读它零请求、零轮询；`GET /dsh-agents/api/squad/team` 在 `protocol.ts` 里只是提案，刻意不实现 | `tests/client-squad-team.spec.tsx`：投影来源优先、提案路由兜底、无路由时说一次 `unavailable` 而不是永远轮询；`DSH_AGENTS_ROUTE_PATHS` 不含该路径 |
 
 ## 提案路由为什么留在提案

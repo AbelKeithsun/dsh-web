@@ -20,6 +20,7 @@ import { teamProjectionDefinition } from './projection.ts'
 import { resolveActiveMember, TeamRoster } from './roster.ts'
 import type { TeamMembership } from './roster.ts'
 import { TeamTaskBoard } from './task-board.ts'
+import { serveTeamFaces, type TeamServiceFaces } from './services.ts'
 import { TeamId, TeamTaskId } from './types.ts'
 import type {
   Config,
@@ -72,6 +73,8 @@ function positiveLimit(name: string, value: number): number {
 export interface TeamServiceOptions {
   /** Member-definition pins applied to every teammate this Team creates. */
   readonly pins?: TeammatePins
+  /** The five Host faces, when the caller already resolved them for this mount. */
+  readonly faces?: TeamServiceFaces
 }
 
 /** Agent Teams service backed by the exact live Lead Session log. */
@@ -87,6 +90,9 @@ export class TeamService extends Service {
 
   /** Validated deployment limits used by every Team operation. */
   private readonly config: Required<Config>
+
+  /** The five Host services, resolved once at mount (see team/services.ts). */
+  private readonly faces: TeamServiceFaces
 
   private readonly activity: TeamActivity
   private readonly lifecycle: TeamRuntimeLifecycle
@@ -106,10 +112,16 @@ export class TeamService extends Service {
       ),
     }
 
+    const faces = options.faces ?? serveTeamFaces(ctx)
+    if (faces === undefined) {
+      throw new Error('Agent Teams requires the agents, sessions, sessionPersistence, sessionProjections and subagents services')
+    }
+    this.faces = faces
+
     this.activity = new TeamActivity()
     this.lifecycle = new TeamRuntimeLifecycle(this.config.disposalTimeoutMs)
-    this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) })
-    this.roster = new TeamRoster(ctx, this.journal, this.lifecycle, this.config.maxMembers, options.pins)
+    this.journal = new TeamJournal(faces, (root) => { this.activity.notify(TeamId(root.id)) })
+    this.roster = new TeamRoster(ctx, faces, this.journal, this.lifecycle, this.config.maxMembers, options.pins)
     this.tasks = new TeamTaskBoard(this.journal, this.config.maxTasks)
 
     ctx.on('agent/created', ({ agent }) => {
@@ -122,7 +134,7 @@ export class TeamService extends Service {
       return undefined
     })
     ctx.effect(() => {
-      const disposeProjection = ctx.root.sessionProjections.register(teamProjectionDefinition)
+      const disposeProjection = faces.sessionProjections.register(teamProjectionDefinition)
       return async () => {
         try {
           await this.disposeRuntime()
@@ -131,7 +143,7 @@ export class TeamService extends Service {
         }
       }
     }, 'agentTeams.runtimeLifecycle()')
-    for (const agent of ctx.agents.list()) this.scheduleRecovery(agent)
+    for (const agent of faces.agents.list()) this.scheduleRecovery(agent)
   }
 
   /**
@@ -267,7 +279,7 @@ export class TeamService extends Service {
       root.steer(input)
       messageId = input.id
     } else {
-      messageId = await steerHostSubagentPrompt(this.ctx.subagents, root, target.id, content, source, request.signal)
+      messageId = await steerHostSubagentPrompt(this.faces.subagents, root, target.id, content, source, request.signal)
     }
     this.activity.notify(membership.id)
     return { messageId }

@@ -37,6 +37,7 @@
 | `src/types.ts` | `src/team/types.ts` |
 | `src/validation.ts` | `src/team/validation.ts` |
 | （无，本包新增） | `src/team/pins.ts` |
+| （无，本包新增） | `src/team/services.ts` |
 | 上游仓库根 `LICENSE` | `src/team/LICENSE` |
 
 `src/tools/`（对应 `packages/experimental/tool-agent-team/src/`）：
@@ -69,6 +70,7 @@
 11. **`jsonOutput` 帮助函数的 render 参数类型放宽为 `unknown`**（`src/tools/index.ts`）：类型注解里带 `InferValue<S>` 时，`tsc` 在 `defineTool` 推断输出 schema 时会比较两个未解析的条件类型并触发 `TS2321`（栈深溢出）。运行时仍用同一份 `schema` 校验取值，模型可见的 JSON Schema 一字未改。
 12. **`spawn_teammate` 的参数 schema 提取为 `SPAWN_PARAMETERS` 常量**：与第 11 条同因，避免在调用点被 const 泛型重新推断八个属性。
 13. **文件头 banner**：所有 vendor 文件加 provenance banner（纯注释）。
+14. **五个 Host 服务在挂载时经 `ctx.get` 解析一次**（`src/team/services.ts`，本包新增文件；`src/team/index.ts`、`src/team/journal.ts`、`src/team/roster.ts`）：上游把运行期当作 cordis 插件挂在它自己的 `inject` 行上，`agents` / `sessions` / `sessionPersistence` / `sessionProjections` / `subagents` 因此可以按属性直接读取。本包在插件行自己的 fiber 上 `new TeamService(ctx)`，该 fiber 的 `inject` 只有三个服务，而 cordis 对**未注入**服务的属性读取会抛 `cannot get property "<name>" without inject`——整个 `apply` 失败，页面随即报「Host API 未挂载」。因此 `TeamService` 在构造时把五个面解析一次（`serveTeamFaces`）、存进 `this.faces`，`TeamJournal` 与 `TeamRoster` 改为读同一份面对象；投影注册从 `ctx.root.sessionProjections` 改为读该面（同一个服务实例，注册位置不变）。上游的其余逻辑、`ctx.on` 事件监听与 `ctx.logger` 未动。
 
 ## 行为差异：Team 工具只进「本 Host 启动的整队运行会话」
 
@@ -86,6 +88,7 @@
 
 ## 验证
 
+- `tests/apply-inject.spec.ts`：真实 cordis 树上五个服务由兄弟 fiber 提供、插件 fiber 只注入三个服务时，运行期仍能构造、在 root 上恰好注册一次 `agentTeam` 投影，并对 Lead 会话回答成员身份；同一文件还钉住「部署缺少五个服务时挂载台账路由并跳过运行期」与「安装器经 `ctx.get` 取服务」。
 - `tests/team-runtime.spec.ts`：投影 key/stateVersion 与「恰好注册一次」、工具安装门禁（普通会话零工具、整队会话九个工具、`refresh()` 重扫）、pin 顺序（`preset → start → permission → model → checkpoint`）、未知预设与拒绝的模型路由以具名错误失败、以及「本包从不关闭原生 subagent 工具」的源码扫描。
 - `tests/squad.spec.ts`：`team:squad` 上下文的两成员渲染（名称 / 预设 / 权限 / 模型 / 简报摘要）、整队运行记录先于首条提示落盘、Lead 预设与工作区的 fail-closed、M1 账本向后兼容。
 - 运行：`pnpm --filter ./packages/dsh-agents test`。

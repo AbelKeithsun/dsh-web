@@ -17,6 +17,7 @@ import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
 import type { TeamState } from './projection.ts'
+import type { TeamServiceFaces } from './services.ts'
 import type { TeammatePins } from './pins.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId } from './types.ts'
@@ -62,7 +63,8 @@ export function resolveActiveMember(
 /** Owns Team identities and the lifecycle of rostered continuable children. */
 export class TeamRoster {
   /**
-   * @param ctx - Team service context with Agent, Session, persistence, and subagent services.
+   * @param ctx - Team service context, the event surface this roster listens on.
+   * @param faces - the Agent, Session, persistence, projection and subagent faces resolved once at mount.
    * @param journal - authoritative Lead-log transaction owner.
    * @param lifecycle - shared Team runtime admission cutoff.
    * @param maxMembers - maximum immutable roster entries per Team.
@@ -70,6 +72,7 @@ export class TeamRoster {
    */
   constructor(
     private readonly ctx: Context,
+    private readonly faces: TeamServiceFaces,
     private readonly journal: TeamJournal,
     private readonly lifecycle: TeamRuntimeLifecycle,
     private readonly maxMembers: number,
@@ -95,11 +98,11 @@ export class TeamRoster {
    * @returns Team membership, or undefined for non-Team subagents and stale identities.
    */
   tryMembership(agent: Agent): TeamMembership | undefined {
-    if (this.ctx.agents.get(agent.id) !== agent) return undefined
+    if (this.faces.agents.get(agent.id) !== agent) return undefined
     try {
       const parentId = agent.session.header.parentSession
       if (parentId !== undefined) {
-        const root = this.ctx.agents.get(parentId)
+        const root = this.faces.agents.get(parentId)
         if (root !== undefined) {
           const member = this.journal.state(root).members.find(candidate => candidate.id === agent.id)
           if (member?.phase === 'active' || member?.phase === 'provisioning') {
@@ -143,7 +146,7 @@ export class TeamRoster {
       diagnostics: [],
     }]
     for (const member of state.members) {
-      const live = this.ctx.agents.get(member.id)
+      const live = this.faces.agents.get(member.id)
       const model = live?.options.model ?? root.options.model
       result.push({
         id: member.id,
@@ -198,10 +201,10 @@ export class TeamRoster {
     const state = this.journal.state(membership.root)
     const target = resolveActiveMember(membership.root, state, targetName)
     if (target.id === membership.root.id) throw new TeamError('the Team Lead cannot interrupt itself', 'TEAM_INVALID_TARGET')
-    const live = this.ctx.agents.get(target.id)
+    const live = this.faces.agents.get(target.id)
     if (live === undefined) return { previousStatus: 'inactive' }
     const previousStatus = availability(live)
-    this.ctx.subagents.interrupt(target.id, { kind: 'ancestor', agent: caller })
+    this.faces.subagents.interrupt(target.id, { kind: 'ancestor', agent: caller })
     return { previousStatus }
   }
 
@@ -211,10 +214,10 @@ export class TeamRoster {
    */
   liveChildrenByRoot(): Map<Agent, SessionId[]> {
     const teams = new Map<Agent, SessionId[]>()
-    for (const agent of this.ctx.agents.list()) {
+    for (const agent of this.faces.agents.list()) {
       const rootId = agent.session.header.parentSession
       if (rootId === undefined) continue
-      const root = this.ctx.agents.get(rootId)
+      const root = this.faces.agents.get(rootId)
       if (root === undefined
         || !this.journal.state(root).members.some(member => member.id === agent.id)) continue
       const children = teams.get(root) ?? []
@@ -230,7 +233,7 @@ export class TeamRoster {
    * @param childIds - selected roster child ids.
    */
   async stopTeammates(root: Agent, childIds: readonly SessionId[]): Promise<void> {
-    await this.lifecycle.withTimeout(this.ctx.subagents.drainChildren(root, childIds))
+    await this.lifecycle.withTimeout(this.faces.subagents.drainChildren(root, childIds))
   }
 
   /** Perform one creation admitted before the Team runtime disposal cutoff. */
@@ -273,7 +276,7 @@ export class TeamRoster {
     })
 
     try {
-      const started = await this.ctx.subagents.startActivation({
+      const started = await this.faces.subagents.startActivation({
         delivery: 'parent',
         childId,
         provider: request.provider,
@@ -345,9 +348,9 @@ export class TeamRoster {
   ): Promise<void> {
     while (true) {
       signal.throwIfAborted()
-      const session = this.ctx.sessions.get(childId)
+      const session = this.faces.sessions.get(childId)
       if (session === undefined) {
-        const stored = await readPersistedSession(this.ctx.sessionPersistence, childId, signal)
+        const stored = await readPersistedSession(this.faces.sessionPersistence, childId, signal)
         const suffix = stored.events.slice(stored.inheritedEventCount)
         if (messageAccepted(suffix, message => message.id === messageId)) return
         throw new TeamError(
@@ -375,11 +378,11 @@ export class TeamRoster {
       signal.addEventListener('abort', onAbort, { once: true })
       try {
         signal.throwIfAborted()
-        await this.ctx.sessions.flush(session)
+        await this.faces.sessions.flush(session)
         // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
         const suffix = session.snapshotEvents(session.inheritedEventCount)
         if (messageAccepted(suffix, message => message.id === messageId)) return
-        if (this.ctx.sessions.get(childId) !== session) continue
+        if (this.faces.sessions.get(childId) !== session) continue
         await progress.promise
       } finally {
         signal.removeEventListener('abort', onAbort)
@@ -396,11 +399,11 @@ export class TeamRoster {
       signal.throwIfAborted()
       // A live child means creation is still completing in this process. Its
       // creator owns the terminal member edge.
-      if (this.ctx.agents.get(member.id) !== undefined) continue
+      if (this.faces.agents.get(member.id) !== undefined) continue
       let phase: 'active' | 'failed' = 'failed'
       let failure = 'provisioning did not leave a resumable child Session'
       try {
-        const loaded = await readPersistedSession(this.ctx.sessionPersistence, member.id, signal)
+        const loaded = await readPersistedSession(this.faces.sessionPersistence, member.id, signal)
         const suffix = loaded.events.slice(loaded.inheritedEventCount)
         const descriptor = foldSubagentDescriptor(suffix)
         const acceptedInitialPrompt = messageAccepted(suffix, message => message.source.kind === 'user')
@@ -436,7 +439,7 @@ export class TeamRoster {
 
   /** Build one runtime member row after successful creation. */
   private memberView(member: TeamMemberSnapshot & { readonly phase: 'active' }): TeamMemberView {
-    const live = this.ctx.agents.get(member.id)
+    const live = this.faces.agents.get(member.id)
     return {
       id: member.id,
       name: member.name,
