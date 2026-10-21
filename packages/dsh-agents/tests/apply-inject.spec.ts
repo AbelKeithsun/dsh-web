@@ -14,7 +14,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { apply, inject, servesTeamRuntime } from '../src/index.ts'
@@ -274,11 +274,19 @@ describe('team runtime mount on a real cordis tree', () => {
       },
     })
 
-    await new Promise(resolve => setTimeout(resolve, 50))
+    // The mount's own output is the projection registration, so wait on that
+    // condition - bounded, so a regressed mount fails here instead of hanging -
+    // rather than on a fixed wall-clock delay.
+    await vi.waitFor(() => {
+      expect(projections).toHaveLength(1)
+    })
 
     expect(failure).toBeUndefined()
-    expect(team).toBeDefined()
+    const instance = team
+    if (instance === undefined) throw new Error('the row fiber never constructed the Team service')
+    // The constructor's real output is asserted, not merely its existence.
+    expect(instance).toBeInstanceOf(TeamService)
     expect(projections).toEqual([{ key: 'agentTeam', stateVersion: 4 }])
-    expect((team as TeamService).membership(lead).role).toBe('lead')
+    expect(instance.membership(lead).role).toBe('lead')
   })
 })

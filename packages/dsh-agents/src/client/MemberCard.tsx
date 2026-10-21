@@ -38,6 +38,18 @@ export interface MemberCardProps {
 }
 
 /**
+ * One pinned field's value.
+ *
+ * The sheet clips it to a single line so a long pin cannot grow the track it
+ * shares with the cells beside it; the whole string stays in the node's text,
+ * its tooltip and its accessible name, so nothing is lost to the clip.
+ * @param props - the value as the Host reported it.
+ */
+function MetaValue({ value }: { value: string }): ReactNode {
+  return <dd className={css.metaValue} title={value} aria-label={value}>{value}</dd>
+}
+
+/**
  * Render one member card.
  * @param props - the member, its newest run, and the page actions.
  */
@@ -50,15 +62,15 @@ export function MemberCard({ member, run, busy, notice, onRun, onOpenSession, on
       <dl className={css.meta}>
         <div className={css.metaItem}>
           <dt className={css.metaLabel}>{t('member.preset')}</dt>
-          <dd className={css.metaValue}>{member.preset === undefined || member.preset === '' ? t('member.inherit') : member.preset}</dd>
+          <MetaValue value={member.preset === undefined || member.preset === '' ? t('member.inherit') : member.preset} />
         </div>
         <div className={css.metaItem}>
           <dt className={css.metaLabel}>{t('member.permission')}</dt>
-          <dd className={css.metaValue}>{permissionLabel(member.permission)}</dd>
+          <MetaValue value={permissionLabel(member.permission)} />
         </div>
         <div className={css.metaItem}>
           <dt className={css.metaLabel}>{t('member.model')}</dt>
-          <dd className={css.metaValue}>{member.model === undefined || member.model === '' ? t('member.inherit') : member.model}</dd>
+          <MetaValue value={member.model === undefined || member.model === '' ? t('member.inherit') : member.model} />
         </div>
       </dl>
       <p className={css.memberBrief} data-dsh-part="member-brief">{brief}</p>
@@ -73,6 +85,13 @@ export function MemberCard({ member, run, busy, notice, onRun, onOpenSession, on
           </>
         )}
       </p>
+      {/* A run's own outcome sits above the action row: the row carries the auto
+          margin that pins it to the card bottom, so a notice appearing or
+          clearing never lifts the buttons off the line they share with the
+          neighbouring cards. */}
+      {notice === undefined ? null : (
+        <p className={notice.kind === 'failed' ? css.noticeError : css.noticeOk} role={notice.kind === 'failed' ? 'alert' : 'status'}>{notice.message}</p>
+      )}
       <div className={css.memberActions}>
         <button type="button" className={css.primary} disabled={busy} onClick={onRun}>
           {busy ? t('member.running') : run === undefined ? t('member.run') : t('member.runAgain')}
@@ -94,9 +113,6 @@ export function MemberCard({ member, run, busy, notice, onRun, onOpenSession, on
           <button type="button" className={css.secondary} disabled={busy} onClick={() => { setConfirmingDelete(true) }}>{t('member.delete')}</button>
         )}
       </div>
-      {notice === undefined ? null : (
-        <p className={notice.kind === 'failed' ? css.noticeError : css.noticeOk} role={notice.kind === 'failed' ? 'alert' : 'status'}>{notice.message}</p>
-      )}
     </article>
   )
 }

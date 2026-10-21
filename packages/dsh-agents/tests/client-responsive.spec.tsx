@@ -51,6 +51,19 @@ function rule(selector: string): string {
   return open < 0 || close < 0 ? '' : sheet.slice(open + 1, close)
 }
 
+/**
+ * Every class selector whose rule forbids its text from wrapping, in source
+ * order. The list is the whole allowance: a clipped value owes its full text to
+ * an accessible name, so a new entry here is a review item, not a detail.
+ */
+function clippedSelectors(): string[] {
+  const found: string[] = []
+  for (const match of sheet.matchAll(/\.([A-Za-z][\w-]*)\s*\{([^}]*)\}/g)) {
+    if (match[2].includes('white-space: nowrap')) found.push('.' + match[1])
+  }
+  return found
+}
+
 /** The one element matching a selector, failing loudly when it is absent. */
 function must(container: ParentNode, selector: string): Element {
   const found = container.querySelector(selector)
@@ -78,7 +91,9 @@ describe('agents page narrow viewport', () => {
     // Then min() caps the track floor at 100% instead of a fixed 240/260px
     expect(rule('.squadGrid')).toContain('minmax(min(240px, 100%), 1fr)')
     expect(rule('.memberGrid')).toContain('minmax(min(260px, 100%), 1fr)')
-    expect(sheet).not.toContain('white-space: nowrap')
+    // And the only text that may be cut is the meta value, whose whole string
+    // stays in its accessible name (pinned in the alignment suite below)
+    expect(clippedSelectors()).toEqual(['.metaValue'])
   })
 
   it('operator sees the long brief clamped inside its wrapper instead of stretching the card', () => {
@@ -108,12 +123,15 @@ describe('agents page narrow viewport', () => {
     expect(wrapper?.textContent).toBe(briefText)
   })
 
-  it('operator sees a narrow-viewport rule tighten the page gutters', () => {
+  it('operator sees a narrow-viewport rule tighten the one page inset', () => {
     // Given the stylesheet
     // When the viewport is phone-wide
-    // Then the gutters shrink so the cards keep usable width
+    // Then exactly one declaration moves and every gutter follows it, so the
+    // cards keep usable width without three rules drifting apart
     expect(sheet).toContain('@media (max-width: 420px)')
-    expect(sheet).toContain('padding: 8px 12px 20px')
+    const narrow = sheet.slice(sheet.indexOf('@media (max-width: 420px)'))
+    expect(narrow).toContain('--agents-inline-inset: 12px')
+    expect(narrow).toContain('padding: 8px var(--agents-inline-inset) 20px')
   })
 
   it('operator sees the filled action use the shared primary-button tokens', () => {
@@ -236,5 +254,161 @@ describe('agents squad rows on a narrow viewport', () => {
     expect(sheet).toContain('@media (prefers-reduced-motion: reduce)')
     const reduced = sheet.slice(sheet.indexOf('@media (prefers-reduced-motion: reduce)'))
     expect(reduced).toContain('transition: none')
+  })
+})
+
+describe('agents page alignment anchors', () => {
+  it('operator sees every member card pin its action row to one shared bottom edge', () => {
+    // Given the card column and the row of card actions
+    // When one card's fields and brief are taller than its neighbour's
+    // Then one auto margin spends the free space above the row, so the buttons
+    // land on one line instead of following each card's content length
+    expect(rule('.memberCard')).toContain('flex-direction: column')
+    expect(rule('.memberActions')).toContain('margin-block-start: auto')
+    // And the row the rule targets is the trailing block of the card on both,
+    // the short card and the one whose brief fills every clamped line
+    const clampedBrief = 'A brief long enough to fill all three clamped lines, so this card is the taller of the two and its neighbour has to keep up.'
+    for (const brief of ['Short', clampedBrief]) {
+      const view = mount(
+        <MemberCard
+          member={memberOf({ brief })}
+          run={undefined}
+          busy={false}
+          notice={undefined}
+          onRun={() => {}}
+          onOpenSession={undefined}
+          onEdit={() => {}}
+          onDelete={() => {}}
+        />,
+      )
+      const card = must(view.container, '[data-dsh-part="member-card"]')
+      expect(card.lastElementChild?.className).toBe(css.memberActions)
+    }
+  })
+
+  it('operator sees the meta block spend three equal tracks so every card aligns its label row', () => {
+    // Given the meta block of a card
+    const meta = rule('.meta')
+    // When two cards pin values of very different length
+    // Then the block is a grid of three equal tracks, so a long pin cannot take
+    // a neighbour's width and push its own value onto a second line
+    expect(meta).toContain('display: grid')
+    expect(meta).toContain('grid-template-columns: repeat(3, minmax(0, 1fr))')
+    expect(rule('.metaItem')).toContain('min-inline-size: 0')
+    const view = mount(
+      <MemberCard
+        member={memberOf({ model: 'magpie/ollama-cloud/deepseek-v4.1-flash:1017' })}
+        run={undefined}
+        busy={false}
+        notice={undefined}
+        onRun={() => {}}
+        onOpenSession={undefined}
+        onEdit={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+    const list = must(view.container, 'dl')
+    expect(list.className).toBe(css.meta)
+    // And each cell keeps its own label directly above its own value
+    const cells = Array.from(list.children)
+    expect(cells.map(cell => cell.querySelector('dt')?.textContent)).toEqual([
+      t('member.preset'),
+      t('member.permission'),
+      t('member.model'),
+    ])
+    for (const cell of cells) {
+      expect(cell.className).toBe(css.metaItem)
+      expect(cell.children.length).toBe(2)
+      expect(cell.children[0].tagName).toBe('DT')
+      expect(cell.children[1].tagName).toBe('DD')
+    }
+  })
+
+  it('operator sees a clipped meta value keep its full text in its accessible name', () => {
+    // Given the rule that holds a value to one line
+    const value = rule('.metaValue')
+    expect(value).toContain('white-space: nowrap')
+    expect(value).toContain('overflow: hidden')
+    expect(value).toContain('text-overflow: ellipsis')
+    // When the track is far narrower than the pin it carries
+    const pin = 'magpie/ollama-cloud/deepseek-v4.1-flash:1017'
+    const view = mount(
+      <MemberCard
+        member={memberOf({ model: pin })}
+        run={undefined}
+        busy={false}
+        notice={undefined}
+        onRun={() => {}}
+        onOpenSession={undefined}
+        onEdit={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+    const cell = Array.from(view.container.querySelectorAll('dd')).find(node => node.textContent === pin)
+    if (cell === undefined) throw new Error('no value node carrying the whole pin')
+    // Then the clip is visual only: the whole pin is the node's text, its
+    // tooltip and its accessible name
+    expect(cell.className).toBe(css.metaValue)
+    expect(cell.getAttribute('title')).toBe(pin)
+    expect(cell.getAttribute('aria-label')).toBe(pin)
+  })
+
+  it('operator sees the page header put the title and the refresh control on one baseline', () => {
+    // Given the header row
+    const header = rule('.header')
+    // When the title block and the 44px refresh control share it
+    // Then one baseline anchors both, so the control is not nudged per element
+    expect(header).toContain('display: flex')
+    expect(header).toContain('align-items: baseline')
+    expect(header).toContain('padding: 16px var(--agents-inline-inset) 8px')
+  })
+
+  it('operator sees the header, the scrolling body and the banner share exactly one inline inset', () => {
+    // Given the three surfaces that carry the page gutter
+    // When a panel, a card grid and the header row are measured against the
+    // page edge
+    // Then all three resolve one declaration, so no box can sit a hairline off
+    // the box beside it
+    expect(rule('.page')).toContain('--agents-inline-inset: 16px')
+    expect(rule('.header')).toContain('var(--agents-inline-inset)')
+    expect(rule('.body')).toContain('var(--agents-inline-inset)')
+    expect(rule('.banner')).toContain('var(--agents-inline-inset)')
+    // And the panel and the grid inside the body spend no page inset of their
+    // own, so they end on the edge the body hands them
+    expect(rule('.panel')).toContain('padding: 12px')
+    expect(rule('.memberGrid')).toContain('padding: 0')
+  })
+
+  it('operator sees an inline run notice sit above the pinned action row', () => {
+    // Given a card that reports the outcome of its last run attempt inline
+    const message = t('member.runStarted', { session: 'session-42' })
+    const view = mount(
+      <MemberCard
+        member={memberOf()}
+        run={undefined}
+        busy={false}
+        notice={{ memberId: 'member-1', kind: 'ok', message }}
+        onRun={() => {}}
+        onOpenSession={undefined}
+        onEdit={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+    const card = must(view.container, '[data-dsh-part="member-card"]')
+    // When the card's blocks are read in document order
+    const order = Array.from(card.children)
+    const notice = order.find(node => node.textContent === message)
+    if (notice === undefined) throw new Error('no notice node inside the card')
+    const actions = card.lastElementChild
+    if (actions === null) throw new Error('the member card has no trailing block')
+    // Then the notice is announced above the actions, and the actions still end
+    // the card, so the auto margin keeps the row on the shared bottom edge while
+    // a notice is on screen
+    expect(notice.getAttribute('role')).toBe('status')
+    expect(actions.className).toBe(css.memberActions)
+    expect(order.indexOf(notice)).toBeLessThan(order.indexOf(actions))
+    // And the always-mounted run status line stays above both
+    const status = must(card, '[data-dsh-part="member-run-status"]')
+    expect(order.indexOf(status)).toBeLessThan(order.indexOf(notice))
   })
 })

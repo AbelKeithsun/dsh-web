@@ -11,6 +11,10 @@
  */
 
 .page {
+  /* The one inline inset the header row, the scrolling body and the page banner
+     share, so every panel and card grid inside them ends on the same edge. The
+     narrow-viewport rule below moves this single declaration. */
+  --agents-inline-inset: 16px;
   display: flex;
   flex-direction: column;
   block-size: 100%;
@@ -26,11 +30,13 @@
 .header {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  /* The title and the refresh control share one text baseline, so the control
+     belongs to the heading row instead of floating beside it. */
+  align-items: baseline;
   justify-content: space-between;
   gap: 8px;
   min-inline-size: 0;
-  padding: 16px 16px 8px;
+  padding: 16px var(--agents-inline-inset) 8px;
 }
 
 .headerTitle {
@@ -61,7 +67,7 @@
   min-inline-size: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 8px 16px 24px;
+  padding: 8px var(--agents-inline-inset) 24px;
 }
 
 .section {
@@ -267,9 +273,12 @@
   overflow-wrap: anywhere;
 }
 
+/* Three equal tracks, one per pinned field: every card spends the same column
+   on the same label, so the label row and the value row of neighbouring cards
+   share one line instead of redistributing per content length. */
 .meta {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px 12px;
   min-inline-size: 0;
   margin: 0;
@@ -288,13 +297,19 @@
   color: var(--dsw-alias-label-tertiary, #6b7280);
 }
 
+/* One line per value: a long pin is clipped with an ellipsis inside its own
+   track instead of growing a second line, and MemberCard.tsx carries the whole
+   string in the node's title and accessible name, so the clip loses nothing. */
 .metaValue {
   margin: 0;
+  min-inline-size: 0;
   max-inline-size: 100%;
+  overflow: hidden;
   font-size: 12px;
   line-height: 1.4;
   color: var(--dsw-alias-label-secondary, #4b5563);
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .memberBrief {
@@ -329,11 +344,15 @@
   flex: 0 0 auto;
 }
 
+/* Pinned to the card bottom: the auto margin spends the free block space above
+   the row, so every card of a grid row puts its actions on one shared line no
+   matter how tall its fields turned out. */
 .memberActions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   min-inline-size: 0;
+  margin-block-start: auto;
 }
 
 .primary {
@@ -457,8 +476,8 @@
 /* A page-level banner sits between the header and the scrolling body, so it
    carries the gutters the body applies to its own content. */
 .banner {
-  margin: 0 16px 8px;
-  max-inline-size: calc(100% - 32px);
+  margin: 0 var(--agents-inline-inset) 8px;
+  max-inline-size: calc(100% - 2 * var(--agents-inline-inset));
 }
 
 .noticeOk {
@@ -718,17 +737,18 @@
 }
 
 @media (max-width: 420px) {
+  /* One override point: the inset shrinks here and every gutter above follows
+     it, so no panel keeps the wide value while its neighbour narrows. */
+  .page {
+    --agents-inline-inset: 12px;
+  }
+
   .header {
-    padding: 12px 12px 8px;
+    padding: 12px var(--agents-inline-inset) 8px;
   }
 
   .body {
-    padding: 8px 12px 20px;
-  }
-
-  .banner {
-    margin-inline: 12px;
-    max-inline-size: calc(100% - 24px);
+    padding: 8px var(--agents-inline-inset) 20px;
   }
 }
 
