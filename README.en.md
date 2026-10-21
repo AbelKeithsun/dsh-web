@@ -44,7 +44,7 @@ dsh-web is an all-in-one modular plugin ecosystem and AI agent workbench for Dee
 Stock DeepSeek Harness Web delivers fundamental chat interactions and tool execution capabilities. However, production workflows often require concurrent task scheduling, persistent background runs, remote collaboration, and developer-oriented tooling.
 
 dsh-web mounts directly into `dsh web` via official profiles without modifying DSH core source code, providing a comprehensive modular extension suite:
-- **Developer Operations & Collaboration Plugins**: Long-running autonomous task boards (multi-agent cascade/Teams orchestration, adversarial judge verification, and cron scheduling), cross-device mobile remote control, SSH terminal operations and file transfers, Git history graphs with worktree isolation, full session archive management, and model capability declarations;
+- **Developer Operations & Collaboration Plugins**: Long-running autonomous task boards (multi-agent cascade/Teams orchestration, adversarial judge verification, and cron scheduling), LiangShen Mode (minimal persona, programmatic tool transport, dispatcher discipline), cross-device mobile remote control, SSH terminal operations and file transfers, Git history graphs with worktree isolation, full session archive management, and model capability declarations;
 - **Decoupled Visual Themes & Assets**: Functional plugins and visual assets remain strictly separated. The skin loader handles stylesheet and dynamic effect rendering, while themes and animated desktop pets can be installed on demand from the [DSH Workshop](#workshop-dsh-marketcom);
 - **Bundled or Pick-and-Choose**: Install everything with one command via `@linxin666/dsh-web-all`, or install individual plugins independently. The aggregate pre-integrates every family plugin - see the [plugin bundle installation and configuration guide](packages/dsh-web-all/README.md).
 
@@ -52,7 +52,7 @@ dsh-web mounts directly into `dsh web` via official profiles without modifying D
 
 | Core Capability | Stock dsh web | dsh-web Modular Ecosystem Advantage |
 | --- | --- | --- |
-| Agent Presets | Stock presets only (Standard / Minimal, etc.) | Stock presets + instant activation of community presets from Workshop |
+| Agent Presets & Disciplines | Stock presets only (Standard / Minimal, etc.), heavy context overhead | Stock presets + Workshop presets + LiangShen Mode (minimal persona, PTC program transport, gentle MCP paging, fact register, composer slot lever) |
 | Custom Model Capabilities | No visual configuration for model attributes | Visual declarations for multimodal vision image inputs and DeepSeek-R1 reasoning effort tiers, with instant provider toggles |
 | Autonomous Task Board | None | Host-authoritative 5-column board + multi-agent tree cascade/native Teams orchestration + double-blind judge quality gate + offline cron scheduling & sleep inhibition + GitHub Issue-to-PR automation + 8 model-callable tools |
 | Mobile & Remote Control | Localhost browser only | Instant QR pairing for iOS / Android mobile browsers, cross-device PC access, WebSocket token streaming & touch gestures |
@@ -67,6 +67,7 @@ dsh-web mounts directly into `dsh web` via official profiles without modifying D
 | User Goal & Scenario | Recommended Solution & Capability | Entry Point |
 | --- | --- | --- |
 | Build 24/7 autonomous background AI engineering pipelines, scheduled code audits, multi-agent team orchestration, automatic GitHub issue-to-PR resolution, or goal-driven delivery | Task Board: host background scheduling, multi-agent cascade/Teams orchestration, adversarial judge verification, automated GitHub PR workflows, and sleep inhibition | [Task board and cron execution](packages/dsh-task-board/README.md) |
+| Maximize coding efficiency and minimize context waste with compact prompts, programmatic tool calling (PTC), and strict dispatcher discipline | LiangShen Mode: Minimal persona, run_code program transport, gentle MCP paging, fact register, and composer lever | [LiangShen Mode Preset & PTC](packages/dsh-liangshen/README.md) |
 | Remote access and control of DeepSeek Web UI from iPhone, Android phones, iPads, or remote PCs | Mobile Remote: instant QR pairing, WebSocket real-time token streaming, touch gestures & auth gates | [Mobile and PC browser remote control](packages/dsh-remote-web-ui/README.md) |
 | Delegate Linux server DevOps, SFTP file transfers, SSH terminal interactions, or incident response to AI agents | SSH Remote Ops: web terminal (xterm.js), visual SFTP transfers, port forwarding tunnels, cluster commands | [SSH terminal, file transfer, and tunnels](packages/dsh-ssh/README.md) |
 | Monitor DeepSeek API and LLM token usage metrics, query provider account balances, and track subscription quotas | Usage Statistics: daily token breakdown, balance queries, bill estimation & Token Bank | [Usage statistics and Token Bank](packages/dsh-usage/README.md) |
@@ -113,6 +114,19 @@ Open from the "Task Board" icon in the sidebar. More than a visual card interfac
 | Multi-Column Board & Agent Collaboration | Background Scheduling & Configuration |
 | --- | --- |
 | ![DeepSeek Harness Task Board — AI agent multi-column task scheduling and lifecycle](docs/screenshots/09-task-board.png) | ![DeepSeek Task Details & Scheduled Execution — Agent configuration, cron scheduling, and run history](docs/screenshots/10-task-board-detail-cron.png) |
+
+### LiangShen Mode（LiangShen Mode · Minimal Persona, PTC Runtime & Dispatcher Engine）
+
+Toggle via the dedicated slot-machine lever in the composer on new-session screens, or select from "Settings > Agent Presets". LiangShen Mode (`dsh-liangshen`) is a killer preset and runtime engine rebuilt specifically for **maximum reasoning efficiency, minimal static context overhead, and rigorous engineering discipline**. Addressing common LLM pitfalls in complex programming — such as bloated system instructions, tool schemas flooding context windows, verbose rambling reasoning loops ("I need to..."), and degradation across long conversations — LiangShen Mode combines an action-driven minimal prompt, Programmatic Tool Calling (PTC), gentle MCP paging, and working-context fact registers to deliver an exceptionally sharp coding experience:
+
+- **Minimal Persona & Action-Driven Working Discipline (Zero Prompt Waste)**: Strips away standard boilerplate instructions, condensing system prompts to a single-line persona and combat-tested engineering disciplines. Enforces reflection circuit-breaking (abort speculation after two reasoning passes without new evidence and immediately inspect via native tools), action orientation (thinking decides the immediate next operation rather than pre-rehearsing code), parallel exploration (dispatch multiple independent tool checks concurrently in one turn), YAGNI and PDCA cycles (validate single assumptions with zero redundant comments), and bounded convergence (converge within 2–3 inspection turns to answer or edit). This keeps the model's full attention focused strictly on your codebase.
+- **Programmatic Tool Calling (PTC Transport)**: Replaces the heavyweight practice of serializing hundreds of JSON schemas on every API turn. By default, the wire collapses to a single `run_code` execution endpoint; all remaining tools are accessed programmatically via generated strongly typed SDKs running inside an isolated worker sandbox. The static transmission footprint remains microscopic regardless of tool count; models can dispatch concurrent calls via `Promise.all` and filter, slice, or aggregate large tool outputs inside the sandbox before returning concise summaries to context. For scenarios better suited to direct invocation, a one-click toggle restores the assembled Native tool roster in plugin settings.
+- **Gentle Tool Paging & LRU Dynamic Activation (Gentle MCP Paging)**: Prevents dozens of connected MCP servers and extensions from overwhelming the context window. High-fan-out tool families (defaulting to `mcp__*`) remain paged out of the wire and SDK declarations on startup, presented only as compact namespace summaries. When the model needs a tool, it autonomously invokes `tool_activate({ namespace })` to mount that namespace on the fly. An LRU cache maintains up to 3 active namespaces simultaneously, automatically evicting stale ones, and safely restores state across session compactions and resumes.
+- **Key Fact Register & Near-Horizon Context Projection (Fact Register)**: Prevents long-horizon context forgetting where models lose track of initial constraints or previously diagnosed failures. The preset exposes a dedicated `fact_register` tool, allowing models to record immutable requirements, confirmed architectural choices, and disproven paths as concise single-line facts (up to 160 characters each, capped at 12 entries). Recorded facts ride the `[Working Context: ...]` line projected directly above the latest user turn, ensuring persistent visibility within the local attention window.
+- **Native Dispatcher Architecture & Triage Discipline (Dispatcher Identity)**: Ships with a built-in Dispatcher ruleset, enabling the agent to orchestrate complex engineering workflows like a technical lead. Features structured complexity triage (L0/L1 tasks execute directly; L2 multi-step initiatives require clarification interviews -> planning -> parallel subagent delegation -> two-tier acceptance verification); bounds interviews to a strict budget (maximum 4 questions per round, 3 rounds total, ordered by blast radius with assumption defaults); and maintains project state reliably within `todo_write`.
+- **Composer Slot Lever & Jackpot Particle Effects (Interactive Lever)**: Integrates an interactive vintage slot-machine lever directly beside the model selector in the chat composer on new sessions. Pulling the lever down (via dragging, clicking, or keyboard trigger) arms LiangShen Mode with celebratory jackpot visual effects (particle burst, shockwave rings, sparks, and an Easter-egg banner); pushing it up seamlessly restores your previous default preset. The lever adapts dynamically to active skin themes and gracefully steps aside once a conversation begins.
+
+For detailed architecture, benchmark evaluations, and configuration options, see the [dsh-liangshen README](packages/dsh-liangshen/README.md).
 
 ### Mobile Remote Control（Mobile Remote · Mobile Access & Cross-Device Touch Optimization）
 
@@ -179,7 +193,6 @@ Permanent deletions cannot be undone, and all operational routes bind strictly t
 
 - **Skill Explorer** (`dsh-client-ui-skill-explorer`): Inspect and manage loaded agent skills grouped by origin, featuring keyword filtering across names and descriptions, workspace scoping, and activation toggling.
 - **Plugin Manager** (`dsh-client-ui-plugin-manager`): Install plugins from npm or git repositories via official host interfaces, inspect statuses, and adjust configuration settings.
-- **LiangShen Mode** (`dsh-liangshen`): Minimal system prompts, programmatic tool calling (PTC), and dispatcher interview discipline to reduce context overhead, with a slot-machine toggle lever for new sessions.
 - **Plugin Self-Update** (`dsh-update`): Automatically detects new releases on npm and provides release notes with one-click in-place upgrades right from the sidebar footer.
 - **Task Board GitHub Sync** (`dsh-client-ui-task-board-github`): Seamlessly connects GitHub Issues with task board cards, enabling autonomous AI Agent bug triage and automated PR delivery.
 - **Session ID Helper** (`dsh-client-ui-session-id`): Quick sidebar-footer access to copy full session IDs and search across active/archived sessions with zero host overhead.
@@ -251,12 +264,12 @@ Install individual components independently if you prefer not to use the complet
 
 ```sh
 dsh plugin --profile web add @linxin666/dsh-client-ui-task-board@latest              # Task Board
+dsh plugin --profile web add @linxin666/dsh-liangshen@latest                       # LiangShen Mode (Minimal Preset & PTC)
 dsh plugin --profile web add @linxin666/dsh-client-ui-task-board-github@latest      # Task board GitHub Issues sync extension
 dsh plugin --profile web add @linxin666/dsh-ssh@latest                             # SSH Remote Ops
 dsh plugin --profile web add @linxin666/dsh-usage@latest                           # Usage Statistics
 dsh plugin --profile web add @linxin666/dsh-pet@latest                             # Desktop Pet
 dsh plugin --profile web add @linxin666/dsh-session-archive@latest                 # Session Archive Manager
-dsh plugin --profile web add @linxin666/dsh-liangshen@latest                       # LiangShen Mode
 dsh plugin --profile web add @linxin666/dsh-update@latest                          # Plugin Self-Update
 dsh plugin --profile web add @linxin666/dsh-client-ui-session-id@latest            # Session ID Helper
 dsh plugin --profile web add @linxin666/dsh-client-ui-skill-explorer@latest        # Skill Explorer
@@ -273,6 +286,7 @@ All plugins are published under the `@linxin666/dsh-*` npm scope:
 | [@linxin666/dsh-web-all](https://www.npmjs.com/package/@linxin666/dsh-web-all) | Aggregate bundle: complete suite of feature plugins and skin center |
 | [@linxin666/dsh-client-ui-task-board](https://www.npmjs.com/package/@linxin666/dsh-client-ui-task-board) | Task board: host-authoritative autonomous execution, multi-agent cascade/Teams orchestration, judge verification & cron scheduling |
 | [@linxin666/dsh-client-ui-task-board-github](https://www.npmjs.com/package/@linxin666/dsh-client-ui-task-board-github) | Task board extension: GitHub Issues sync, on by default and switchable off in settings |
+| [@linxin666/dsh-liangshen](https://www.npmjs.com/package/@linxin666/dsh-liangshen) | LiangShen Mode: Minimal system prompt, PTC tool dispatch, MCP paging, and dispatcher discipline |
 | [@linxin666/dsh-remote-web-ui](https://www.npmjs.com/package/@linxin666/dsh-remote-web-ui) | Mobile remote control: QR pairing, cross-device sync, and touch gestures |
 | [@linxin666/dsh-ssh](https://www.npmjs.com/package/@linxin666/dsh-ssh) | SSH operations: web terminal, SFTP transfers, tunnels, and cluster commands |
 | [@linxin666/dsh-usage](https://www.npmjs.com/package/@linxin666/dsh-usage) | Usage statistics: token consumption, balances, plan tracking, and Token Bank |
@@ -286,7 +300,6 @@ All plugins are published under the `@linxin666/dsh-*` npm scope:
 | [@linxin666/dsh-session-archive](https://www.npmjs.com/package/@linxin666/dsh-session-archive) | Session archive: search, batch restore, and cascade pruning |
 | [@linxin666/dsh-client-ui-community-plugins](https://www.npmjs.com/package/@linxin666/dsh-client-ui-community-plugins) | Community plugin source: authoritative index powering the Workshop |
 | [@linxin666/dsh-client-ui-web-ui-settings](https://www.npmjs.com/package/@linxin666/dsh-client-ui-web-ui-settings) | Preferences panel: global settings and UI configurations |
-| [@linxin666/dsh-liangshen](https://www.npmjs.com/package/@linxin666/dsh-liangshen) | LiangShen Mode: Minimal system prompt, PTC tool dispatch, and dispatcher interview discipline |
 | [@linxin666/dsh-update](https://www.npmjs.com/package/@linxin666/dsh-update) | Plugin Self-Update: Release detection, changelog panel, and one-click in-place upgrades |
 | [@linxin666/dsh-client-ui-session-id](https://www.npmjs.com/package/@linxin666/dsh-client-ui-session-id) | Session ID Helper: Sidebar panel for quick full session ID viewing and copy |
 | [@linxin666/dsh-i18n](https://www.npmjs.com/package/@linxin666/dsh-i18n) | Internationalization Pack: Russian localization and multilingual dictionary provider |

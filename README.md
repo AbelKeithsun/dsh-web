@@ -44,7 +44,7 @@ dsh-web 是面向 DeepSeek Harness（DSH）Web GUI、DeepSeek 网页版与官方
 原生 DeepSeek Harness Web 提供了核心的对话交互与工具调用能力，但在多任务并发调度、长程后台执行、移动端协同以及工程化开发运维方面仍有扩展空间。
 
 dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方源码，为用户提供完整的模块化扩展体系：
-- **工程运维与协同插件**：涵盖长程自动化任务看板（多 Agent 级联/Teams 编排、对抗验收质检与定时调度）、移动端与跨设备远程控制、SSH 终端传输、Git 图谱与 worktree 隔离、全量会话归档管理以及模型能力声明编辑器；
+- **工程运维与协同插件**：涵盖长程自动化任务看板（多 Agent 级联/Teams 编排、对抗验收质检与定时调度）、梁神模式（极简 Persona、PTC 代码运行传输与敏捷调度纪律）、移动端与跨设备远程控制、SSH 终端传输、Git 图谱与 worktree 隔离、全量会话归档管理以及模型能力声明编辑器；
 - **视觉主题与资产解耦**：功能插件与样式资产完全分离。皮肤插件负责底层渲染，多样化的主题皮肤（含样式、贴图与动态特效）以及桌面宠物可通过 [DSH 创意工坊](#创意工坊dsh-marketcom)自由安装；
 - **全家桶聚合与按需组合**：既支持通过 `@linxin666/dsh-web-all` 聚合包一键安装完整功能，也支持按需单独安装特定插件。聚合包预集成家族全部功能插件，详见[插件全家桶使用指南](packages/dsh-web-all/README.zh.md)。
 
@@ -52,7 +52,7 @@ dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方�
 
 | 核心能力与场景 | 原生 dsh web | dsh-web 全家桶优势 |
 | --- | --- | --- |
-| Agent 预设管理 | 仅官方预设（Standard / Minimal 等） | 官方预设 + 创意工坊社区海量预设一键启用 |
+| Agent 预设与执行纪律 | 仅官方标准预设（Standard / Minimal 等），静态上下文开销大 | 官方预设 + 创意工坊社区预设 + 梁神模式（极简 Persona 约束、PTC 程序化工具传输、MCP 温和分页、关键事实登记簿与老虎机拨杆） |
 | 自定义模型能力 | 无法可视化修改模型属性 | 逐模型可视化声明 Vision 图片多模态支持与 DeepSeek-R1 推理思考强度档位，支持供应商快速启闭 |
 | 自动化任务看板 | 无 | Host 权威 5 列看板 + 多 Agent 树状级联/原生 Teams 编排 + 裁判模型双盲验收门控 + 离线 Cron 定时与防休眠电源保护 + GitHub Issue 自动提 PR 闭环 + 8 项模型原生工具面 |
 | 移动端与跨设备控制 | 仅限本机浏览器 | 手机扫码直连（iOS / Android）、跨设备 PC 浏览器访问、WebSocket 实时流式响应与专属移动端触控优化 |
@@ -67,6 +67,7 @@ dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方�
 | 核心使用场景与用户需求 | 推荐解决方案与能力 | 快速入口 |
 | --- | --- | --- |
 | 打造 24/7 无人值守 AI 研发流水线，通过 Cron 定时巡检、多 Agent 团队级联协作、Issue 自动修复提 PR 或长程目标闭环 | 任务看板：Host 权威后台调度、多 Agent 级联/Teams 编排、对抗式裁判验收质检、GitHub Issue-to-PR 闭环、防休眠电源守护 | [任务看板与 cron 定时执行](packages/dsh-task-board/README.zh.md) |
+| 追求极致编码推理效率与超低上下文开销，需要极简 Prompt、程序化工具调用（PTC）与严苛 Agent 调度/工作纪律 | 梁神模式：极简 Persona、run_code 程序化传输、MCP 温和分页、关键事实登记簿与老虎机拨杆开关 | [梁神模式预设与 PTC 传输](packages/dsh-liangshen/README.zh.md) |
 | 在 iPhone / Android 手机、iPad 或异地电脑上远程访问与控制 DeepSeek Web UI | 移动端远程控制：扫码即连、WebSocket 实时流式响应、移动端触控优化与安全配对门控 | [手机与 PC 浏览器远程控制](packages/dsh-remote-web-ui/README.zh.md) |
 | 委派 AI 智能体执行远程 Linux 服务器运维、SFTP 文件传输、SSH 终端交互或排查线上服务 | SSH 运维面板：Web 终端 (xterm.js)、可视化 SFTP 传输、端口转发隧道、集群批量命令 | [SSH 终端、文件传输与隧道](packages/dsh-ssh/README.zh.md) |
 | 监控 DeepSeek API 及主流大模型 Token 消耗明细、查询供应商账户余额预警或套餐进度 | 使用统计：每日消耗明细、余额查询、账单估算、套餐追踪与 Token 银行鲸元券 | [用量统计与 Token 银行](packages/dsh-usage/README.zh.md) |
@@ -113,6 +114,19 @@ dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方�
 | 多列看板与智能体协作 | 后台定时调度与参数配置 |
 | --- | --- |
 | ![DeepSeek Harness 任务看板界面 — AI 智能体多列任务状态流转与并发执行](docs/screenshots/09-task-board.png) | ![DeepSeek 任务详情与后台定时执行设置 — 智能体参数配置、Cron 调度与执行历史](docs/screenshots/10-task-board-detail-cron.png) |
+
+### 梁神模式（LiangShen Mode · 极简 Persona、PTC 运行时与高效调度引擎）
+
+在新建会话输入框左侧通过专属老虎机拨杆切换，或在“设置 > Agent 预设”中选用。梁神模式（`dsh-liangshen`）是专为追求**极致推理效率、超低静态上下文开销与严苛工程执行纪律**而深度重构的杀手级预设与运行时插件。针对主流大模型在长程编程任务中容易出现的系统提示词冗长膨胀、工具 Schema 挤占上下文、思维链无效空转（如“流水账推理”）以及多轮遗忘退化等痛点，梁神模式通过原生极简提示词、程序化代码工具调用（PTC）、MCP 温和分页与关键事实局部就近投射，提供纯粹而强悍的编程作战体验：
+
+- **极简 Persona 与严苛行动导向纪律（Zero Prompt Waste）**：彻底剥离官方 Standard 预设中冗长繁琐的系统级条文，将提示词极致收敛为单行 Persona 与经过实战千锤百炼的高效工程纪律。内置反思熔断（同一假设推演不超过两轮，缺少事实立即闭合思考并调用原生工具探测，杜绝凭空揣测）、行动导向（思考过程仅用于决定下一步具体操作，严禁在思考中预演完整代码）、并发探索（单轮内并发派发多个独立检测或搜索工具）、YAGNI 与 PDCA 循环（单步验证单一假设，不写冗余注水注释）、以及有界收敛纪律（前置检查最多 2-3 轮即刻收敛，迅速转入实际作答或编辑）。大幅降低静态 Token 占用，让模型注意力百分之百倾注于业务与代码本身。
+- **程序化工具调用传输（PTC · Programmatic Tool Calling）**：彻底终结在每次请求中平铺上百个 JSON Schema 工具参数的低效模式。默认将网络线协议（wire）极致收拢为唯一的 `run_code`（运行 TypeScript 脚本），其余所有工具均通过自动生成的强类型 SDK 在独立的沙箱线程中以代码形式调用。无论系统注册了多少复杂工具，静态传输面始终保持极小体积；模型可原生利用 `Promise.all` 编写并发工具调用，并在程序内预先过滤、聚合、提取关键数据，只将精炼结论回传至对话上下文，从根本上解决大文本输出打爆 Token 的问题。对于习惯原生工具面的场景，亦可在插件设置中一键无缝切换为组装好的原生工具清单（Native）。
+- **MCP 工具温和分页与 LRU 动态激活（Gentle Tool Paging）**：针对海量 MCP 工具或第三方插件扩展，出厂默认启用温和分页（默认匹配 `mcp__*`）。外部工具在初始状态下仅以命名空间摘要形式登记在目录消息中，既不占 wire 协议也不进 SDK 声明；当大模型判定需要使用对应工具时，可自主调用 `tool_activate({ namespace })` 按需挂载。内置 LRU 策略（上限 3 个活跃命名空间），自动淘汰最久未用的命名空间，激活状态在会话压缩与恢复后完整重建，兼具海量工具接入能力与极致小巧的静态 Schema 面。
+- **关键事实登记簿与就近状态投射（Fact Register & Working Context）**：长程多轮对话中大模型极易遗忘早期的关键业务约束或踩过的坑。插件向模型提供专属 `fact_register` 工具，可将用户硬性约束、已确认的架构决策或失败路径登记为单行事实（每条不超过 160 字符，最多保留 12 条）。关键事实随 `[Working Context: ...]` 状态行在每一轮交互中就近投射至最新消息尾部的局部注意力窗口内，从物理机制上彻底解决长上下文“中间遗忘”与重复踩坑顽疾。
+- **原生调度者架构与敏捷访谈纪律（Dispatcher Identity & Triage）**：预设出厂深度集成调度者（Dispatcher）架构规范，赋能模型以团队指挥官身份统领工程任务。内置复杂度分诊机制（L0/L1 单点任务直接敏捷执行，L2 复杂任务严格遵循“澄清访谈 -> 架构规划 -> 并发子代理派发 -> 双层严格验收”标准流）；设定严格的提问预算控制（单轮最多 4 问、总计最多 3 轮、影响面排序、假设先行），杜绝无效拉扯；任务状态权威沉淀于 `todo_write`，杜绝浮躁的敷衍式交付。
+- **新建会话老虎机拨杆与炫酷中奖特效（Composer Slot Lever）**：在新建会话输入框工具行、模型选择器左侧，精心打造了一台复古老虎机拨杆控件。下拉拨杆（支持鼠标拖拽、单击或键盘快捷操作）即可一键为当前新建会话装配梁神模式，拉下命中即触发绚丽的中奖粒子特效（闪光、冲击环、火花粒子与专属彩蛋横幅）；上推即可平滑切回默认模式。拨杆自适应全局主题色彩，且在会话开始后自动隐藏，丝滑灵动，极具极客趣味。
+
+详细机制、评测数据与高级配置参数见 [dsh-liangshen README](packages/dsh-liangshen/README.zh.md)。
 
 ### 移动端远程控制（Mobile Remote · 手机访问与跨设备触控优化）
 
@@ -179,7 +193,6 @@ dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方�
 
 - **Skill 中心**（`dsh-client-ui-skill-explorer`）：按来源集中查看与管理已加载的 agent skills，支持按名称与功能描述实时搜索过滤，多工作区独立呈现，支持一键启停与删除。
 - **插件管理器**（`dsh-client-ui-plugin-manager`）：基于官方 host 接口从 npm 或 git 仓库直接安装插件，可视化管理插件运行状态与自定义配置。
-- **梁神模式**（`dsh-liangshen`）：提供极简系统提示词、程序化工具调用（PTC）与调度者访谈纪律，降低上下文开销并在新建会话中提供拨杆开关。
 - **插件自更新**（`dsh-update`）：自动检测 npm 官方更新并在 Web GUI 侧边栏/设置中提供更新日志与一键平滑升级。
 - **任务看板 GitHub 同步**（`dsh-client-ui-task-board-github`）：为任务看板无缝接入 GitHub Issues 与 PR 状态双向同步，自动化驱动 AI Agent 修复与提 PR。
 - **会话 ID 辅助**（`dsh-client-ui-session-id`）：侧边栏底部提供当前会话全量 ID 的一键复制与快速检索定位。
@@ -251,12 +264,12 @@ dsh web
 
 ```sh
 dsh plugin --profile web add @linxin666/dsh-client-ui-task-board@latest              # 任务看板
+dsh plugin --profile web add @linxin666/dsh-liangshen@latest                       # 梁神模式（极简预设与 PTC 传输）
 dsh plugin --profile web add @linxin666/dsh-client-ui-task-board-github@latest      # 任务看板 GitHub Issues 同步扩展
 dsh plugin --profile web add @linxin666/dsh-ssh@latest                             # 远程连接（SSH）
 dsh plugin --profile web add @linxin666/dsh-usage@latest                           # 使用统计
 dsh plugin --profile web add @linxin666/dsh-pet@latest                             # 桌面悬浮宠物
 dsh plugin --profile web add @linxin666/dsh-session-archive@latest                 # 会话归档管理
-dsh plugin --profile web add @linxin666/dsh-liangshen@latest                       # 梁神模式
 dsh plugin --profile web add @linxin666/dsh-update@latest                          # 插件自更新
 dsh plugin --profile web add @linxin666/dsh-client-ui-session-id@latest            # 会话 ID 复制
 dsh plugin --profile web add @linxin666/dsh-client-ui-skill-explorer@latest        # Skill 中心
@@ -273,6 +286,7 @@ dsh plugin --profile web add @linxin666/dsh-i18n@latest                         
 | [@linxin666/dsh-web-all](https://www.npmjs.com/package/@linxin666/dsh-web-all) | 全家桶聚合包：一站式包含全部功能插件与皮肤中心 |
 | [@linxin666/dsh-client-ui-task-board](https://www.npmjs.com/package/@linxin666/dsh-client-ui-task-board) | 任务看板：Host 权威长程后台自动化、多 Agent 级联/Teams 编排、对抗质检与 Cron 定时调度 |
 | [@linxin666/dsh-client-ui-task-board-github](https://www.npmjs.com/package/@linxin666/dsh-client-ui-task-board-github) | 任务看板扩展：GitHub Issues 同步（默认开启，设置可关） |
+| [@linxin666/dsh-liangshen](https://www.npmjs.com/package/@linxin666/dsh-liangshen) | 梁神模式：极简系统提示词、PTC 工具调用、MCP 分页与调度者敏捷工作纪律 |
 | [@linxin666/dsh-remote-web-ui](https://www.npmjs.com/package/@linxin666/dsh-remote-web-ui) | 移动端远程控制：扫码配对、跨设备协同与触控优化 |
 | [@linxin666/dsh-ssh](https://www.npmjs.com/package/@linxin666/dsh-ssh) | 远程运维面板：Web 终端、SFTP 传输、端口转发与集群执行 |
 | [@linxin666/dsh-usage](https://www.npmjs.com/package/@linxin666/dsh-usage) | 用量统计：Token 消耗、余额估算、套餐追踪与 Token 银行 |
@@ -286,7 +300,6 @@ dsh plugin --profile web add @linxin666/dsh-i18n@latest                         
 | [@linxin666/dsh-session-archive](https://www.npmjs.com/package/@linxin666/dsh-session-archive) | 会话归档：全量会话检索、批量恢复与级联清理 |
 | [@linxin666/dsh-client-ui-community-plugins](https://www.npmjs.com/package/@linxin666/dsh-client-ui-community-plugins) | 社区数据源：创意工坊插件目录权威清单 |
 | [@linxin666/dsh-client-ui-web-ui-settings](https://www.npmjs.com/package/@linxin666/dsh-client-ui-web-ui-settings) | 综合设置面板：dsh-web 全局偏好与样式配置 |
-| [@linxin666/dsh-liangshen](https://www.npmjs.com/package/@linxin666/dsh-liangshen) | 梁神模式：极简系统提示词、PTC 工具调用与调度者访谈纪律 |
 | [@linxin666/dsh-update](https://www.npmjs.com/package/@linxin666/dsh-update) | 插件自更新：版本检测、更新日志面板与一键原地升级 |
 | [@linxin666/dsh-client-ui-session-id](https://www.npmjs.com/package/@linxin666/dsh-client-ui-session-id) | 会话 ID 复制：侧边栏快速查看与一键复制会话全量 ID |
 | [@linxin666/dsh-i18n](https://www.npmjs.com/package/@linxin666/dsh-i18n) | 国际化语言包：俄语本地化及家族插件多语言字典 |
