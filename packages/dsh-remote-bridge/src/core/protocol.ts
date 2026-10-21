@@ -484,6 +484,14 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 17 when the live-activity channel shipped (§29.2): this bridge now sends the
+ * lock-screen card a suspended app cannot update itself, addressed to the
+ * per-card APNs tokens {@link METHOD_PUSH_REGISTER} already carries and projected
+ * per session rather than per bridge. It is a pure addition — no new method, no
+ * new capability name, and no existing frame, field or topic changes shape — so
+ * the minor counts it alone: a client that wants a card has to read 17 before it
+ * registers one, because a bridge below this one has no sending path at all and
+ * would answer `ok:true` to a registration it can never use.
  * 16 when the push channel shipped: behind {@link CAP_PUSH} a client may call
  * {@link METHOD_PUSH_REGISTER} and have the device table remember an APNs token,
  * so a phone learns a turn ended — or that a question is waiting — while its
@@ -554,7 +562,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 16
+export const MINOR = 17
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
