@@ -20,6 +20,7 @@
 import { createPrivateKey, sign, type KeyObject } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { connect, type ClientHttp2Session } from 'node:http2'
+import type { LiveActivityAddress, LiveActivityNotification, LiveActivitySender } from '../core/liveactivity.ts'
 import type { PushAddress, PushNotification, PushSendResult, PushSender } from '../core/push.ts'
 
 /** Production APNs authority. */
@@ -28,6 +29,14 @@ export const APNS_PRODUCTION_AUTHORITY = 'api.push.apple.com'
 export const APNS_SANDBOX_AUTHORITY = 'api.sandbox.push.apple.com'
 /** Path prefix of one device delivery. */
 export const APNS_DEVICE_PATH = '/3/device/'
+/**
+ * The topic suffix a Live Activity push needs.
+ *
+ * A Live Activity is addressed under the app bundle's own topic with this
+ * suffix appended (§29); the bare bundle is the alert channel's topic, and
+ * sending a card there is delivered as an alert the App cannot decode.
+ */
+export const APNS_LIVE_ACTIVITY_TOPIC_SUFFIX = '.push-type.liveactivity'
 /**
  * How long one signed provider token is reused.
  *
@@ -129,6 +138,42 @@ export function apnsRequestSpec(target: PushAddress, jwt: string): ApnsRequestSp
   }
 }
 
+/**
+ * The topic one Live Activity push is addressed under.
+ * @param bundle - the app bundle the device registered with.
+ * @returns the bundle plus the Live Activity suffix, appended once.
+ */
+export function liveActivityTopicOf(bundle: string): string {
+  return bundle.endsWith(APNS_LIVE_ACTIVITY_TOPIC_SUFFIX) ? bundle : `${bundle}${APNS_LIVE_ACTIVITY_TOPIC_SUFFIX}`
+}
+
+/**
+ * The request one Live Activity push becomes.
+ *
+ * Three headers differ from the alert request beside it, and each of them is a
+ * rule rather than a preference: the push type is `liveactivity`, the topic is
+ * the app bundle's Live Activity topic, and the expiration is `0` — a card
+ * update that could not be delivered now must never be delivered later, because
+ * it would overwrite the present with the past (§29).
+ * @param target - the card being pushed to.
+ * @param jwt - the provider token.
+ * @returns the authority, path and headers of the POST.
+ */
+export function liveActivityRequestSpec(target: LiveActivityAddress, jwt: string): ApnsRequestSpec {
+  return {
+    authority: target.environment === 'production' ? APNS_PRODUCTION_AUTHORITY : APNS_SANDBOX_AUTHORITY,
+    path: `${APNS_DEVICE_PATH}${target.token}`,
+    headers: {
+      authorization: `bearer ${jwt}`,
+      'apns-topic': liveActivityTopicOf(target.bundle),
+      'apns-push-type': 'liveactivity',
+      'apns-priority': '10',
+      'apns-expiration': '0',
+      'content-type': 'application/json',
+    },
+  }
+}
+
 /** The reason APNs named, or its raw answer when it named none. */
 function apnsReason(text: string): string {
   try {
@@ -157,10 +202,10 @@ export interface ApnsSenderOptions {
  * The APNs delivery half of the push channel.
  *
  * Every method resolves: a delivery that failed is a {@link PushSendResult} with
- * `ok: false`, never a rejection, because the caller is a broadcast path that
+ * `ok: false`, never a rejection, because both callers sit on frame paths that
  * must not learn about APNs at all.
  */
-export class ApnsSender implements PushSender {
+export class ApnsSender implements PushSender, LiveActivitySender {
   readonly #config: ApnsConfig
   readonly #log: (message: string) => void
   readonly #now: () => number
@@ -185,8 +230,38 @@ export class ApnsSender implements PushSender {
     } catch (error) {
       return { ok: false, reason: `signing key unusable: ${String(error)}` }
     }
-    const spec = apnsRequestSpec(target, jwt)
-    const body = JSON.stringify(notification)
+    return await this.#post(apnsRequestSpec(target, jwt), JSON.stringify(notification))
+  }
+
+  /**
+   * Deliver one Live Activity push, or report why it did not arrive.
+   *
+   * The same provider token, the same transport and the same "resolve, never
+   * reject" rule as {@link send}; only the request's headers and the body differ,
+   * and both are built outside this class so the contract stays assertable.
+   */
+  async sendLiveActivity(target: LiveActivityAddress, notification: LiveActivityNotification): Promise<PushSendResult> {
+    let jwt: string
+    try {
+      jwt = await this.#providerToken()
+    } catch (error) {
+      return { ok: false, reason: `signing key unusable: ${String(error)}` }
+    }
+    return await this.#post(liveActivityRequestSpec(target, jwt), JSON.stringify(notification))
+  }
+
+  /**
+   * POST one already-built body to APNs.
+   *
+   * One HTTP/2 session per delivery, closed as soon as the answer is in: the
+   * provider API has no session to keep warm, and one left open would outlive the
+   * caller that wanted it. Every failure resolves, because both callers sit on
+   * frame paths that must not learn about APNs at all.
+   * @param spec - the authority, path and headers of the delivery.
+   * @param body - the JSON body to send.
+   * @returns whether APNs accepted it, and why not when it did not.
+   */
+  async #post(spec: ApnsRequestSpec, body: string): Promise<PushSendResult> {
     const authority = spec.authority
     return await new Promise<PushSendResult>((resolve) => {
       let settled = false

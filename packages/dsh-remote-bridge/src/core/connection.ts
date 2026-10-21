@@ -25,6 +25,7 @@ import { EventSequence, FRAME_TOO_LARGE, MAX_FRAME_BYTES, decodeClientFrame, enc
 import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension.ts'
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import { scopeKey, type JobRoster, type JobsPayload } from './jobs.ts'
+import type { LiveActivityNotifier } from './liveactivity.ts'
 import type { PairingService } from './pairing.ts'
 import type { PushNotifier } from './push.ts'
 import { pushEventOfTurnEnd } from './push.ts'
@@ -218,6 +219,14 @@ export interface BridgeConnectionOptions {
    * not shipped with.
    */
   readonly push?: PushNotifier
+  /**
+   * The lock-screen card path, behind the same `push.v1` channel. Absent — and it
+   * is absent whenever no APNs key is configured — is a bridge that never builds a
+   * card: the roster is still served and a question is still answered, because
+   * registering the phone's tokens and pushing to them are two different things
+   * (§28.3, §29).
+   */
+  readonly liveActivity?: LiveActivityNotifier
 }
 
 /** A device the connection proved itself to be, resolved from the upgrade request. */
@@ -1079,6 +1088,10 @@ export class BridgeConnection {
     // notification path. Best effort by construction: a session never listed
     // simply produces a payload without `w`.
     this.#options.push?.noteSessions(sessions)
+    // The same roster answers how many sessions are running, which is what a card
+    // reports; the call returns before any delivery starts, so listing pays no
+    // APNs round trip.
+    this.#options.liveActivity?.noteRoster(sessions)
     return { ok: true, rows: sessions }
   }
 
@@ -2318,7 +2331,10 @@ export class BridgeConnection {
         // know. The call returns before anything is sent and swallows its own
         // failures: the frame above is already gone, and a notification is not
         // worth a delayed or aborted stream (protocol §28.5).
-        if (delta.kind === 'turn-end') this.#options.push?.notify(pushEventOfTurnEnd(delta.reason), subscription.sessionId)
+        if (delta.kind === 'turn-end') {
+          this.#options.push?.notify(pushEventOfTurnEnd(delta.reason), subscription.sessionId)
+          this.#options.liveActivity?.noteTurnEnd(subscription.sessionId, delta.reason)
+        }
       }
     } catch (error) {
       if (!subscription.controller.signal.aborted) {

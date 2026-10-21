@@ -19,6 +19,7 @@ import { PairingService } from '../../src/core/pairing.ts'
 import { QuestionClaims } from '../../src/core/questions.ts'
 import { SessionMeta, type SessionMetaFaces } from '../../src/core/session-meta.ts'
 import { SessionPermissions } from '../../src/core/session-permissions.ts'
+import type { LiveActivityNotifier } from '../../src/core/liveactivity.ts'
 import type { PushNotifier } from '../../src/core/push.ts'
 import type { SquadTransport } from '../../src/core/squads.ts'
 import type { BridgeGateway, GatewayInvokeRequest, GatewayPeer } from '../../src/core/wire.ts'
@@ -282,6 +283,8 @@ export interface HarnessOptions {
   readonly squads?: SquadTransport
   /** The outbound notification path; the default models a bridge with no APNs key. */
   readonly push?: PushNotifier
+  /** The lock-screen card path; the default models a bridge that sends no card. */
+  readonly liveActivity?: LiveActivityNotifier
 }
 
 /** Session metadata for a host whose session services are all present. */
@@ -363,6 +366,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     ownerPeer,
     ...(options.squads === undefined ? {} : { squads: options.squads }),
     ...(options.push === undefined ? {} : { push: options.push }),
+    ...(options.liveActivity === undefined ? {} : { liveActivity: options.liveActivity }),
     now: () => Date.now(),
     clientTimeZone: () => 'Asia/Shanghai',
     log: (message: string) => { logs.push(message) },
@@ -468,6 +472,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     ownerPeer,
     ...(options.squads === undefined ? {} : { squads: options.squads }),
     ...(options.push === undefined ? {} : { push: options.push }),
+    ...(options.liveActivity === undefined ? {} : { liveActivity: options.liveActivity }),
     now: () => Date.now(),
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },

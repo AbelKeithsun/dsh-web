@@ -208,7 +208,12 @@ export class BridgeHub {
     // Only a claim that reached someone is worth a notification: the question a
     // withdrawn claim stood for can no longer be answered by any phone, and a
     // notification about it would be a card with nothing behind it (§28.5).
-    else this.#options.push?.notify('approval', sessionId)
+    else {
+      this.#options.push?.notify('approval', sessionId)
+      // The card is not a second answerer: it only says a tool is blocked, with
+      // the fixed line and none of the tool's own reason text (§29).
+      this.#options.liveActivity?.noteApproval(sessionId)
+    }
     const answer = await prompt.answer
     return answer === undefined ? await next() : answer
   }
@@ -249,6 +254,9 @@ export class BridgeHub {
         // The phone's card has to go when the desktop answered it, or the phone
         // keeps offering a question that no longer exists.
         this.broadcastTo(CAP_QUESTIONS, TOPIC_QUESTION_REQUEST, questionPayload('settled', question))
+        // The lock-screen card says the same thing: a card still asking for an
+        // answer nobody owes any more is the one state it must never show.
+        this.#options.liveActivity?.noteSettled(sessionId)
       },
       onContinued: (question): void => {
         // The foreground wait ended, but the question is still answerable: the
@@ -282,7 +290,17 @@ export class BridgeHub {
     // Same rule as the approval above: a question this bridge could not hand to
     // a connected phone is withdrawn at once, so a notification would announce
     // something already gone.
-    else this.#options.push?.notify('question', sessionId)
+    else {
+      this.#options.push?.notify('question', sessionId)
+      // Only the first question's header and at most two option labels reach the
+      // card: they are the buttons it can show. The questions themselves stay on
+      // the wire, exactly as the alert channel keeps them out of its body.
+      const first = request.questions[0]
+      this.#options.liveActivity?.noteQuestion(sessionId, {
+        ...(first?.header === undefined ? {} : { header: first.header }),
+        ...(first?.options === undefined ? {} : { optionLabels: first.options.map(option => option.label) }),
+      })
+    }
     return await claim.answer
   }
 

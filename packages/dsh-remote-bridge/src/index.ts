@@ -43,6 +43,7 @@ import { JobRoster, type JobRegistryFace } from './core/jobs.ts'
 import { BridgeHub } from './core/hub.ts'
 import { createOwnerPeer } from './core/owner-peer.ts'
 import { PairingService } from './core/pairing.ts'
+import { LiveActivityNotifier } from './core/liveactivity.ts'
 import { PushNotifier } from './core/push.ts'
 import { QuestionClaims } from './core/questions.ts'
 import { WS_PATH } from './core/protocol.ts'
@@ -208,6 +209,10 @@ function applyImpl(ctx: Context): void {
   // key, no sender, and every notification path is a no-op — which is what keeps
   // the protocol byte-identical for every deployment that has none (§28).
   const apns = apnsConfigFromEnv()
+  // One client for both channels: an APNs provider token is minted per key and
+  // then reused, so a second client would only double the mint rate Apple
+  // throttles (core/push.ts, host/apns.ts).
+  const apnsSender = apns === undefined ? undefined : new ApnsSender({ config: apns, log })
   const push = new PushNotifier({
     targets: () => roster.pushTargets().map(({ push: registration }) => ({
       deviceToken: registration.deviceToken,
@@ -215,10 +220,26 @@ function applyImpl(ctx: Context): void {
       bundle: registration.bundle,
       ...(registration.locale === undefined ? {} : { locale: registration.locale }),
     })),
-    ...(apns === undefined ? {} : { sender: new ApnsSender({ config: apns, log }) }),
+    ...(apnsSender === undefined ? {} : { sender: apnsSender }),
     titles: id => sessionMeta.title(id),
     now: () => Date.now(),
     log,
+  })
+  // The lock-screen card path (§29). It reads the same roster, through the same
+  // client, and is inert for exactly the same reason: no key, no sender, no card.
+  // A token APNs reports dead is dropped from its device row here, which is the
+  // whole of the recovery — the next card registers a fresh one.
+  const liveActivity = new LiveActivityNotifier({
+    targets: () => roster.pushTargets().flatMap(({ push: registration }) => (registration.liveActivityTokens ?? []).map(({ activityId, token }) => ({
+      activityId,
+      token,
+      environment: registration.environment,
+      bundle: registration.bundle,
+    }))),
+    ...(apnsSender === undefined ? {} : { sender: apnsSender }),
+    now: () => Date.now(),
+    log,
+    retire: async (activityId, token) => await roster.removeLiveActivityToken(activityId, token),
   })
   const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
   // The extension seam publishes no protocol vocabulary of its own: another
@@ -254,6 +275,7 @@ function applyImpl(ctx: Context): void {
     ownerPeer,
     squads,
     push,
+    liveActivity,
     now: () => Date.now(),
     clientTimeZone: localTimeZone,
     log,

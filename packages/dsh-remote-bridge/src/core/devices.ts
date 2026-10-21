@@ -262,6 +262,33 @@ export class DeviceRoster {
     return false
   }
 
+  /**
+   * Forget one Live Activity token the phone no longer holds.
+   *
+   * APNs answers 410 (or 400 `BadDeviceToken`) for the token of a card the app
+   * already ended, and such a token never works again: the next card arrives as a
+   * new activity with a new token through `push.register`, which is a complete
+   * replacement of this set. Dropping it here is therefore the whole recovery —
+   * retrying would only repeat the same refusal (§29 token lifecycle).
+   * @param activityId - the card the token belonged to.
+   * @param token - the token APNs refused.
+   * @returns whether any row changed.
+   */
+  async removeLiveActivityToken(activityId: string, token: string): Promise<boolean> {
+    for (const [hash, row] of this.#devices) {
+      const registration = row.push
+      if (registration === undefined) continue
+      const held = registration.liveActivityTokens
+      if (held === undefined) continue
+      const kept = held.filter(entry => !(entry.activityId === activityId && entry.token === token))
+      if (kept.length === held.length) continue
+      this.#devices.set(hash, { ...row, push: { ...registration, liveActivityTokens: kept } })
+      await this.#persist()
+      return true
+    }
+    return false
+  }
+
   /** @returns every paired device that registered for notifications. */
   pushTargets(): readonly PushTargetView[] {
     const targets: PushTargetView[] = []
