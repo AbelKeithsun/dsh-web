@@ -292,9 +292,10 @@ export class BridgeHub {
     // something already gone.
     else {
       this.#options.push?.notify('question', sessionId)
-      // Only the first question's header and at most two option labels reach the
-      // card: they are the buttons it can show. The questions themselves stay on
-      // the wire, exactly as the alert channel keeps them out of its body.
+      // Only the first question's header and at most two option labels reach that
+      // session's card: they are the choices the App can offer (§29.7: the card has
+      // no controls of its own). The questions themselves stay on the wire, exactly
+      // as the alert channel keeps them out of its body.
       const first = request.questions[0]
       this.#options.liveActivity?.noteQuestion(sessionId, {
         ...(first?.header === undefined ? {} : { header: first.header }),

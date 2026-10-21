@@ -24,10 +24,21 @@ function record(type: string, seq: number, time: number, data: unknown): unknown
   return { type: 'event', event: { type, seq, time, data } }
 }
 
-/** The one card these suites push to. */
-const CARD: LiveActivityAddress = { activityId: 'act-1', token: 'ff00aa', environment: 'sandbox', bundle: 'dev.dsh.Whale' }
+/** The card of one session; every suite addresses its cards this way. */
+function cardOf(sessionId: string, index = 1): LiveActivityAddress {
+  return {
+    activityId: 'act-' + index,
+    token: 'ff00aa' + index,
+    sessionId,
+    environment: 'sandbox',
+    bundle: 'dev.dsh.Whale',
+  }
+}
 
-/** A clock one millisecond short of the 2023 reference second these suites assume. */
+/** The one card these suites push to: the card of session s-1. */
+const CARD: LiveActivityAddress = cardOf('s-1')
+
+/** The clock these suites start at. */
 const CLOCK_START = 1_700_000_000_000
 
 /** A recording sender: what the notifier actually asked to deliver, in order. */
@@ -47,6 +58,11 @@ function recorder(): CardRecorder {
       },
     },
   }
+}
+
+/** @returns every delivery one card took, in order. */
+function sentTo(sink: CardRecorder, activityId: string): LiveActivityNotification[] {
+  return sink.sent.filter(entry => entry.target.activityId === activityId).map(entry => entry.notification)
 }
 
 /** A notifier over one card list and a clock the suite owns. */
@@ -81,9 +97,20 @@ function rosterRow(deviceId = 'dev_probe0'): Record<string, unknown> {
   }
 }
 
-/** A registration as a phone with one live card would send it. */
-function registrationOf(tokens: readonly { activityId: string; token: string }[]): PushRegistration {
+/** A registration as a phone with these cards would send it. */
+function registrationOf(tokens: readonly { activityId: string; token: string; sessionId?: string }[]): PushRegistration {
   return { deviceToken: 'aabbccdd', environment: 'sandbox', bundle: 'dev.dsh.Whale', liveActivityTokens: tokens, registeredAt: 1_700_000_000_000 }
+}
+
+/** The targets a roster row hands the notifier, exactly as the plugin wires it. */
+function targetsOf(roster: DeviceRoster): readonly LiveActivityAddress[] {
+  return roster.pushTargets().flatMap(({ push }) => (push.liveActivityTokens ?? []).map(({ activityId, token, sessionId }) => ({
+    activityId,
+    token,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    environment: push.environment,
+    bundle: push.bundle,
+  })))
 }
 
 async function rosterFile(): Promise<string> {
@@ -100,11 +127,11 @@ async function writeRoster(file: string, body: unknown): Promise<void> {
 describe('live activity: the request APNs receives', () => {
   it('operator reads the card request and every header is the frozen one', () => {
     // Given one sandbox card and its provider token
-    // When the delivery request is built
+    // When each one's delivery request is built
     const sandbox = liveActivityRequestSpec(CARD, 'jwt')
     const production = liveActivityRequestSpec({ ...CARD, environment: 'production' }, 'jwt')
     // Then the token of the card is the path, not the device's token
-    expect(sandbox.path).toBe('/3/device/ff00aa')
+    expect(sandbox.path).toBe('/3/device/ff00aa1')
     expect(production.authority).toBe('api.push.apple.com')
     expect(sandbox.authority).toBe('api.sandbox.push.apple.com')
     // And the four frozen headers are exactly what a Live Activity requires
@@ -168,7 +195,7 @@ describe('live activity: the request APNs receives', () => {
     }).aps['content-state'])).toEqual(['phase', 'statusLine', 'asOf', 'runningCount'])
   })
 
-  it('operator sees the question keys and the two-label limit the card carries', () => {
+  it('operator sees the question keys and the two-choice limit the card carries', () => {
     // Given a question with a header and three options
     // When its card is built
     const notification = buildLiveActivityNotification({
@@ -183,7 +210,7 @@ describe('live activity: the request APNs receives', () => {
     // Then the key order is the frozen one and the score is the highest there is
     expect(Object.keys(notification.aps['content-state'])).toEqual(['phase', 'statusLine', 'questionHeader', 'optionLabels', 'asOf', 'runningCount'])
     expect(notification.aps['relevance-score']).toBe(100)
-    // And only the two labels the lock screen can show as buttons remain
+    // And only the two labels the App can offer as choices remain
     expect(notification.aps['content-state'].optionLabels).toEqual(['Alpha', 'Bravo'])
     expect(notification.aps['content-state'].questionHeader).toBe('Deck')
   })
@@ -233,15 +260,15 @@ describe('live activity: what the bridge sends, and what it drops', () => {
     notifier.noteRoster([{ id: 's-1', agentRunning: true }])
     await settle()
     expect(sink.sent).toHaveLength(1)
-    // When a question arrives one second later
+    // When that same session asks a question one second later
     clock.now += 1_000
-    notifier.noteQuestion('s-2', { header: 'Deck' })
+    notifier.noteQuestion('s-1', { header: 'Deck' })
     await settle()
     // Then the card is not updated yet, and the drop is not queued for later
     expect(sink.sent).toHaveLength(1)
     // When the five seconds have passed and the same question is still open
     clock.now += LIVE_ACTIVITY_INTERVAL_MS
-    notifier.noteQuestion('s-2', { header: 'Deck' })
+    notifier.noteQuestion('s-1', { header: 'Deck' })
     await settle()
     // Then exactly that one update goes out, and only once
     expect(sink.sent).toHaveLength(2)
@@ -251,15 +278,14 @@ describe('live activity: what the bridge sends, and what it drops', () => {
   })
 
   it('operator sees the whole bridge capped at thirty cards a minute', async () => {
-    // Given thirty-five live cards
+    // Given one card per session, thirty-five sessions running
     const clock = { now: CLOCK_START }
-    const cards = Array.from({ length: LIVE_ACTIVITY_PER_MINUTE + 5 }, (_, index) => {
-      return { ...CARD, activityId: 'act-' + String(index), token: 'ff' + String(index) }
-    })
+    const cards = Array.from({ length: LIVE_ACTIVITY_PER_MINUTE + 5 }, (_, index) => cardOf('s-' + String(index), index))
+    const rows = cards.map(card => ({ id: card.sessionId ?? '', agentRunning: true }))
     const sink = recorder()
     const notifier = notifierAt(sink.sender, clock, { targets: cards })
-    // When one running state is announced
-    notifier.noteRoster([{ id: 's-1', agentRunning: true }])
+    // When that one listing is served
+    notifier.noteRoster(rows)
     await settle()
     // Then the cap is what went out and the rest was dropped
     expect(sink.sent).toHaveLength(LIVE_ACTIVITY_PER_MINUTE)
@@ -300,32 +326,76 @@ describe('live activity: what the bridge sends, and what it drops', () => {
     await roster.load()
     const harness = makeConnection({ paired: true, roster, liveActivity: notifierAt(undefined, { now: CLOCK_START }) })
     await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: [CAP_PUSH] }))
-    // When it registers the token of the card it just created
+    // When it registers the card it just created, naming the session it shows
     await harness.connection.handleText(requestFrame(2, 'push.register', {
       deviceToken: 'aabbccdd',
       environment: 'sandbox',
       bundle: 'dev.dsh.Whale',
-      liveActivityTokens: [{ activityId: 'act-1', token: 'ff00' }],
+      liveActivityTokens: [{ activityId: 'act-1', token: 'ff00', sessionId: 's-1' }],
     }))
     // Then the answer is the same empty acknowledgement as before this channel
     expect(answerOf(harness, 2)).toEqual({ ok: true, r: { ok: true } })
-    // And the token is on the row, ready for a later card
+    // And the token is on the row with the session it belongs to
+    expect(roster.pushTargets()[0]?.push.liveActivityTokens).toEqual([{ activityId: 'act-1', token: 'ff00', sessionId: 's-1' }])
+    const written = JSON.parse(await readFile(file, 'utf8')) as { devices: { push?: Record<string, unknown> }[] }
+    expect(written.devices[0]?.push).toMatchObject({ liveActivityTokens: [{ activityId: 'act-1', token: 'ff00', sessionId: 's-1' }] })
+  })
+
+  it('operator registers a card token that names no session and that card is never pushed to', async () => {
+    // Given a device whose one card carries no session id, as a client written
+    // before that field existed leaves it
+    const file = await rosterFile()
+    await writeRoster(file, { version: 2, devices: [{ ...rosterRow(), push: registrationOf([{ activityId: 'act-1', token: 'ff00' }]) }] })
+    const roster = new DeviceRoster({ file })
+    await roster.load()
+    const clock = { now: CLOCK_START }
+    const sink = recorder()
+    const logs: string[] = []
+    const notifier = notifierAt(sink.sender, clock, { targets: targetsOf(roster), logs })
+    // When a session runs and then its turn ends
+    notifier.noteRoster([{ id: 's-1', agentRunning: true }])
+    notifier.noteTurnEnd('s-1', 'completed')
+    await settle()
+    // Then not one card was pushed, because that card has no session to show
+    expect(sink.sent).toHaveLength(0)
+    // And the bridge said so exactly once, instead of guessing at a state
+    expect(logs.filter(line => line.includes('names no session'))).toHaveLength(1)
+    // And the token is still on the row: an unaddressable card is a fact about the
+    // client, not a reason to forget a token it may yet re-register
     expect(roster.pushTargets()[0]?.push.liveActivityTokens).toEqual([{ activityId: 'act-1', token: 'ff00' }])
+  })
+
+  it('operator reads a card whose session id is not text and the token survives unaddressed', async () => {
+    // Given a row whose card carries a session id no client could have meant
+    const file = await rosterFile()
+    await writeRoster(file, {
+      version: 2,
+      devices: [{ ...rosterRow(), push: { ...registrationOf([]), liveActivityTokens: [{ activityId: 'act-1', token: 'ff00', sessionId: 7 }] } }],
+    })
+    const roster = new DeviceRoster({ file })
+    // When it is read
+    await roster.load()
+    // Then the device is still paired and the token is still held
+    expect(roster.devices()).toHaveLength(1)
+    // And the unreadable session id was dropped rather than repaired, so the card
+    // names no session and is never pushed to
+    expect(roster.pushTargets()[0]?.push.liveActivityTokens).toEqual([{ activityId: 'act-1', token: 'ff00' }])
+    expect(targetsOf(roster)[0]?.sessionId).toBeUndefined()
   })
 })
 
 describe('live activity: a token APNs reports dead', () => {
   it('operator loses the dead card tokens and keeps the live one, with no retry', async () => {
-    // Given a roster row holding three cards
+    // Given a roster row holding three cards, one per session
     const file = await rosterFile()
     await writeRoster(file, {
       version: 2,
       devices: [{
         ...rosterRow(),
         push: registrationOf([
-          { activityId: 'act-gone', token: 'ff00' },
-          { activityId: 'act-bad', token: 'ff01' },
-          { activityId: 'act-live', token: 'ff02' },
+          { activityId: 'act-gone', token: 'ff00', sessionId: 's-1' },
+          { activityId: 'act-bad', token: 'ff01', sessionId: 's-2' },
+          { activityId: 'act-live', token: 'ff02', sessionId: 's-3' },
         ]),
       }],
     })
@@ -343,12 +413,7 @@ describe('live activity: a token APNs reports dead', () => {
       },
     }
     const notifier = new LiveActivityNotifier({
-      targets: () => roster.pushTargets().flatMap(({ push }) => (push.liveActivityTokens ?? []).map(({ activityId, token }) => ({
-        activityId,
-        token,
-        environment: push.environment,
-        bundle: push.bundle,
-      }))),
+      targets: () => targetsOf(roster),
       sender,
       now: () => clock.now,
       retire: (activityId, token) => {
@@ -356,22 +421,22 @@ describe('live activity: a token APNs reports dead', () => {
         return retirement
       },
     })
-    // When one running state is announced
-    notifier.noteRoster([{ id: 's-1', agentRunning: true }])
+    // When all three sessions are listed as running
+    notifier.noteRoster([{ id: 's-1', agentRunning: true }, { id: 's-2', agentRunning: true }, { id: 's-3', agentRunning: true }])
     await settle()
     await retirement
-    // Then both dead tokens were attempted exactly once and dropped from the file
+    // Then all three were attempted once and the two dead tokens left the file
     expect(attempted).toEqual(['act-gone', 'act-bad', 'act-live'])
     const written = JSON.parse(await readFile(file, 'utf8')) as { devices: { push?: { liveActivityTokens?: unknown[] } }[] }
-    expect(written.devices[0]?.push?.liveActivityTokens).toEqual([{ activityId: 'act-live', token: 'ff02' }])
-    // And the next card is addressed to the one card that still exists, so the
-    // refused tokens are never tried again
+    expect(written.devices[0]?.push?.liveActivityTokens).toEqual([{ activityId: 'act-live', token: 'ff02', sessionId: 's-3' }])
+    // And the next card goes to the one card that still exists, so a refused token
+    // is never tried again
     clock.now += LIVE_ACTIVITY_INTERVAL_MS
     attempted.length = 0
-    notifier.noteTurnEnd('s-1', 'completed')
+    notifier.noteTurnEnd('s-3', 'completed')
     await settle()
     expect(attempted).toEqual(['act-live'])
-    expect(roster.pushTargets()[0]?.push.liveActivityTokens).toEqual([{ activityId: 'act-live', token: 'ff02' }])
+    expect(roster.pushTargets()[0]?.push.liveActivityTokens).toEqual([{ activityId: 'act-live', token: 'ff02', sessionId: 's-3' }])
   })
 
   it('operator drops a card token whose device row no longer holds it, and says so', async () => {
@@ -397,7 +462,7 @@ describe('live activity: a token APNs reports dead', () => {
 
 describe('live activity: the state the bridge projects', () => {
   it('user sees the card end with the turn it follows', async () => {
-    // Given a paired connection whose bridge can reach two live cards
+    // Given a paired connection whose bridge can reach the card of s-1
     const clock = { now: CLOCK_START }
     const sink = recorder()
     const notifier = notifierAt(sink.sender, clock)
@@ -425,7 +490,7 @@ describe('live activity: the state the bridge projects', () => {
   })
 
   it('user sees a failed turn on the card without the reason text', async () => {
-    // Given a bridge able to reach a card
+    // Given a bridge able to reach the card of s-1
     const clock = { now: CLOCK_START }
     const sink = recorder()
     const notifier = notifierAt(sink.sender, clock)
@@ -447,11 +512,12 @@ describe('live activity: the state the bridge projects', () => {
     expect(JSON.stringify(sink.sent[0]?.notification)).not.toContain('the tool exploded')
   })
 
-  it('user lists sessions and the card reports how many are running', async () => {
-    // Given a bridge able to reach a card
+  it('user lists sessions and each card reports the bridge-wide running count', async () => {
+    // Given one card per session for two sessions
     const clock = { now: CLOCK_START }
+    const cards = [cardOf('s-1', 1), cardOf('s-2', 2)]
     const sink = recorder()
-    const notifier = notifierAt(sink.sender, clock)
+    const notifier = notifierAt(sink.sender, clock, { targets: cards })
     const harness = makeConnection({ paired: true, liveActivity: notifier })
     await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1 }))
     harness.gateway.handler = async () => ({
@@ -464,23 +530,22 @@ describe('live activity: the state the bridge projects', () => {
     // When it lists them
     await harness.connection.handleText(requestFrame(2, 'session.list'))
     await settle()
-    // Then the card reports the two that are running
-    expect(sink.sent).toHaveLength(1)
-    expect(sink.sent[0]?.notification.aps['content-state']).toMatchObject({
-      phase: 'running',
-      statusLine: '正在执行',
-      runningCount: 2,
-    })
-    // And a listing of nothing running raises no card at all
-    harness.gateway.handler = async () => ({ items: [{ sessionId: 's-3', running: false, updatedAt: 0, blank: false }] })
+    // Then each card reports its own session running, and the count is the total:
+    // two sessions run, so the number on both cards is 2, not 1
+    expect(sink.sent).toHaveLength(2)
+    expect(sink.sent.map(entry => entry.target.activityId)).toEqual(['act-1', 'act-2'])
+    expect(sentTo(sink, 'act-1')[0]?.aps['content-state']).toMatchObject({ phase: 'running', statusLine: '正在执行', runningCount: 2 })
+    expect(sentTo(sink, 'act-2')[0]?.aps['content-state']).toMatchObject({ phase: 'running', runningCount: 2 })
+    // And a listing where neither of those sessions runs raises no card at all
+    harness.gateway.handler = async () => ({ items: [{ sessionId: 's-3', running: true, updatedAt: 0, blank: false }] })
     clock.now += LIVE_ACTIVITY_INTERVAL_MS
     await harness.connection.handleText(requestFrame(3, 'session.list'))
     await settle()
-    expect(sink.sent).toHaveLength(1)
+    expect(sink.sent).toHaveLength(2)
   })
 
-  it('user is handed a question and the card asks for the answer with its buttons', async () => {
-    // Given a hub whose bridge can reach a card, with one phone declaring questions
+  it('user is handed a question and only its own card carries the choices', async () => {
+    // Given a hub whose bridge can reach the card of s-1, with one phone declaring questions
     const clock = { now: CLOCK_START }
     const sink = recorder()
     const notifier = notifierAt(sink.sender, clock)
@@ -499,7 +564,7 @@ describe('live activity: the state the bridge projects', () => {
       }],
     }, async () => ({ answers: [] }))
     await settle()
-    // Then the card is waiting for an answer, with the header and two buttons
+    // Then the card is waiting for an answer, with the header and two choices
     expect(sink.sent).toHaveLength(1)
     expect(sink.sent[0]?.notification.aps.event).toBe('update')
     expect(sink.sent[0]?.notification.aps['content-state']).toMatchObject({
@@ -514,8 +579,61 @@ describe('live activity: the state the bridge projects', () => {
     expect(wire).not.toContain('Pick exactly one.')
   })
 
+  it('user asking in one session leaves the other session card alone', async () => {
+    // Given two cards, one per session, and both sessions running
+    const clock = { now: CLOCK_START }
+    const cards = [cardOf('s-1', 1), cardOf('s-2', 2)]
+    const sink = recorder()
+    const notifier = notifierAt(sink.sender, clock, { targets: cards })
+    notifier.noteRoster([{ id: 's-1', agentRunning: true }, { id: 's-2', agentRunning: true }])
+    await settle()
+    expect(sink.sent).toHaveLength(2)
+    // When the session s-1 asks a question
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteQuestion('s-1', { header: 'Deck', optionLabels: ['Alpha', 'Bravo'] })
+    await settle()
+    // Then only that session's card takes the new order
+    expect(sink.sent).toHaveLength(3)
+    expect(sentTo(sink, 'act-1').map(entry => entry.aps['content-state'].phase)).toEqual(['running', 'waitingForAnswer'])
+    // And the other session's card still says what is true for it
+    expect(sentTo(sink, 'act-2').map(entry => entry.aps['content-state'].phase)).toEqual(['running'])
+    expect(sentTo(sink, 'act-2')[0]?.aps['content-state']).not.toHaveProperty('questionHeader')
+  })
+
+  it('user sees three cards carry their own session state, not one shared state', async () => {
+    // Given three cards, one per session, and all three sessions running
+    const clock = { now: CLOCK_START }
+    const cards = [cardOf('s-1', 1), cardOf('s-2', 2), cardOf('s-3', 3)]
+    const sink = recorder()
+    const notifier = notifierAt(sink.sender, clock, { targets: cards })
+    notifier.noteRoster([
+      { id: 's-1', agentRunning: true },
+      { id: 's-2', agentRunning: true },
+      { id: 's-3', agentRunning: true },
+    ])
+    await settle()
+    // Then every card was told its own session runs, with the total beside it
+    expect(sink.sent).toHaveLength(3)
+    expect(sink.sent.map(entry => entry.notification.aps['content-state'].runningCount)).toEqual([3, 3, 3])
+    // When s-2 asks, and then s-3 ends its turn
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteQuestion('s-2', { header: 'Deck' })
+    await settle()
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteTurnEnd('s-3', 'completed')
+    await settle()
+    // Then each card ends up describing its own session, and no card carries
+    // another session's fact
+    expect(sentTo(sink, 'act-1').map(entry => entry.aps['content-state'].phase)).toEqual(['running'])
+    expect(sentTo(sink, 'act-2').map(entry => entry.aps['content-state'].phase)).toEqual(['running', 'waitingForAnswer'])
+    expect(sentTo(sink, 'act-2')[1]?.aps['content-state'].questionHeader).toBe('Deck')
+    expect(sentTo(sink, 'act-3').map(entry => entry.aps.event)).toEqual(['update', 'end'])
+    expect(sentTo(sink, 'act-3')[1]?.aps['content-state'].phase).toBe('ended')
+    expect(sentTo(sink, 'act-1')[0]?.aps['content-state']).not.toHaveProperty('questionHeader')
+  })
+
   it('user sees an approval blocking the agent and the tool reason stays home', async () => {
-    // Given a hub whose bridge can reach a card, with one phone declaring approvals
+    // Given a hub whose bridge can reach the card of s-1, with one phone declaring approvals
     const clock = { now: CLOCK_START }
     const sink = recorder()
     const notifier = notifierAt(sink.sender, clock)
@@ -559,7 +677,7 @@ describe('live activity: the state the bridge projects', () => {
   })
 
   it('operator sees the card leave the waiting state once the question is settled', async () => {
-    // Given a card waiting on a question, with one session still running
+    // Given a card waiting on a question, with its own session still running
     const clock = { now: CLOCK_START }
     const sink = recorder()
     const notifier = notifierAt(sink.sender, clock)
@@ -574,7 +692,7 @@ describe('live activity: the state the bridge projects', () => {
     clock.now += LIVE_ACTIVITY_INTERVAL_MS
     notifier.noteSettled('s-1')
     await settle()
-    // Then the card is back to what is true now
+    // Then the card is back to what is true for that session now
     expect(sink.sent).toHaveLength(3)
     expect(sink.sent[2]?.notification.aps['content-state']).toMatchObject({ phase: 'running', runningCount: 1 })
   })

@@ -13,9 +13,11 @@
  *   ActivityKit's default Codable strategy. Timestamps in it are seconds since
  *   Apple's reference date (2001-01-01T00:00:00Z), never Unix seconds: a Unix
  *   number decodes as a date decades away and the whole card fails to decode;
- * - one card per activity id, so the state itself is bridge-wide: which phase the
- *   bridge is in, the one line the card shows, the pending question when there is
- *   one, and how many sessions are running at all;
+ * - one card shows one session. A registered card names its session, a card
+ *   without one is never pushed to, and a state is delivered to the cards whose
+ *   session it is about — never to "all cards", because that is how one session's
+ *   question ends up on another session's lock screen (§29.9). `runningCount` is
+ *   the one bridge-wide number on a card, and it stays the total on purpose;
  * - a card that would say what the card before it already said is not sent, one
  *   activity takes at most one update per `LIVE_ACTIVITY_INTERVAL_MS`, and
  *   the whole bridge at most `LIVE_ACTIVITY_PER_MINUTE` a minute. What does
@@ -54,7 +56,7 @@ export const LIVE_ACTIVITY_INTERVAL_MS = 5_000
 /** Most Live Activity pushes this bridge sends in any rolling minute. */
 export const LIVE_ACTIVITY_PER_MINUTE = 30
 
-/** Longest option list a card carries; the phone shows these as buttons. */
+/** Longest option list a card carries; the App shows them as the answer choices. */
 export const LIVE_ACTIVITY_OPTION_LIMIT = 2
 
 /** Activity ids whose last content is remembered before the oldest is forgotten. */
@@ -103,7 +105,7 @@ export interface SessionActivityState {
   readonly optionLabels?: readonly string[]
   /** Apple-reference-date seconds of the moment this bridge delivered the card. */
   readonly asOf: number
-  /** Sessions running right now, never below 1. */
+  /** Sessions running right now across the whole bridge, never below 1. */
   readonly runningCount: number
 }
 
@@ -191,6 +193,12 @@ export interface LiveActivityAddress {
   readonly activityId: string
   /** The per-card APNs token, which is not the device's token. */
   readonly token: string
+  /**
+   * The session this card shows. Absent is a card this bridge never pushes to:
+   * it has no state to put on it, and borrowing another session's state is
+   * exactly what §29.9 forbids.
+   */
+  readonly sessionId?: string
   readonly environment: 'sandbox' | 'production'
   /** The app bundle id; the topic is this bundle plus the Live Activity suffix. */
   readonly bundle: string
@@ -207,9 +215,8 @@ export interface ActivityRosterRow {
   readonly agentRunning?: boolean
 }
 
-/** The question or approval a card is waiting on, while one is open. */
+/** The question or approval one session's card is waiting on. */
 interface Waiting {
-  readonly sessionId: string
   readonly statusLine: string
   readonly questionHeader?: string
   readonly optionLabels?: readonly string[]
@@ -251,14 +258,16 @@ export class LiveActivityNotifier {
   #listed = new Set<string>()
   /** Session ids any roster ever named, so "left the roster" is not "never listed". */
   #known = new Set<string>()
-  /** The question or approval the card is waiting on, while one is open. */
-  #waiting: Waiting | undefined
+  /** The question or approval each session's card is waiting on, one entry per session. */
+  readonly #waiting = new Map<string, Waiting>()
   /** Content last admitted per activity id. */
   readonly #content = new Map<string, string>()
   /** When each activity id was last updated, in milliseconds. */
   readonly #updated = new Map<string, number>()
   /** Delivery timestamps inside the rolling minute. */
   #recent: number[] = []
+  /** Cards already reported as carrying no session, so the line is logged once each. */
+  readonly #unaddressed = new Set<string>()
 
   constructor(options: LiveActivityNotifierOptions) {
     this.#options = options
@@ -274,10 +283,11 @@ export class LiveActivityNotifier {
   /**
    * Take the roster this bridge just served as the current picture of what runs.
    *
-   * A listing is the only place this bridge learns how many sessions are live, so
-   * it is also where the card's "running" state is refreshed. A card waiting on
-   * the user keeps that state: listing sessions is not an answer, and downgrading
-   * the card to "running" would hide the question the user still owes.
+   * A listing is the only place this bridge learns which sessions are live, so it
+   * is where each running session's own card is refreshed: that session's card is
+   * told it is running, and the number beside it is how many sessions are running
+   * in total. A card waiting on the user keeps that state — listing sessions is
+   * not an answer, and downgrading the card would hide the question still owed.
    * @param rows - the roster rows, as this connection built them.
    */
   noteRoster(rows: readonly ActivityRosterRow[]): void {
@@ -290,14 +300,17 @@ export class LiveActivityNotifier {
         this.#known.add(row.id)
         if (row.agentRunning === true) this.#running.add(row.id)
       }
-      if (this.#waiting !== undefined) return
-      if (this.#running.size === 0) return
-      this.#emit({
-        event: 'update',
-        phase: 'running',
-        statusLine: ACTIVITY_STATUS_LINE.running,
-        runningCount: this.#running.size,
-      })
+      const runningCount = this.#running.size
+      if (runningCount === 0) return
+      for (const sessionId of this.#running) {
+        if (this.#waiting.has(sessionId)) continue
+        this.#emit(sessionId, {
+          event: 'update',
+          phase: 'running',
+          statusLine: ACTIVITY_STATUS_LINE.running,
+          runningCount,
+        })
+      }
     } catch (error) {
       this.#log(`live activity could not be prepared from a roster: ${String(error)}`)
     }
@@ -306,7 +319,8 @@ export class LiveActivityNotifier {
   /**
    * Report one turn that ended.
    *
-   * The session stops running either way, and a card is ended — not updated —
+   * Only that session's own card is affected: the session stops running, its
+   * pending question is gone with the turn, and its card is ended — not updated —
    * because the turn it was about is over. A session that was listed before and
    * is not in the roster any more has left it, so its card is dismissed on
    * delivery instead of being left on a lock screen to describe a session that no
@@ -317,10 +331,10 @@ export class LiveActivityNotifier {
   noteTurnEnd(sessionId: string, reason: string): void {
     if (!this.enabled) return
     try {
-      if (this.#waiting?.sessionId === sessionId) this.#waiting = undefined
+      this.#waiting.delete(sessionId)
       this.#running.delete(sessionId)
       const completed = pushEventOfTurnEnd(reason) === 'turn-end'
-      this.#emit({
+      this.#emit(sessionId, {
         event: 'end',
         phase: completed ? 'ended' : 'failed',
         statusLine: completed ? ACTIVITY_STATUS_LINE.ended : ACTIVITY_STATUS_LINE.failed,
@@ -335,9 +349,10 @@ export class LiveActivityNotifier {
   /**
    * Report a question that reached a phone and is now waiting for an answer.
    *
-   * Only the header and at most two option labels cross: they are what a card can
-   * show as buttons. The question itself and its detail stay behind the wire, the
-   * same rule the alert channel follows (§28.4).
+   * Only the header and at most two option labels cross: they are the choices the
+   * App can offer. The question itself and its detail stay behind the wire, the
+   * same rule the alert channel follows (§28.4), and only this session's card is
+   * told — another session's card has no business showing this question (§29.9).
    * @param sessionId - the session that asked.
    * @param question - the first question of the claimed batch.
    */
@@ -346,13 +361,13 @@ export class LiveActivityNotifier {
     try {
       const header = question.header === '' ? undefined : question.header
       const labels = question.optionLabels?.filter(label => label !== '').slice(0, LIVE_ACTIVITY_OPTION_LIMIT)
-      this.#waiting = {
-        sessionId,
+      const waiting: Waiting = {
         statusLine: ACTIVITY_STATUS_LINE.question,
         ...(header === undefined ? {} : { questionHeader: header }),
         ...(labels === undefined || labels.length === 0 ? {} : { optionLabels: labels }),
       }
-      this.#emit({ event: 'update', phase: 'waitingForAnswer', runningCount: this.#running.size, ...this.#waiting })
+      this.#waiting.set(sessionId, waiting)
+      this.#emit(sessionId, { event: 'update', phase: 'waitingForAnswer', runningCount: this.#running.size, ...waiting })
     } catch (error) {
       this.#log(`live activity question for ${sessionId} could not be prepared: ${String(error)}`)
     }
@@ -361,38 +376,39 @@ export class LiveActivityNotifier {
   /**
    * Report an approval that reached a phone and is blocking the agent.
    *
-   * The card says what state the bridge is in and nothing more: an approval's own
-   * summary is a tool's reason text, which is exactly the session content a lock
-   * screen must not carry, so it gets the fixed line and no details.
+   * The card says what state that session is in and nothing more: an approval's
+   * own summary is a tool's reason text, which is exactly the session content a
+   * lock screen must not carry, so it gets the fixed line and no details.
    * @param sessionId - the session whose tool is blocked.
    */
   noteApproval(sessionId: string): void {
     if (!this.enabled) return
     try {
-      this.#waiting = { sessionId, statusLine: ACTIVITY_STATUS_LINE.approval }
-      this.#emit({ event: 'update', phase: 'waitingForAnswer', runningCount: this.#running.size, ...this.#waiting })
+      const waiting: Waiting = { statusLine: ACTIVITY_STATUS_LINE.approval }
+      this.#waiting.set(sessionId, waiting)
+      this.#emit(sessionId, { event: 'update', phase: 'waitingForAnswer', runningCount: this.#running.size, ...waiting })
     } catch (error) {
       this.#log(`live activity approval for ${sessionId} could not be prepared: ${String(error)}`)
     }
   }
 
   /**
-   * Report that the question a card was waiting on is gone — answered here, on
+   * Report that the question one card was waiting on is gone — answered here, on
    * the desktop, or expired.
    *
    * A card left saying "waiting for an answer" after the answer landed is the one
-   * lie a lock screen cannot afford, so the state goes back to whatever is true
-   * now. Nothing is sent when no session is known to run: there is no fact to
-   * show, and the ended card already covers that case.
+   * lie a lock screen cannot afford, so that session's card goes back to whatever
+   * is true now. Nothing is sent when that session is not known to run: there is
+   * no fact to show, and the ended card already covers that case.
    * @param sessionId - the session whose claim settled.
    */
   noteSettled(sessionId: string): void {
     if (!this.enabled) return
-    if (this.#waiting?.sessionId !== sessionId) return
+    if (!this.#waiting.has(sessionId)) return
     try {
-      this.#waiting = undefined
-      if (this.#running.size === 0) return
-      this.#emit({
+      this.#waiting.delete(sessionId)
+      if (!this.#running.has(sessionId)) return
+      this.#emit(sessionId, {
         event: 'update',
         phase: 'running',
         statusLine: ACTIVITY_STATUS_LINE.running,
@@ -403,8 +419,36 @@ export class LiveActivityNotifier {
     }
   }
 
-  /** Build one delivery and start it, or drop it. */
-  #emit(state: {
+  /**
+   * The cards one session's state is delivered to.
+   *
+   * A card that names no session is skipped and reported once: §29.9 makes the
+   * session the address, and a card this bridge cannot address is a card it must
+   * not write to at all.
+   * @param sessionId - the session the state is about.
+   * @returns that session's cards, possibly none.
+   */
+  #targetsFor(sessionId: string): readonly LiveActivityAddress[] {
+    const matched: LiveActivityAddress[] = []
+    for (const target of this.#options.targets()) {
+      if (target.sessionId === undefined) {
+        if (this.#unaddressed.has(target.activityId)) continue
+        this.#unaddressed.add(target.activityId)
+        this.#log(`live activity ${target.activityId} names no session and is never pushed to`)
+        while (this.#unaddressed.size > LIVE_ACTIVITY_TRACKED) {
+          const oldest = this.#unaddressed.keys().next()
+          if (oldest.done === true) break
+          this.#unaddressed.delete(oldest.value)
+        }
+        continue
+      }
+      if (target.sessionId === sessionId) matched.push(target)
+    }
+    return matched
+  }
+
+  /** Build one session's delivery and start it, or drop it. */
+  #emit(sessionId: string, state: {
     readonly event: LiveActivityEvent
     readonly phase: SessionActivityPhase
     readonly statusLine: string
@@ -415,7 +459,7 @@ export class LiveActivityNotifier {
   }): void {
     const sender = this.#options.sender
     if (sender === undefined) return
-    const targets = this.#options.targets()
+    const targets = this.#targetsFor(sessionId)
     if (targets.length === 0) return
     const now = this.#now()
     const notification = buildLiveActivityNotification({ ...state, now })

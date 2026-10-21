@@ -2067,7 +2067,15 @@ export class BridgeConnection {
         if (typeof activityId !== 'string' || activityId === '' || typeof token !== 'string' || token === '') {
           return refusal(CODE_INVALID_ARGS, 'each liveActivityTokens entry needs an activityId and a token')
         }
-        collected.push({ activityId, token })
+        // §29.9: a card names the session it belongs to. The key is optional —
+        // a client that omits it is registered exactly as before — but a value
+        // that is present has to be a session id, because a card carrying a
+        // malformed address would be pushed to nobody while looking registered.
+        const sessionId = entry.sessionId
+        if (sessionId !== undefined && (typeof sessionId !== 'string' || sessionId === '')) {
+          return refusal(CODE_INVALID_ARGS, 'a liveActivityTokens sessionId must be a non-empty string')
+        }
+        collected.push({ activityId, token, ...(sessionId === undefined ? {} : { sessionId }) })
       }
       liveActivityTokens = collected
     }

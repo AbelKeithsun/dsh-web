@@ -35,10 +35,19 @@ export const ROSTER_VERSION = 2
 /** The APNs environments a device may register for. */
 export type PushEnvironment = 'sandbox' | 'production'
 
-/** One Live Activity push token, stored but not yet given any semantics. */
+/** One Live Activity push token, with the session the card belongs to. */
 export interface PushLiveActivityToken {
   readonly activityId: string
   readonly token: string
+  /**
+   * The session this card belongs to (§29.9).
+   *
+   * A card is about one session, and a token without this field cannot be
+   * addressed at all: this bridge has nothing to put on it. Absent is therefore
+   * "never pushed to", not "pushed to with whatever is at hand" — the other
+   * reading would put one session's state on another session's lock screen.
+   */
+  readonly sessionId?: string
 }
 
 /**
@@ -133,6 +142,17 @@ function pushOf(value: unknown, log: (message: string) => void): PushRegistratio
       const token = entry as Record<string, unknown>
       return typeof token.activityId === 'string' && token.activityId !== ''
         && typeof token.token === 'string' && token.token !== ''
+    }).map((entry): PushLiveActivityToken => {
+      // A session id this reader cannot trust is dropped rather than repaired: the
+      // entry keeps its token and simply names no session, which is the state this
+      // bridge never pushes to. One unreadable card is not a reason to un-pair a
+      // phone, the same way one unreadable push block is not.
+      const raw = (entry as unknown as Record<string, unknown>).sessionId
+      return {
+        activityId: entry.activityId,
+        token: entry.token,
+        ...(typeof raw === 'string' && raw !== '' ? { sessionId: raw } : {}),
+      }
     })
     : undefined
   return {

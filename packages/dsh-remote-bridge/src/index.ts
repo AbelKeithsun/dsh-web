@@ -230,9 +230,12 @@ function applyImpl(ctx: Context): void {
   // A token APNs reports dead is dropped from its device row here, which is the
   // whole of the recovery — the next card registers a fresh one.
   const liveActivity = new LiveActivityNotifier({
-    targets: () => roster.pushTargets().flatMap(({ push: registration }) => (registration.liveActivityTokens ?? []).map(({ activityId, token }) => ({
+    targets: () => roster.pushTargets().flatMap(({ push: registration }) => (registration.liveActivityTokens ?? []).map(({ activityId, token, sessionId }) => ({
       activityId,
       token,
+      // The session is the card's address (§29.9). A registration written before
+      // that field existed simply has none, and its card is never pushed to.
+      ...(sessionId === undefined ? {} : { sessionId }),
       environment: registration.environment,
       bundle: registration.bundle,
     }))),
