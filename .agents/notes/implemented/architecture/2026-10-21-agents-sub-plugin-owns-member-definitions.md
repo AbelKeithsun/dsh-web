@@ -1,0 +1,40 @@
+# Agent Note: Agent squads ship as their own sub-plugin
+
+Status: implemented
+
+## Problem
+
+The family had one place to describe "an agent I start again and again": a task-board card. A card already carries the launch targets such an agent needs — agent preset, permission, model, reasoning effort — and the board's runner already creates the session, pins those targets and records the execution. Reusing the card as the definition was the cheap option: no new package, no new ledger, one surface.
+
+It does not hold. A card is a unit of work with a status lifecycle: it moves across columns, it can be scheduled by cron, it opens a subtask tree, and it settles through an acceptance gate. A member definition has none of those states — it is a reusable launch target whose whole lifecycle is create, edit, delete — so the definition would ride a record whose fields describe executions, and every later ledger migration would keep carrying fields no definition reads. One run would also get two owners: the board's runner writes the execution, a members list would have to write which member the session belongs to, and the second record would disagree with the first across every restart boundary.
+
+The second question arrives with the first member session: where does the member brief go — the first user message, or the session's system prompt?
+
+## Decision
+
+`packages/dsh-agents` is a standalone family sub-plugin. It owns its ledger under `$DSH_HOME/dsh-agents`, six routes under `/dsh-agents/api`, its own launch order in `src/host/service.ts`, and one sidebar row plus one center page registered through `slots.inject`; its browser half is its own loader entry. The definition/run seam is `src/host/run-gateway.ts`, so the launcher can be replaced without touching the ledger, the routes or the UI. The package ships its own display metadata — `icon.svg` and `locale/{en,ru,zh}.json` carrying `meta.title` and `meta.description` — because the family row mounts the real package name, and the host reader resolves both through that package's exports ([package README](../../../../packages/dsh-agents/README.md)).
+
+The member brief is a system-prompt section, not the first user message. The evidence is in [the member-brief judgement](../../../../packages/dsh-agents/docs/member-prompt.md): the assemble context exposes only the `Agent`, whose identity is the session id, so the brief is resolved per session at assemble time from the members ledger; the section's `text` is a function the prompt assembler calls on every turn, so an edited brief changes the next turn instead of the launch; and an empty section is dropped at render time, which is what keeps a non-member session byte-identical. The same identity survives M2: a teammate is an `Agent` too, so `agent.id` still resolves the brief.
+
+A first user message cannot do any of that. It is frozen into the transcript when the session is created, so a corrected brief would need a new session; it is re-sent on every turn as the user's own instruction, where it can be edited, quoted or mistaken for a command; and it cannot be conditional, so the launch would have to decide whether the user wrote it. That same file states the one place the section loses — a preset that marks its own persona section `complete` is restored as the only section — and records the fallback for that case, per-member materialized presets.
+
+Family membership follows [the family row note](2026-10-19-remote-bridge-in-family-aggregate.md): `packages/dsh-web-all/aggregate.yml` lists `../dsh-agents` in `patchFrom` and in `deps`, so the generator emits insert row `web-ui-agents` with `name: '@linxin666/dsh-agents'` and writes the `workspace:*` dependency. `familyIds` pins the row id from the child's package-prefixed `dsh-agents` to the family's short `web-ui-agents` from the first release, the same trade `dsh-win-bash` records. No tombstone subpath and no `shellNotes` entry exist for this family: a row mounting the real package name has no `web-all/<family>` import left for an older profile to resolve, and the aggregate's `shell-metadata` tree therefore owns the compat subpaths only. The entry is on the running app's critical path rather than a publication step: the desktop profile's bundle row names the repository root package `dsh-web`, whose `dsh.bundle.patch` is this aggregate's `cordis.patch.yml`.
+
+## Alternatives considered
+
+- **Reuse `@deepseek-ai/dsh-experimental-agent-team-profile` unchanged.** Rejected for M1: it is a profile bundle that prescribes one team shape and its own role text, so the family's squads would be an alias over fixed roles; it models neither a member brief nor per-member pinned preset, permission and model, which is the whole content of a member definition here. Its experimental name also buys no stability contract, and M2 needs its source, not its frozen shape.
+- **Keep runs on task-board cards.** Rejected: the run would be settled by the board's runner and appear as a card in the board's columns, while the members list would keep the second opinion described under Problem. Scheduling, verification and subtask semantics of a card are inherited by anything that runs through it, and a member launch must not inherit them.
+- **Inject the brief as the first user message.** Rejected on the four properties listed under Decision: it cannot change after launch, it is indistinguishable from a user instruction, it cannot be empty-only-for-non-members, and it would make the run gateway fabricate a user turn the user never typed.
+- **Materialize one preset per member up front.** Rejected as the default and kept as the documented fallback: a preset per member turns saving a definition into a disk write plus a preset-registry refresh, and deleting a member into asset cleanup, which is too much machinery for the one case it fixes — a preset whose persona section is `complete`.
+
+## Consequences
+
+- The board and the agents plugin keep separate ledgers and separate id spaces. A member session is not a board card, and a board card is not a squad member; neither surface lists the other.
+- The aggregate's `lib/` does not inline this plugin's browser half, so changing `packages/dsh-agents/src/client` needs only that package's rebuild, and the aggregate's own bundle stays the compat layer.
+- A deployment without the optional agent-preset registry, workspace registry, command dispatcher or live-agent roster still mounts the row; a launch that needs the missing face fails closed with a named code instead of silently degrading. The row's `enabled` switch gates the ledger, the routes and the prompt section together.
+- M2 forks the official agent-team source and replaces the profile bundle: a squad then runs as a team (one Lead session plus one teammate per member) behind the same `run-gateway.ts` seam, and the member brief section follows teammates without a second injection path. The live desktop profile does not enable `@deepseek-ai/dsh-experimental-agent-team-profile` today (only the `web` profile does), so the aggregate carries no row-id collision to avoid: replacing that bundle concerns the `web` profile, while the desktop profile simply gains this family's rows.
+- Known limit, shipped as is: a preset whose persona section is `complete` drops the brief for its sessions; the fallback above is the recorded way out.
+
+## Testing
+
+`packages/dsh-agents/tests/member-prompt.spec.ts` pins the injection decision — identity extraction with its field-rename fallback, the latest run per session, no injection after a definition is deleted, an empty section for non-member sessions, and one ledger read per assembly. `node scripts/aggregate.mjs --check` pins the emitted row, the `workspace:*` dependency and the absence of a `shell-metadata` directory for this family.

@@ -21,6 +21,12 @@ patchFrom:
   # （GitHub Issues 同步），聚合展开的行序就是浏览器半区与宿主半区的装载
   # 顺序，扩展向看板的提供方席位登记之前看板必须先就位。
   - ../dsh-task-board-github
+  # dsh-agents 紧跟在看板这一对之后：它也是「定义 + 真实会话执行」的家族面，用户在同
+  # 一处找它们。这只是阅读上的归类，没有装载顺序依赖——它只用官方服务（宿主半区
+  # systemPrompt / typertGateway / webServer，浏览器半区 locale / renderer / sidebar /
+  # slots），自己的侧栏行与主区页面经 slots.inject 声明（行 order 30），不占任何家族
+  # 行的席位，因此前后挪动不会改变谁先就位。
+  - ../dsh-agents
   - ../dsh-git-graph
   - ../dsh-remote-web-ui
   # dsh-update 紧邻 remote-web-ui：两者共用侧栏 footer action 席位，
@@ -54,6 +60,8 @@ deps:
   # 排在 ../dsh-task-board 之后：扩展依赖看板的提供方契约，deps 顺序与
   # patchFrom 顺序保持一致便于对照。
   - ../dsh-task-board-github
+  # 与 patchFrom 同序：dsh-agents 的行紧跟看板这一对之后（理由见上）。
+  - ../dsh-agents
   - ../dsh-git-graph
   - ../dsh-remote-web-ui
   - ../dsh-update
@@ -89,6 +97,11 @@ deps:
 # 是不带 dsh- 前缀的短名（ssh / usage / liangshen）。覆盖后聚合行与子路径取
 # 短名 win-bash，且从第一版就锁定，省掉日后迁移。
 familyIds:
+  # dsh-agents：子包的行 id 带包前缀（dsh-agents，子包自己的 cordis.patch.yml 钉死，
+  # 独立安装要占自己的全局 id），派生规则会得到 web-ui-dsh-agents；家族行 id 统一用
+  # 不带 dsh- 前缀的短名，这里从第一版就锁成 web-ui-agents，省掉日后迁移（与
+  # win-bash 同理）。该家族是 #1901 之后新增的行，没有 tombstones 子路径需要跟着它。
+  dsh-agents: web-ui-agents
   dsh-win-bash: web-ui-win-bash
   ui-plugin-manager-update-check: web-ui-plugin-manager
 

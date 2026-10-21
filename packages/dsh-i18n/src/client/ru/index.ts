@@ -6,6 +6,7 @@
  * verify per-namespace coverage against every package's zh keys.
  * @module @linxin666/dsh-i18n/client/ru
  */
+import { ru as agents } from './agents.ts'
 import { ru as gitGraph } from './git-graph.ts'
 import { ru as liangshen } from './liangshen.ts'
 import { ru as market } from './market.ts'
@@ -26,6 +27,7 @@ import { ru as webSettings } from './web-settings.ts'
 
 /** ru dictionaries keyed by the locale namespace each source package registers. */
 export const ruDictionaries: Record<string, Record<string, string>> = {
+  'dsh-agents': agents,
   'git-graph': gitGraph,
   'liangshen': liangshen,
   'dsh-web-ui-market': market,

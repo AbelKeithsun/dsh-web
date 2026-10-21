@@ -35,6 +35,11 @@
     - id: web-ui-task-board-github
       name: '@linxin666/dsh-client-ui-task-board-github'
 
+# from ../dsh-agents
+- insert:
+    - id: web-ui-agents
+      name: '@linxin666/dsh-agents'
+
 # from ../dsh-git-graph
 - insert:
     - id: web-ui-git-graph
