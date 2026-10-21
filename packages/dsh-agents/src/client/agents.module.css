@@ -1,0 +1,517 @@
+/**
+ * Styles of the agents center-column page.
+ *
+ * Layout rules for the phone-first case this GUI is driven from (360px wide,
+ * remote-web-ui): the page root and every column/grid child carry
+ * `min-width: 0`, the scroll container hides horizontal overflow, the card
+ * grids use `minmax(min(<ideal>, 100%), 1fr)` so a card never demands more
+ * width than the column has, and every free-text surface wraps with
+ * `overflow-wrap: anywhere` plus a line clamp. No rule here reads a class name
+ * owned by another package.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  max-inline-size: 100%;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  background: var(--dsw-alias-bg-base, transparent);
+  font-family: var(--dsw-font-family, inherit);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-inline-size: 0;
+  padding: 16px 16px 8px;
+}
+
+.headerTitle {
+  flex: 1 1 180px;
+  min-inline-size: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  max-inline-size: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 8px 16px 24px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.sectionTitle {
+  margin: 0;
+  min-inline-size: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-inline-size: 0;
+  padding: 20px 16px;
+  border: 1px dashed var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 10px;
+  text-align: start;
+}
+
+.emptyTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.emptyHint {
+  margin: 0;
+  max-inline-size: 100%;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.squadGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  gap: 10px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.squadItem {
+  display: flex;
+  min-inline-size: 0;
+}
+
+.squadCard {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2, transparent);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.squadCard:hover {
+  background: var(--dsw-alias-interactive-bg-hover, transparent);
+}
+
+.squadCard:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, currentColor);
+  outline-offset: 2px;
+}
+
+.squadName {
+  max-inline-size: 100%;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.squadCount {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+.squadDescription {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  max-inline-size: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  overflow-wrap: anywhere;
+}
+
+.detailHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.detailTitle {
+  flex: 1 1 180px;
+  min-inline-size: 0;
+}
+
+.detailWorkspace {
+  margin: 2px 0 0;
+  max-inline-size: 100%;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.detailDescription {
+  margin: 0;
+  max-inline-size: 100%;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  overflow-wrap: anywhere;
+}
+
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.membersTitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+
+.memberGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  gap: 10px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memberItem {
+  display: flex;
+  min-inline-size: 0;
+}
+
+.memberCard {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2, transparent);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, transparent);
+}
+
+.memberName {
+  margin: 0;
+  max-inline-size: 100%;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.metaItem {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.metaLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+.metaValue {
+  margin: 0;
+  max-inline-size: 100%;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  overflow-wrap: anywhere;
+}
+
+.memberBrief {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  max-inline-size: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  overflow-wrap: anywhere;
+}
+
+.runStatus {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.memberActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 32px;
+  max-inline-size: 100%;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--dsw-alias-button-primary-fill, #1f2328);
+  color: var(--dsw-alias-label-primary-foreground, #ffffff);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover, #30363d);
+}
+
+.primary:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 32px;
+  max-inline-size: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, transparent);
+}
+
+.secondary:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.secondary:focus-visible,
+.primary:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, currentColor);
+  outline-offset: 2px;
+}
+
+.danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 32px;
+  max-inline-size: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-state-error-primary, #b91c1c);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-state-error-primary, #b91c1c);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.danger:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  margin: 0;
+  padding: 24px 16px;
+  border: 1px dashed var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.noticeError {
+  margin: 0;
+  padding: 8px 10px;
+  max-inline-size: 100%;
+  border: 1px solid var(--dsw-alias-state-error-secondary, var(--dsw-alias-state-error-primary, #b91c1c));
+  border-radius: 8px;
+  color: var(--dsw-alias-state-error-primary, #b91c1c);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* A page-level banner sits between the header and the scrolling body, so it
+   carries the gutters the body applies to its own content. */
+.banner {
+  margin: 0 16px 8px;
+  max-inline-size: calc(100% - 32px);
+}
+
+.noticeOk {
+  margin: 0;
+  max-inline-size: 100%;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-state-success-primary, #15803d);
+  overflow-wrap: anywhere;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-inline-size: 0;
+  max-inline-size: 560px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+
+.input,
+.textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.textarea {
+  min-block-size: 72px;
+  resize: vertical;
+}
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 420px) {
+  .header {
+    padding: 12px 12px 8px;
+  }
+
+  .body {
+    padding: 8px 12px 20px;
+  }
+
+  .banner {
+    margin-inline: 12px;
+    max-inline-size: calc(100% - 24px);
+  }
+}

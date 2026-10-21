@@ -1,0 +1,91 @@
+/**
+ * One member card: the name, the pinned preset/permission/model, the brief
+ * with its clamp, and the run / open-session / edit / delete actions.
+ *
+ * The card is presentational: the page owns the transport, so a click only
+ * reports the member id back. Delete asks once inline instead of opening a
+ * native dialog, which keeps the flow usable from a phone and testable.
+ */
+import { useState } from 'react'
+import type { ReactNode } from 'react'
+import { t } from './locales.ts'
+import { permissionLabel } from './permissions.ts'
+import { runStatusLabel } from './runs.ts'
+import type { MemberDefinition, RunRecord } from '../protocol.ts'
+import css from './agents.module.css'
+
+/** One run outcome to show on the card it belongs to. */
+export interface MemberNotice {
+  memberId: string
+  kind: 'ok' | 'failed'
+  message: string
+}
+
+export interface MemberCardProps {
+  member: MemberDefinition
+  /** Newest run of this member, if it ever ran. */
+  run: RunRecord | undefined
+  /** A page-level action is in flight; every action on the card is disabled. */
+  busy: boolean
+  notice: MemberNotice | undefined
+  /** Start this member's own session (点播). */
+  onRun: () => void
+  /** Switch the GUI to an existing session; absent when the deployment has none. */
+  onOpenSession: ((sessionId: string) => void) | undefined
+  onEdit: () => void
+  onDelete: () => void
+}
+
+/**
+ * Render one member card.
+ * @param props - the member, its newest run, and the page actions.
+ */
+export function MemberCard({ member, run, busy, notice, onRun, onOpenSession, onEdit, onDelete }: MemberCardProps): ReactNode {
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const brief = member.brief ?? ''
+  return (
+    <article className={css.memberCard} data-dsh-part="member-card">
+      <h4 className={css.memberName}>{member.name}</h4>
+      <dl className={css.meta}>
+        <div className={css.metaItem}>
+          <dt className={css.metaLabel}>{t('member.preset')}</dt>
+          <dd className={css.metaValue}>{member.preset === undefined || member.preset === '' ? t('member.inherit') : member.preset}</dd>
+        </div>
+        <div className={css.metaItem}>
+          <dt className={css.metaLabel}>{t('member.permission')}</dt>
+          <dd className={css.metaValue}>{permissionLabel(member.permission)}</dd>
+        </div>
+        <div className={css.metaItem}>
+          <dt className={css.metaLabel}>{t('member.model')}</dt>
+          <dd className={css.metaValue}>{member.model === undefined || member.model === '' ? t('member.inherit') : member.model}</dd>
+        </div>
+      </dl>
+      <p className={css.memberBrief} data-dsh-part="member-brief">{brief}</p>
+      {run === undefined ? null : <p className={css.runStatus}>{runStatusLabel(run)}</p>}
+      <div className={css.memberActions}>
+        <button type="button" className={css.primary} disabled={busy} onClick={onRun}>
+          {busy ? t('member.running') : run === undefined ? t('member.run') : t('member.runAgain')}
+        </button>
+        {run === undefined || onOpenSession === undefined ? null : (
+          <button type="button" className={css.secondary} onClick={() => { onOpenSession(run.sessionId) }}>
+            {t('member.openSession')}
+          </button>
+        )}
+        <button type="button" className={css.secondary} disabled={busy} onClick={onEdit}>{t('member.edit')}</button>
+        {confirmingDelete ? (
+          <>
+            <button type="button" className={css.danger} disabled={busy} onClick={() => { setConfirmingDelete(false); onDelete() }}>
+              {t('member.deleteConfirm')}
+            </button>
+            <button type="button" className={css.secondary} onClick={() => { setConfirmingDelete(false) }}>{t('member.cancel')}</button>
+          </>
+        ) : (
+          <button type="button" className={css.secondary} disabled={busy} onClick={() => { setConfirmingDelete(true) }}>{t('member.delete')}</button>
+        )}
+      </div>
+      {notice === undefined ? null : (
+        <p className={notice.kind === 'failed' ? css.noticeError : css.noticeOk} role={notice.kind === 'failed' ? 'alert' : 'status'}>{notice.message}</p>
+      )}
+    </article>
+  )
+}

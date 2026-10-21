@@ -49,6 +49,7 @@ const ALLOW_MARKER = 'i18n-allow:'
  * the gate follows the code instead of a hand-maintained copy.
  */
 const PACKAGES = [
+  { pkg: 'dsh-agents', files: [{ file: 'src/client/locales.ts', shape: 'zh-en' }] },
   { pkg: 'dsh-git-graph', files: [{ file: 'src/client/locales.ts', shape: 'zh-en' }] },
   { pkg: 'dsh-liangshen', files: [{ file: 'src/client/locales.ts', shape: 'zh-en' }] },
   { pkg: 'dsh-market', files: [{ file: 'src/client/locales.ts', shape: 'zh-en' }] },
@@ -286,7 +287,9 @@ async function importTs(absolutePath) {
  * Extract a namespace id from a package's client entry: the first
  * `ctx.locale.register(arg` where arg is a quoted literal, or an identifier
  * resolved against const declarations in the entry and the dictionary module.
- * @param {string} entrySource - src/client/index.ts text.
+ * The same reading applies to a dictionary module: a package that moves the
+ * registration into a helper the entry calls keeps the call and the const there.
+ * @param {string} entrySource - src/client/index.ts text (or a dictionary module).
  * @param {Record<string, string>} constTable - identifier -> value from dictionary modules.
  * @returns {string | undefined}
  */
@@ -338,8 +341,16 @@ async function loadPackages() {
       Object.assign(en, dict.en)
     }
     const entrySource = readFileSync(join(pkgDir, 'src/client/index.ts'), 'utf8')
-    const ns = deriveNamespace(entrySource, constTable)
-    if (ns === undefined) throw new Error(`${entry.pkg}: cannot derive locale namespace from src/client/index.ts`)
+    // The registration itself may sit in a helper the entry calls: dsh-agents
+    // wraps `locale.register` in registerAgentLocales() inside its dictionary
+    // module, so the entry names no namespace. Reading the dictionary sources as
+    // a fallback keeps that factoring legitimate instead of forcing every package
+    // to call `ctx.locale.register` from its entry.
+    const dictionarySources = entry.files
+      .map(({ file }) => readFileSync(join(pkgDir, file), 'utf8'))
+      .join('\n')
+    const ns = deriveNamespace(entrySource, constTable) ?? deriveNamespace(dictionarySources, constTable)
+    if (ns === undefined) throw new Error(`${entry.pkg}: cannot derive locale namespace from src/client/index.ts or its dictionary modules`)
     loaded.push({ pkg: entry.pkg, ns, zh, en })
   }
   return loaded

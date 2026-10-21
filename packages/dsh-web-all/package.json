@@ -186,6 +186,7 @@
     "@linxin666/dsh-client-ui-market": "workspace:*",
     "@linxin666/dsh-client-ui-task-board": "workspace:*",
     "@linxin666/dsh-client-ui-task-board-github": "workspace:*",
+    "@linxin666/dsh-agents": "workspace:*",
     "@linxin666/dsh-client-ui-git-graph": "workspace:*",
     "@linxin666/dsh-remote-web-ui": "workspace:*",
     "@linxin666/dsh-update": "workspace:*",
