@@ -129,6 +129,7 @@ describe('push channel: the provider token and the delivery request', () => {
 
   it('operator reads the delivery request and finds the bundle as the topic and an alert type', () => {
     // Given one production registration and one sandbox registration
+    // When each one's delivery request is built
     const production = apnsRequestSpec({ ...PHONE, environment: 'production' }, 'jwt')
     const sandbox = apnsRequestSpec({ ...PHONE, environment: 'sandbox' }, 'jwt')
     // Then the environment chooses the authority, and the token is the path
@@ -143,6 +144,7 @@ describe('push channel: the provider token and the delivery request', () => {
 
   it('operator runs without a signing key and the channel is off', () => {
     // Given an environment naming no credential, and one naming part of it
+    // When each is read back as a credential
     const absent = apnsConfigFromEnv({})
     const partial = apnsConfigFromEnv({ [APNS_ENV.keyFile]: '/tmp/key.p8', [APNS_ENV.keyId]: 'ABC123DEFG' })
     const complete = apnsConfigFromEnv({
@@ -223,7 +225,7 @@ describe('push channel: the device table', () => {
 })
 
 describe('push channel: push.register on the wire', () => {
-  it('phone registers its token and the answer is an empty acknowledgement', async () => {
+  it('user registers its token and the answer is an empty acknowledgement', async () => {
     // Given a paired connection over a real roster file, and a bridge with no APNs key
     const file = await rosterFile()
     await writeRoster(file, { version: 1, devices: [harnessRow()] })
@@ -252,7 +254,7 @@ describe('push channel: push.register on the wire', () => {
     })
   })
 
-  it('phone that never declared the capability is told the method does not exist', async () => {
+  it('user that never declared the capability is told the method does not exist', async () => {
     // Given a paired connection that declared nothing
     const harness = makeConnection({ paired: true })
     await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1 }))
@@ -262,7 +264,7 @@ describe('push channel: push.register on the wire', () => {
     expect(answerOf(harness, 2).e?.code).toBe('unknown-method')
   })
 
-  it('phone sends an unusable registration and nothing is written', async () => {
+  it('user sends an unusable registration and nothing is written', async () => {
     // Given a paired connection that declared the capability
     const file = await rosterFile()
     await writeRoster(file, { version: 1, devices: [harnessRow()] })
@@ -288,7 +290,7 @@ describe('push channel: push.register on the wire', () => {
     expect(written.devices[0]?.push).toBeUndefined()
   })
 
-  it('unpaired caller is refused before the device table is read', async () => {
+  it('guest is refused before the device table is read', async () => {
     // Given a connection with no device token
     const harness = makeConnection({ paired: false })
     await declare(harness)
@@ -300,7 +302,7 @@ describe('push channel: push.register on the wire', () => {
 })
 
 describe('push channel: what is sent and when', () => {
-  it('phone is told a turn ended and, separately, that it failed', async () => {
+  it('user is told a turn ended and, separately, that it failed', async () => {
     // Given a paired connection whose bridge can deliver
     const clock = { now: 1_000 }
     const sink = recorder()
@@ -397,7 +399,7 @@ describe('push channel: what is sent and when', () => {
     expect(push.enabled).toBe(false)
   })
 
-  it('phone is not notified about a session it never listed and the payload simply omits the workspace', async () => {
+  it('user is not notified about a session it never listed and the payload simply omits the workspace', async () => {
     // Given a bridge whose roster carried a workspace for one session only
     const clock = { now: 1_000 }
     const sink = recorder()
@@ -476,6 +478,7 @@ describe('push channel: the payload carries no session content', () => {
 
   it('operator builds the payload directly and it says only what the protocol allows', () => {
     // Given a session with a name and a workspace
+    // When the turn-end payload is built directly
     const notification = buildPushNotification('turn-end', 'session-abc', { title: 'Refactor the push channel', workspace: 'dsh-web' })
     // Then the payload is the documented five keys and one deep link
     expect(notification).toEqual({
@@ -489,8 +492,9 @@ describe('push channel: the payload carries no session content', () => {
     expect(buildPushNotification('approval', 'x').aps.alert.title).toBe('有待确认的审批')
   })
 
-  it('phone reads the turn-end state off the reason and never guesses', () => {
+  it('user reads the turn-end state off the reason and never guesses', () => {
     // Given the reasons a host reports
+    // When each is turned into the event this channel names
     // Then only the normal one is a normal end, and every other value — including
     // the unknown an unreadable reason reports — is an abnormal one
     expect(pushEventOfTurnEnd('completed')).toBe('turn-end')
@@ -500,7 +504,9 @@ describe('push channel: the payload carries no session content', () => {
   })
 
   it('operator reads the minor this channel raised and the name it announces', () => {
-    // Then a client reads both off the handshake
+    // Given the handshake a client of this channel reads
+    // When it reads the minor and the capability name
+    // Then both are the published ones
     expect(MINOR).toBe(16)
     expect(CAP_PUSH).toBe('push.v1')
   })
