@@ -27,6 +27,43 @@ Agent squads for the DSH Web GUI: reusable member definitions (agent preset, per
 
 Each of those deltas, and the exact upstream baseline it departs from, is recorded in [docs/fork-provenance.md](docs/fork-provenance.md) and [docs/runtime-deltas.md](docs/runtime-deltas.md); both are maintainer contracts, not suggestions.
 
+## Model-facing tools
+
+Every session gets ten definition-management tools from the host half. They call `AgentsHostService` in process: no route is added, no HTTP request is made, and no business check is copied, so a tool call and the browser page drive one ledger through one set of rules.
+
+| Tool | Input | Success value |
+| --- | --- | --- |
+| `squads_list` | `{}` | `{ ok: true, squads }` — every squad with its member count and a compact member roster |
+| `squads_read` | `{ squadId }` | `{ ok: true, squad }` — the complete definition, member briefs and timestamps included |
+| `squads_create` | `{ name, description?, workspaceId?, leadPreset?, members? }` | `{ ok: true, squad }` |
+| `squads_update` | `{ squadId, name?, description?, workspaceId?, leadPreset? }` | `{ ok: true, squad }` |
+| `squads_delete` | `{ squadId, confirm: true }` | `{ ok: true, deleted: { id, name } }` |
+| `squad_member_add` | `{ squadId, name, preset?, permission?, model?, reasoningEffort?, brief? }` | `{ ok: true, squad, member }` |
+| `squad_member_update` | `{ squadId, memberId, name?, preset?, permission?, model?, reasoningEffort?, brief? }` | `{ ok: true, squad, member }` |
+| `squad_member_remove` | `{ squadId, memberId, confirm: true }` | `{ ok: true, deleted: { id, name, squadId } }` |
+| `squads_run_member` | `{ squadId, memberId, firstMessage? }` | `{ ok: true, run }` |
+| `squads_run_squad` | `{ squadId, goal? }` | `{ ok: true, run }` |
+
+The two run tools launch through the methods the page uses — `AgentsHostService.run` and `AgentsHostService.runSquad` — so the launch order, the fail-closed pins and the run record are the page's as well. `squads_run_squad` takes a goal and nothing else: the goal reaches the Lead through the `team:squad` system-prompt context and is never folded into the first user message.
+
+### Gating and announcement
+
+- The tools register globally with `enabled`, the same shape the task board uses: one registration for the whole host, withdrawn when the setting is turned off. They are not installed only into the sessions a squad run opens.
+- A separate `plugin:agents` system-prompt section announces them, at order 220 from the family's section table, behind the `announceToAgent` switch on this plugin's settings card (default `false`, volatile, no restart needed). The announced text is rendered through the family's `visibleToolText` helper, so it names only the tools that are actually visible to the session assembling the prompt: withdraw the setting, or restrict a tool in that scope, and the announcement goes with it.
+
+### Destructive calls and partial updates
+
+- `squads_delete` and `squad_member_remove` require `confirm: true`. Any other value answers `{ ok: false, code: 'invalid-request' }` before the ledger is touched, and a success carries the deleted object's name so the caller can report what it removed.
+- `squads_update` and `squad_member_update` merge partially: an omitted field keeps its current value, an empty string clears that optional field, and `name` refuses an empty string. Changing one field never restates the rest.
+
+### Tool surface versus the team tools
+
+These ten are cross-session definition management, so every session sees them. The team tools — `spawn_teammate`, `send_message`, `list_agents`, `wait_agent`, `interrupt_agent`, `team_task_create`, `team_task_list`, `team_task_get`, `team_task_update` — install only into a session this Host started as a squad run, and they coordinate a live team rather than a stored definition. Neither set replaces the other, and neither removes the native subagent tools.
+
+### Failure surface
+
+A domain refusal is a value, not an exception: `{ ok: false, code, message }`, with `code` drawn from the package's own error codes — `invalid-request` for a malformed call, `team-not-found`, `member-not-found`, `preset-registry-unavailable`, `preset-unknown`, `preset-unavailable`, `workspace-required`, `workspace-unavailable`, `workspace-unknown`, `ledger-corrupt` and the rest. The tool surface adds no code of its own; only a failure this plugin did not raise is thrown.
+
 ## Install
 
 ```sh
@@ -37,8 +74,10 @@ Mount the row through a profile patch; the bundle ships one host-half row named 
 
 ## Config
 
-- `enabled` (default `true`): mount the ledger, the routes and the member-brief section. When off, the row registers nothing and keeps no lock.
+- `enabled` (default `true`): mount the ledger, the routes, the model-facing tools and the member-brief section. When off, the row registers nothing, keeps no lock and registers no tool.
+- `announceToAgent` (default `false`): add the `plugin:agents` announcement of the tool surface to agent system prompts. Volatile, so an edit binds the next prompt; left off, a prompt is untouched and an agent learns the tools from its own tool list alone.
 - The ledger directory is `$DSH_HOME/dsh-agents`, resolved the way every plugin in this family resolves its own storage.
+- The `announceToAgent` switch is on this plugin's settings card on the settings page, which writes the running config: toggling it applies without a restart. `enabled` is not on that card but on the bundle's profile row, so turning the plugin off means editing that row and reloading it; the card carries one read-only line saying so, together with what the master switch stops.
 
 ## Wire API
 
@@ -73,6 +112,10 @@ POST /dsh-agents/api/squad/run
 - A preset that registers a `complete` system-prompt section owns the prompt alone, and the member brief is dropped; see [docs/member-prompt.md](docs/member-prompt.md) for that exception and the fallback design.
 - The reasoning effort is sent only together with the model pin it belongs to, so a member that pins an effort without a model runs at the session default.
 - Run history keeps the newest 200 records; older records are dropped with the definitions they referred to.
+- A run started by a tool consumes the same API quota as one started from the page, and a squad run can start with no browser window open.
+- The squad-run tool carries a goal but no first message, so a Lead that must begin from a user instruction is launched from the page; `squads_run_member` does take `firstMessage`.
+- An agent that creates and runs definitions is spending quota on its own initiative: the tools are model-driven, and each run is a real session.
+- `squads_create` with `members` is not one atomic write: every argument is validated first, then the call creates the squad and adds the members one at a time, so a squad holding only some of its members — the intermediate state — can appear only when a ledger write itself fails, a disk error for example. Calling `squad_member_add` again completes the squad.
 
 ## Tests
 

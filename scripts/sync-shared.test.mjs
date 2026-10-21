@@ -27,7 +27,7 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // bucket holds is the package-root test setup (6 today) plus the per-package
   // http.ts and console-output.ts copies. The settings bucket is the card trio
   // plus the entry-bound form fallback, the latter one per package whose card
-  // binds a family namespace (7 today). Every family panel now renders through
+  // binds a family namespace (8 today). Every family panel now renders through
   // the native layout seats, so the panel-mount-core and sidebar-entry-core
   // copies are gone and body-mutations serves the aggregate shell, the usage
   // card, the plugin-manager's list-level update toolbar and the task board's
@@ -35,11 +35,13 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // not synced here: no in-repo package imports
   // it (the satellite repositories that do carry their own copies), so only the
   // shared source and its spec remain in this repository. The plugin-card seat
-  // copy has three consumers: the GitHub extension renders inside the board's
+  // copy has four consumers: the GitHub extension renders inside the board's
   // own settings card now, so it carries no card of its own.
-  // tool-surface.ts adds three copies in host halves (ssh, task-board,
-  // task-board-github); they sit at a package root rather than under
-  // src/host/, so the bucket below does not claim them.
+  // tool-surface.ts adds four copies in host halves (ssh, task-board,
+  // task-board-github, agents); they sit at a package root rather than under
+  // src/host/, so the bucket below does not claim them. dsh-agents also joined
+  // the card trio and the plugin-card seat, which is the same six copies every
+  // card-bearing package carries.
   // dsh-remote-bridge adds one dsh-home.ts copy under src/host/ (the bridge's
   // host half resolves $DSH_HOME through the same generated copy every other
   // host half uses, rather than a second local parser).
@@ -47,9 +49,9 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // renders through the same chrome), which adds three client copies: the card
   // chrome, its form primitives, and the card stylesheet. It carries no
   // entry-bound form fallback, because it binds no Host settings namespace.
-  assert.equal(entries.length, 111)
+  assert.equal(entries.length, 117)
   const clientTrio = entries.filter(entry => entry.target.includes('/src/client/'))
-  assert.equal(clientTrio.length, 47)
+  assert.equal(clientTrio.length, 52)
   const hostCopies = entries.filter(entry => entry.target.includes('/src/host/')
     || entry.target.includes('/src/dsh-home.ts')
     || entry.target.includes('/src/mount-once.ts')

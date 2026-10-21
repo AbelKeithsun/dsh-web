@@ -27,7 +27,9 @@ describe('plugin tool section orders', () => {
     // Then every host owns its own order and none of them ties another
     expect(orders.ssh).toBe(150)
     expect(orders['task-board']).toBe(200)
-    expect(new Set(Object.values(orders)).size).toBe(2)
+    expect(orders.agents).toBe(220)
+    // Distinctness is the invariant; the count above is today's membership.
+    expect(new Set(Object.values(orders)).size).toBe(Object.values(orders).length)
 
     // And an extension's own section sits after the plugin it extends, in a slot
     // no host plugin holds (the extension names itself, never its host)

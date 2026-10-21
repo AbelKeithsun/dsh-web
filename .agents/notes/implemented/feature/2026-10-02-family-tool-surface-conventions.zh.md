@@ -13,9 +13,9 @@ Status: implemented
 
 ## Decision
 
-`shared/host/tool-surface.ts`（由 `scripts/sync-shared.mjs` 同步进 `dsh-ssh`、`dsh-task-board`、`dsh-task-board-github`）持有这三个包共用的两条约定：
+`shared/host/tool-surface.ts`（由 `scripts/sync-shared.mjs` 同步进 `dsh-ssh`、`dsh-task-board`、`dsh-task-board-github`、`dsh-agents`）持有这四个包共用的两条约定：
 
-- `PLUGIN_TOOL_SECTION_ORDERS` 每个宿主插件一个 order（`ssh: 150`、`task-board: 200`），`EXTENSION_TOOL_SECTION_ORDER`（210）是外部提供方扩展的指导段落排在它所依附插件之后的专用槽位。宿主各自的段落不会再意外撞号，扩展只以自身命名、不写宿主，因此本模块在任何包内的副本都不含提供方 id（见 [Task Board external provider extension contract](../architecture/2026-09-30-task-board-extension-contract.md)）。
+- `PLUGIN_TOOL_SECTION_ORDERS` 每个宿主插件一个 order（`ssh: 150`、`task-board: 200`、`agents: 220`），`EXTENSION_TOOL_SECTION_ORDER`（210）是外部提供方扩展的指导段落排在它所依附插件之后的专用槽位。宿主各自的段落不会再意外撞号，扩展只以自身命名、不写宿主，因此本模块在任何包内的副本都不含提供方 id（见 [Task Board external provider extension contract](../architecture/2026-09-30-task-board-extension-contract.md)）。
 - `visibleToolText(tools, names, text)` 返回一个段落提供者：仅当 `names` 中至少一个能经 `tools.get(name, context.scope)` 读到才渲染 `text`。部署不提供注册表时原样渲染（缺注册表不等于能力不可用）；查询被拒也原样渲染（瞬时读失败不该静默丢掉公告）；只有查询成功但一个都读不到才渲染空串。
 
 工具描述里的 21 处 `Triggers:` 全部移除。它们承载的触发词本就已存在于各包自己的 `*_GUIDANCE` 公告（`SSH_GUIDANCE`、`TASK_BOARD_GUIDANCE`、`GITHUB_GUIDANCE`）——那才是「指名本插件的词汇」的既定归属地，因此用户侧的能力发现没有损失，同一份文案也不再付两遍 token。

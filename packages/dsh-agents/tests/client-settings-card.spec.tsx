@@ -1,0 +1,217 @@
+// @vitest-environment jsdom
+/**
+ * The agents settings card: the one field it exposes, the write that field
+ * stages, and the states it must survive.
+ *
+ * The card face is driven with a fixed snapshot plus recording actions; the
+ * save path runs through the real controller over a fake configuration form, so
+ * the operation a save hands the Host is read where the Host receives it.
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
+// Type-only: pulls the client entry's SlotMap merge (the 'web-ui.plugin.item'
+// entry the card's PropsRuntime names) into this program without executing it.
+import type {} from '../src/client/index.ts'
+import {
+  AgentsSettingsCard,
+  AgentsSettingsCardController,
+  type AgentsSettings,
+  type AgentsSettingsCardProps,
+  type AgentsSettingsCardState,
+} from '../src/client/AgentsSettingsCard.tsx'
+import type { FieldState } from '../src/client/settings-form.ts'
+import { click, mount, unmountAll } from './render.tsx'
+
+afterEach(() => { unmountAll() })
+
+/** One untouched field the card renders. */
+const field: FieldState = { text: '', overridden: false, invalid: false }
+
+/** The field id the announcement switch owns. */
+const ANNOUNCE_FIELD_ID = 'settings-agents-announce'
+
+/** One complete card snapshot; callers override what one case exercises. */
+function baseState(overrides: Partial<AgentsSettingsCardState> = {}): AgentsSettingsCardState {
+  return {
+    available: true,
+    exposed: true,
+    writable: true,
+    dirty: false,
+    invalid: false,
+    saving: false,
+    failed: false,
+    announceToAgent: field,
+    ...overrides,
+  }
+}
+
+/** The one element matching a selector, failing loudly when it is absent. */
+function must(container: ParentNode, selector: string): Element {
+  const found = container.querySelector(selector)
+  if (found === null) throw new Error('no element matching ' + selector)
+  return found
+}
+
+/** Render the card against a fixed snapshot; spies stand in for the actions. */
+function renderCard(state: AgentsSettingsCardState) {
+  const edit = vi.fn()
+  const resetField = vi.fn()
+  const props = {
+    t: (key: string) => key,
+    useAgentsSettingsCard: (select: (snapshot: AgentsSettingsCardState) => AgentsSettingsCardState) => select(state),
+    edit,
+    resetField,
+    save: vi.fn(),
+    discard: vi.fn(),
+  } as unknown as AgentsSettingsCardProps
+  const view = mount(<AgentsSettingsCard {...props} />)
+  // The card arrives collapsed; open the disclosure the way the operator does.
+  click(must(view.container, 'li > button[aria-expanded]'))
+  return { edit, resetField, view }
+}
+
+/** Open one field's popup and return the option elements it renders. */
+function openOptions(id: string): HTMLElement[] {
+  const trigger = document.getElementById(id)
+  if (trigger === null) throw new Error('field ' + id + ' is not rendered')
+  click(trigger)
+  const listbox = document.querySelector('[role="listbox"]')
+  if (listbox === null) throw new Error('field ' + id + ' opened no listbox')
+  return Array.from(listbox.querySelectorAll('[role="option"]')) as HTMLElement[]
+}
+
+/** The labels of one field's popup, as the operator reads them. */
+function optionLabels(id: string): Array<string | null> {
+  return openOptions(id).map(node => node.textContent)
+}
+
+/** Open one boolean field's popup and click the option carrying a label. */
+function pickOption(id: string, label: string): void {
+  const option = openOptions(id).find(node => node.textContent === label)
+  if (option === undefined) throw new Error('field ' + id + ' offers no ' + label + ' option')
+  click(option)
+}
+
+/** One write a save staged, as the Host receives it. */
+type FormOp = { op: 'set'; path: string[]; value: unknown } | { op: 'unset'; path: string[] }
+
+/** A configuration-form double holding one namespace section in memory. */
+function fakeForm(init: { user?: Record<string, unknown>; writable?: boolean } = {}) {
+  let user: Record<string, unknown> = { ...init.user }
+  let snapshot = {
+    status: 'ready',
+    value: { ...init.user } as AgentsSettings,
+    base: {} as AgentsSettings,
+    user: user as AgentsSettings,
+    revision: 1,
+    writable: init.writable ?? true,
+  }
+  const listeners = new Set<() => void>()
+  const writes: FormOp[][] = []
+  let releases = 0
+  const form = {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => { releases += 1; listeners.delete(listener) }
+    },
+    set: async () => true,
+    unset: async () => true,
+    mutate: async (ops: FormOp[]) => {
+      writes.push(ops)
+      for (const op of ops) {
+        const key = op.path[0] ?? ''
+        if (op.op === 'set') user = { ...user, [key]: op.value }
+        else { const next = { ...user }; delete next[key]; user = next }
+      }
+      snapshot = { ...snapshot, value: user as AgentsSettings, user: user as AgentsSettings, revision: snapshot.revision + 1 }
+      for (const listener of [...listeners]) listener()
+      return true
+    },
+  } as unknown as ConfigForm<AgentsSettings>
+  return { form, writes, releases: () => releases }
+}
+
+/** Let the staged save run to settlement. */
+async function settle(): Promise<void> {
+  for (let tick = 0; tick < 4; tick += 1) await Promise.resolve()
+}
+
+describe('AgentsSettingsCard', () => {
+  it('operator sees the announcement switch and what the master switch governs', () => {
+    // Given the card rendered with a fixed snapshot, When the operator opens the
+    // switch's popup, Then it offers exactly the inheritable boolean choices, the
+    // master switch on the profile row stays out of the form, and that switch is
+    // explained as read-only copy.
+    const { view } = renderCard(baseState())
+    expect(optionLabels(ANNOUNCE_FIELD_ID)).toEqual(['settings.inherit', 'settings.on', 'settings.off'])
+    expect(document.getElementById('settings-agents-enabled'), 'editable master switch').toBeNull()
+    expect(view.container.textContent).toContain('settings.enabledNote')
+  })
+
+  it('operator turns the announcement on from the card', () => {
+    // Given the card rendered with the switch left at its inherit state, When
+    // the operator picks On, Then the card stages the boolean write that adds
+    // the announcement to agent system prompts.
+    const { edit } = renderCard(baseState())
+    pickOption(ANNOUNCE_FIELD_ID, 'settings.on')
+    expect(edit).toHaveBeenCalledWith('announceToAgent', 'true')
+  })
+
+  it('operator clears a stored announcement back to the deployment default', () => {
+    // Given a user layer that already stores the switch, When the operator resets
+    // that field, Then the card stages a clear so saving drops the key.
+    const { resetField } = renderCard(baseState({ announceToAgent: { text: 'true', overridden: true, invalid: false } }))
+    const head = document.querySelector('label[for="' + ANNOUNCE_FIELD_ID + '"]')!.closest('div')!
+    const reset = Array.from(head.querySelectorAll('button')).find(button => button.textContent === 'settings.reset')
+    if (reset === undefined) throw new Error('no reset control in the announcement field')
+    click(reset)
+    expect(resetField).toHaveBeenCalledWith('announceToAgent')
+  })
+
+  it('operator save writes the staged switch as one set on the announcement path', async () => {
+    // Given a bound form whose section holds no announcement, When the operator
+    // stages On and saves, Then the Host receives one set on
+    // ['announceToAgent'] carrying true, and the form settles clean.
+    const { form, writes } = fakeForm()
+    const controller = new AgentsSettingsCardController(form)
+    try {
+      const face = controller.inject()
+      face.edit('announceToAgent', 'true')
+      face.save()
+      await settle()
+      expect(writes).toEqual([[{ op: 'set', path: ['announceToAgent'], value: true }]])
+      const snapshot = face.hooks.agentsSettingsCard.getSnapshot()
+      expect(snapshot.dirty, 'staged edits after a landed save').toBe(false)
+      expect(snapshot.failed, 'save outcome').toBe(false)
+    } finally {
+      controller.dispose()
+    }
+  })
+
+  it('operator cannot change the switch while the document is read-only', () => {
+    // Given a deployment that serves settings read-only, When the card renders
+    // the switch, Then the control is disabled instead of accepting a draft.
+    renderCard(baseState({ writable: false }))
+    const trigger = document.getElementById(ANNOUNCE_FIELD_ID) as HTMLButtonElement
+    expect(trigger.disabled).toBe(true)
+  })
+
+  it('operator still gets the switch when the Host does not expose the namespace', () => {
+    // Given a Host whose settings allowlist omits this namespace, When the card
+    // renders, Then it explains nothing away and still offers the switch, so a
+    // missing namespace never reads as a missing plugin.
+    const { view } = renderCard(baseState({ exposed: false }))
+    expect(document.querySelector('[role="status"]'), 'not-exposed banner').toBeNull()
+    expect(view.container.textContent).not.toContain('settings.notExposed')
+    expect(document.getElementById(ANNOUNCE_FIELD_ID)?.tagName).toBe('BUTTON')
+  })
+
+  it('operator sees the card release its form subscription when it unloads', () => {
+    // Given a card bound to a form, When the plugin unloads, Then the card drops
+    // exactly one subscription so a reload can bind again.
+    const fake = fakeForm()
+    new AgentsSettingsCardController(fake.form).dispose()
+    expect(fake.releases()).toBe(1)
+  })
+})

@@ -1,22 +1,25 @@
 /**
  * Host entry of the dsh-agents plugin: one ledger, the seven squad routes, the
- * member-brief section, the squad context that tells a Lead who exists, and the
- * forked Agent Teams runtime that makes a squad run real.
+ * member-brief section, the squad context that tells a Lead who exists, the
+ * model-facing squad tools with their announcement, and the forked Agent Teams
+ * runtime that makes a squad run real.
  *
  * This file wires faces the Host already serves; every rule it depends on lives
  * beside it — the ledger in host/ledger.ts, the definition/run seam in
  * host/run-gateway.ts, the launch order in host/service.ts, the squad-run gate
  * and Lead context in host/squad.ts, the fence and the wire in host/routes.ts and
- * protocol.ts, the injection decision in host/member-prompt.ts (evidence in
- * docs/member-prompt.md), and the fork itself in team/ and tools/ (provenance in
- * docs/fork-provenance.md).
+ * protocol.ts, the tool surface in host/agent-tools.ts, the injection decision in
+ * host/member-prompt.ts (evidence in docs/member-prompt.md), and the fork itself
+ * in team/ and tools/ (provenance in docs/fork-provenance.md).
  *
  * @module @linxin666/dsh-agents
  */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { Workspace } from '@deepseek-ai/dsh-workspace/types'
+import { AGENTS_TOOL_GUIDANCE, AGENTS_TOOL_NAMES, buildAgentsTools } from './host/agent-tools.ts'
 import { agentsHomeDirectory } from './host/home.ts'
 import { assembleIdentity, registerMemberPromptSeam, type MemberPromptRegistry } from './host/member-prompt.ts'
 import { makeAgentsRoutes } from './host/routes.ts'
@@ -25,34 +28,79 @@ import { AgentsHostService } from './host/service.ts'
 import { readService } from './host/services.ts'
 import { TeamService, type TeamServiceContext } from './team/index.ts'
 import { installTeamTools, type TeamToolInstallation } from './tools/index.ts'
+import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
 
 /** Services this row needs before it mounts. The workspace registry, command dispatcher and agent registry are resolved optionally: a deployment that lacks one still mounts, and a run that needs the missing face fails closed with a named code. The Team runtime faces are optional for the same reason — M1's ledger, routes and member brief keep working without them. */
 export const inject = ['systemPrompt', 'typertGateway', 'webServer']
 
 /** Plugin row shape. */
 export type ConfigInput = {
-  /** Master switch: when off, no routes and no prompt section are registered. */
+  /** Master switch: when off, no routes, no tools and no prompt section are registered. */
   enabled?: boolean
+  /**
+   * Announce the squad tool surface to every agent through one system-prompt
+   * section. Off by default, so an agent learns about the surface when the user
+   * asks for it rather than from every prompt.
+   */
+  announceToAgent?: boolean
 }
+
+/** One resolved config field: a live reference (a volatile field), or a plain value from a hand-built context. */
+type ConfigField<T> = Volatile<T> | T
 
 /** Resolved plugin configuration. */
 export interface Config {
-  enabled: boolean
+  enabled?: ConfigField<boolean>
+  announceToAgent?: ConfigField<boolean>
 }
 
-/** Schema of the row; the loader validates a profile patch against it. */
+/**
+ * Schema of the row; the loader validates a profile patch against it.
+ *
+ * `enabled` stays an ordinary field on purpose: this row's mount and its ledger
+ * lifetime are one decision, so switching it off reloads the row instead of
+ * leaving routes registered over a disabled plugin. `announceToAgent` is
+ * volatile, which is what puts it on the settings page and lets a commit reach
+ * the running fiber.
+ */
 export const Config: z<ConfigInput, Config> = z.object({
-  enabled: z.boolean().default(true).description('Mount the agent squad ledger, its routes, the member-brief section, and the forked Agent Teams runtime.'),
+  enabled: z.boolean().default(true).description('Mount the agent squad ledger, its routes, the member-brief section, the squad tools, and the forked Agent Teams runtime.'),
+  announceToAgent: z.boolean().default(false).volatile().description('Announce the squad tool surface to every agent through one system-prompt section. The section names only the tools this session can really see.'),
 })
 
 /** Schema default, re-read for hand-built test contexts. */
 export const DEFAULT_ENABLED = true
+
+/** Schema default of the announcement switch, re-read for hand-built test contexts. */
+export const DEFAULT_ANNOUNCE_TO_AGENT = false
+
+/**
+ * Read one config field's current value.
+ *
+ * A volatile field travels as a stable reference the Loader commits in place, so
+ * a live value must be read at use time instead of captured when the plugin
+ * activates; a plain value (a programmatic mount, or an ordinary field) is
+ * returned as it stands.
+ * @param field - the config field as the Host handed it.
+ * @param fallback - value to use when the field is absent.
+ * @returns the effective field value.
+ */
+function readConfigField<T>(field: ConfigField<T> | undefined, fallback: T): T {
+  if (field === undefined) return fallback
+  if (typeof field === 'object' && field !== null && typeof (field as { get?: unknown }).get === 'function') {
+    return (field as Volatile<T>).get() as T
+  }
+  return field as T
+}
 
 /** The directory the ledger and its owner lock live in. */
 export { agentsHomeDirectory }
 
 /** System-prompt context name that carries the squad roster and goal to a Lead. */
 export const SQUAD_CONTEXT_NAME = 'team:squad'
+
+/** System-prompt section that announces the squad tool surface to every agent. */
+export const AGENTS_TOOL_SECTION_NAME = 'plugin:agents'
 
 /** The system-prompt registry face the squad context needs. */
 export interface SquadContextRegistry {
@@ -97,6 +145,36 @@ export function resolveCommandDispatcher(ctx: Context): CommandDispatcherFace | 
 export function resolveAgents(ctx: Context): { get(sessionId: string): Agent | undefined } | undefined {
   const agents = readService<{ get?: unknown }>(ctx, 'agents', false)
   return agents !== undefined && typeof agents.get === 'function' ? agents as { get(sessionId: string): Agent | undefined } : undefined
+}
+
+/** The registry face the squad tools register into. */
+interface AgentsToolRegistry {
+  register(definition: ToolDefinition): () => void
+  /** Scoped lookup; present on the real registry, absent on a stub that only registers. */
+  get?(name: string, scope?: unknown): unknown
+}
+
+/**
+ * Read the optional agent-tool registry. Like the workspace registry it is
+ * resolved rather than injected: a runtime that serves no registry must still
+ * mount the ledger, the routes and the briefs, losing only the tool surface.
+ * @param ctx - the plugin context.
+ * @returns the registry, or undefined when this deployment serves none.
+ */
+export function resolveToolRegistry(ctx: Context): AgentsToolRegistry | undefined {
+  const registry = readService<AgentsToolRegistry>(ctx, 'tools')
+  return registry !== undefined && typeof registry.register === 'function' ? registry : undefined
+}
+
+/**
+ * The lookup half of a resolved registry, which is what a prompt section asks
+ * before it names a tool. A stub that only registers exposes no lookup, and the
+ * guidance then renders unconditionally.
+ * @param registry - the resolved registry, when this deployment serves one.
+ * @returns the scoped lookup, or undefined when the registry has none.
+ */
+function lookupOf(registry: AgentsToolRegistry | undefined): { get(name: string, scope?: unknown): unknown } | undefined {
+  return registry !== undefined && typeof registry.get === 'function' ? { get: registry.get.bind(registry) } : undefined
 }
 
 /** Read the injected typert gateway (the Host's own service call surface). */
@@ -159,13 +237,28 @@ function warn(ctx: Context, message: string, error?: unknown): void {
   else console.warn(message, error)
 }
 
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * Volatile config values were committed into the running fiber without a
+     * remount (cordis-plugin-loader); dispatched to the owning fiber only.
+     * Spelled here because the Loader package is not a dependency of this
+     * plugin, with the Loader's own shape so the two declarations merge when a
+     * Host program carries both.
+     * @param paths - changed config paths as key arrays; every value is committed before dispatch.
+     * @mode emit
+     */
+    'loader/volatile-update'(paths: readonly (readonly string[])[]): void
+  }
+}
+
 /**
  * Activate the host half.
  * @param ctx - the plugin context (systemPrompt, typertGateway and webServer injected).
  * @param config - resolved row config.
  */
 export function apply(ctx: Context, config?: Config): void {
-  if ((config?.enabled ?? DEFAULT_ENABLED) !== true) return
+  if (readConfigField(config?.enabled, DEFAULT_ENABLED) !== true) return
   const abort = new AbortController()
   const workspaces = resolveWorkspaceRegistry(ctx)
   const gateway = createHostRunGateway({
@@ -243,6 +336,47 @@ export function apply(ctx: Context, config?: Config): void {
       service.dispose()
     }
   }, 'dsh-agents: host ledger, routes, member brief, squad context, and team runtime')
+
+  // The agent tools and their announcement. One effect owns both, so unloading
+  // the row releases the registrations and the section whatever a later sync
+  // did; the sync below rebuilds only the section, and only on a real change.
+  let disposeSection: (() => void) | undefined
+  ctx.effect(() => {
+    const registry = resolveToolRegistry(ctx)
+    const disposers = registry === undefined ? [] : buildAgentsTools(service).map(tool => registry.register(tool))
+    return () => {
+      for (const dispose of disposers.splice(0)) dispose()
+      disposeSection?.()
+      disposeSection = undefined
+    }
+  }, 'dsh-agents: squad tools')
+
+  let announced: boolean | undefined
+  /** Match the announcement to the committed switch, rebuilding only when it moved. */
+  const sync = (): void => {
+    const announceToAgent = readConfigField(config?.announceToAgent, DEFAULT_ANNOUNCE_TO_AGENT)
+    if (announced === announceToAgent) return
+    announced = announceToAgent
+    if (disposeSection !== undefined) {
+      disposeSection()
+      disposeSection = undefined
+    }
+    const systemPrompt = resolveSystemPrompt(ctx)
+    if (!announceToAgent || systemPrompt === undefined) return
+    disposeSection = systemPrompt.section({
+      name: AGENTS_TOOL_SECTION_NAME,
+      order: PLUGIN_TOOL_SECTION_ORDERS.agents,
+      // The announcement names the squad tools, so it renders only while at
+      // least one of them is reachable: a restriction, a preset composition or a
+      // missing registry must not leave guidance telling the model to call a
+      // tool this session cannot see.
+      text: visibleToolText(lookupOf(resolveToolRegistry(ctx)), AGENTS_TOOL_NAMES, AGENTS_TOOL_GUIDANCE),
+    })
+  }
+  // A settings commit of the volatile switch lands in the reference this fiber
+  // already holds and is announced here: no remount, no second apply.
+  ctx.on('loader/volatile-update', () => { sync() })
+  sync()
 }
 
 /** Workspace registry type re-exported for the client half's own typings. */
