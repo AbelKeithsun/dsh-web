@@ -26,7 +26,7 @@ import type { RemoteBridgeMethodResult, RemoteBridgeRegistry } from './extension
 import { errorCodeOf, failureText, withServiceUnavailableRetry } from './gateway-errors.ts'
 import { scopeKey, type JobRoster, type JobsPayload } from './jobs.ts'
 import type { PairingService } from './pairing.ts'
-import type { QuestionAnswerItem, QuestionClaims } from './questions.ts'
+import type { ListedQuestion, QuestionAnswerItem, QuestionClaims, QuestionListPayload } from './questions.ts'
 import {
   CAP_AGENTS,
   CAP_COMMANDS,
@@ -34,6 +34,7 @@ import {
   CAP_FRAME_DEFLATE,
   CAP_JOBS,
   CAP_QUESTIONS,
+  CAP_QUESTION_LIST,
   CAP_ROSTER_COMPACT,
   CAP_SESSION_FORK,
   CAP_SESSION_SNAPSHOT_PAGE,
@@ -47,6 +48,7 @@ import {
   CODE_JOBS_UNAVAILABLE,
   CODE_NONCE_INVALID,
   CODE_PROTO_UNSUPPORTED,
+  CODE_QUESTION_LIST_UNAVAILABLE,
   CODE_SESSION_NOT_FOLLOWABLE,
   CODE_SNAPSHOT_TOO_LARGE,
   CODE_SNAPSHOT_UNAVAILABLE,
@@ -61,6 +63,7 @@ import {
   METHOD_PAIR_FINISH,
   METHOD_PRESETS_LIST,
   METHOD_QUESTION_ANSWER,
+  METHOD_QUESTION_LIST,
   METHOD_SESSION_ATTACHMENT,
   METHOD_SESSION_COMMAND,
   METHOD_SESSION_COMMANDS,
@@ -709,6 +712,12 @@ export class BridgeConnection {
     if (frame.m === METHOD_QUESTION_ANSWER && !this.declares(CAP_QUESTIONS)) {
       return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
+    // `question.list` is its own channel capability, declared by the client and
+    // announced by the bridge: a client that never declared it is told what it was
+    // told before the method existed, and no claim registry is read on its behalf.
+    if (frame.m === METHOD_QUESTION_LIST && !this.declares(CAP_QUESTION_LIST)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // `jobs.list` is the whole of the job channel: without the capability the
     // method does not exist, and without the method no scope is ever watched, so
     // a client that never declared it can receive no `jobs.changed` either.
@@ -760,6 +769,7 @@ export class BridgeConnection {
       case METHOD_SESSION_SET_MODEL: return await this.#sessionSetModel(frame.p)
       case METHOD_APPROVAL_RESOLVE: return this.#approvalResolve(frame.p)
       case METHOD_QUESTION_ANSWER: return await this.#questionAnswer(frame.p)
+      case METHOD_QUESTION_LIST: return this.#questionList(frame.p)
       case METHOD_JOBS_LIST: return await this.#jobsList(frame.p)
       case METHOD_PRESETS_LIST: return await this.#presetsList()
       case METHOD_SESSION_CREATE: return await this.#sessionCreate(frame.p)
@@ -1661,6 +1671,36 @@ export class BridgeConnection {
     }
     const reply = await this.#options.questions.answer(sessionId, callId, { answers })
     return reply.ok ? { ok: true, r: { ok: true } } : refusal(reply.code, reply.msg)
+  }
+
+  /**
+   * Answer one `question.list`: the questions this bridge is still holding.
+   *
+   * A pure read — it claims nothing, moves no deadline, triggers no `continued`
+   * and writes no host state — because its whole purpose is to let a client that
+   * was disconnected reconcile cards it already holds: a question missing from
+   * this list is one nobody can answer any more, since the bridge withdraws every
+   * claim when the last paired device leaves and the phone is not there to hear
+   * it.
+   *
+   * Only a COMPLETE list may retire a card on the client, so a registry this
+   * bridge cannot read answers `question-list-unavailable` rather than an empty
+   * list: an unreadable set is not an empty one.
+   * @param payload - must be the empty object: the held set is global, not scoped.
+   */
+  #questionList(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
+    if (Object.keys(payload).length > 0) {
+      return refusal(CODE_INVALID_ARGS, 'question.list takes no arguments')
+    }
+    let questions: readonly ListedQuestion[]
+    try {
+      questions = this.#options.questions.listed()
+    } catch (error) {
+      this.#options.log(`question.list could not read the held questions: ${failureText(error)}`)
+      return refusal(CODE_QUESTION_LIST_UNAVAILABLE, 'this bridge could not read the questions it is holding')
+    }
+    const answer: QuestionListPayload = { questions, complete: true }
+    return { ok: true, r: answer }
   }
 
   /**

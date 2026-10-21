@@ -732,3 +732,146 @@ describe('user question bridge', () => {
     expect(harness.logs.filter(entry => entry.includes('attachWait'))).toEqual([])
   })
 })
+
+/** Declare the question channel AND the list capability on one connection. */
+async function declareQuestionList(connection: { handleText(text: string): Promise<void> }, id = 1): Promise<void> {
+  await connection.handleText(requestFrame(id, 'hello', { proto: 1, cap: ['questions.v1', 'questions.list.v1'] }))
+}
+
+/**
+ * Route one hub's wait subscriptions to a stream per call, so a suite can drive
+ * each question's deadline on its own.
+ * @param gateway - the hub's gateway double.
+ * @returns the streams, in the order the subscriptions opened.
+ */
+function followWaitStreams(gateway: FakeGateway): ControllableStream[] {
+  const streams: ControllableStream[] = []
+  gateway.follow = (call) => {
+    if (call.method !== 'attachWait') return new ControllableStream().iterable()
+    const stream = new ControllableStream()
+    streams.push(stream)
+    return stream.attach(call.signal).iterable()
+  }
+  return streams
+}
+
+describe('held question list', () => {
+  it('user of a phone that reconnects reads back every question the bridge still holds', async () => {
+    // Given a bridge holding one open question with a published deadline and one
+    // whose foreground wait the host already ended
+    const harness = makeHub({ questionNow: () => 1_000_000 })
+    await declareQuestionList(harness.connection)
+    const waits = followWaitStreams(harness.gateway)
+    harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    waits[0]?.push({ remainingMs: 4000 })
+    await settle()
+    const controller = new AbortController()
+    const timeout = hostTimeout()
+    const continued = harness.hub.question(hostRequest({ wait: { callId: 'c-2', timed: true }, signal: controller.signal }), desktopWaiting)
+    await settle()
+    controller.abort(timeout)
+    await expect(continued).rejects.toBe(timeout)
+    // When that phone asks what is still held
+    await harness.connection.handleText(requestFrame(40, 'question.list', {}))
+    // Then the answer is the whole set, marked complete, keyed the way the phone
+    // keys its own cards
+    const answer = answerOf(harness, 40).r as { questions: Array<Record<string, unknown>>; complete: boolean }
+    expect(answer.complete).toBe(true)
+    expect(answer.questions.map(row => row.key)).toEqual(['s-1/c-1', 's-1/c-2'])
+    expect(answer.questions.map(row => row.sessionId)).toEqual(['s-1', 's-1'])
+    expect(answer.questions.map(row => row.state)).toEqual(['open', 'continued'])
+    // And each row repeats the question.request payload verbatim — the card the
+    // phone was handed and the row it reads back are one shape, deadline included
+    expect(answer.questions[0]?.payload).toEqual(questionPayloads(harness.transport)[0])
+    expect(answer.questions[0]?.payload).toMatchObject({ callId: 'c-1', state: 'open', expiresAt: 1_004_000 })
+    expect(answer.questions[1]?.payload).toMatchObject({ callId: 'c-2', state: 'continued' })
+    expect(answer.questions[1]?.payload).not.toHaveProperty('expiresAt')
+  })
+
+  it('user whose phone was away when the last device left finds nothing left to answer', async () => {
+    // Given a question the bridge holds for the only paired phone
+    const harness = makeHub()
+    await declareQuestionList(harness.connection)
+    harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    expect(harness.questions.size).toBe(1)
+    // When that phone goes away, which delegates the question to the next answerer
+    harness.hub.detach(harness.connection)
+    expect(harness.questions.size).toBe(0)
+    // Then the phone that comes back is told the set is empty, not handed a ghost
+    const transport = new RecordingTransport()
+    const reconnected = harness.hub.attach(transport, { deviceId: 'dev_back' })
+    await declareQuestionList(reconnected, 1)
+    await reconnected.handleText(requestFrame(2, 'question.list', {}))
+    expect(answerOf({ transport }, 2)).toEqual({ ok: true, r: { questions: [], complete: true } })
+  })
+
+  it('user of a client that never declared the list capability is told the method does not exist', async () => {
+    // Given a paired phone that declared the question channel only, as every
+    // client written before the list existed does
+    const harness = makeHub()
+    await declareQuestions(harness.connection)
+    harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    // When it asks for the list anyway
+    await harness.connection.handleText(requestFrame(41, 'question.list', {}))
+    // Then the method is not part of its protocol and no claim registry was read
+    expect(answerOf(harness, 41).e).toEqual({ code: 'unknown-method', msg: 'unknown method question.list' })
+    expect(harness.gateway.invocations).toEqual([])
+    // And the one card it does receive is the payload it always received
+    expect(questionPayloads(harness.transport)).toEqual([
+      {
+        sessionId: 's-1',
+        callId: 'c-1',
+        state: 'open',
+        questions: [
+          {
+            id: 'q-1',
+            question: 'Which deck?',
+            header: 'Deck',
+            detail: 'Pick exactly one.',
+            options: [{ label: 'Alpha', description: 'the first' }, { label: 'Beta' }],
+            multiSelect: false,
+          },
+        ],
+      },
+    ])
+  })
+
+  it('operator sees the list leave the held question, its deadline and the host untouched', async () => {
+    // Given one claimed question and its wait subscription
+    const harness = makeHub()
+    await declareQuestionList(harness.connection)
+    const pending = harness.hub.question(hostRequest(), desktopWaiting)
+    await settle()
+    const cards = questionPayloads(harness.transport).length
+    const calls = harness.gateway.invocations.length
+    const streams = harness.gateway.streamRequests.length
+    // When the phone reads the list twice
+    await harness.connection.handleText(requestFrame(50, 'question.list', {}))
+    await harness.connection.handleText(requestFrame(51, 'question.list', {}))
+    // Then the question is still held, still open, and nothing was published,
+    // asked of the host or re-subscribed
+    expect(harness.questions.size).toBe(1)
+    expect(harness.questions.stateOf('c-1')).toBe('open')
+    expect(questionPayloads(harness.transport)).toHaveLength(cards)
+    expect(harness.gateway.invocations).toHaveLength(calls)
+    expect(harness.gateway.streamRequests).toHaveLength(streams)
+    // And it is still answerable afterwards
+    await harness.connection.handleText(requestFrame(52, 'question.answer', { sessionId: 's-1', callId: 'c-1', answers: ANSWER.answers }))
+    expect(await pending).toEqual(ANSWER)
+  })
+
+  it('user sends a list request that names a session and is refused by the argument contract', async () => {
+    // Given a paired phone that declared both names
+    const harness = makeHub()
+    await declareQuestionList(harness.connection)
+    // When it scopes the list to one session, which the global set does not take
+    await harness.connection.handleText(requestFrame(53, 'question.list', { sessionId: 's-1' }))
+    // Then the argument contract refuses it instead of silently ignoring the scope
+    expect(answerOf(harness, 53).e?.code).toBe('invalid-args')
+  })
+
+})
+

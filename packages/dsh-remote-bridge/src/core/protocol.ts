@@ -27,6 +27,7 @@ export const METHOD_PAIR_BEGIN = 'pair.begin'
 export const METHOD_PAIR_FINISH = 'pair.finish'
 export const METHOD_APPROVAL_RESOLVE = 'approval.resolve'
 export const METHOD_QUESTION_ANSWER = 'question.answer'
+export const METHOD_QUESTION_LIST = 'question.list'
 export const METHOD_JOBS_LIST = 'jobs.list'
 
 /** Server-pushed topics of protocol v1. */
@@ -84,6 +85,23 @@ export const CAP_SESSION_SNAPSHOT_SINCE = 'session.snapshot.since.v1'
  * exactly as that frame was refused before.
  */
 export const CAP_QUESTIONS = 'questions.v1'
+
+/**
+ * Capability a client declares in `hello`'s `cap` array to learn that this
+ * bridge can list the user questions it is still holding.
+ *
+ * An announcement rather than a switch, the same shape as
+ * {@link CAP_SESSION_DEEP_HISTORY}: `question.list` is reachable from every
+ * client that declared {@link CAP_QUESTIONS}, exactly as `question.answer` is,
+ * so a client written before this name existed loses nothing by declaring it
+ * and nothing by never calling the method. What the name buys is a way to tell
+ * a bridge that serves the method from one that does not: a host built before
+ * it answers `unknown-method`, so a client that does not find this name in
+ * `hello`'s `capabilities` keeps the retirement rule it had — a card is over
+ * when `question.request` says `settled` — instead of reaping cards on an
+ * answer it cannot trust.
+ */
+export const CAP_QUESTION_LIST = 'questions.list.v1'
 
 /**
  * Capability a client declares in `hello`'s `cap` array to be handed the
@@ -283,6 +301,7 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_PAIR_FINISH,
   METHOD_APPROVAL_RESOLVE,
   METHOD_QUESTION_ANSWER,
+  METHOD_QUESTION_LIST,
   METHOD_JOBS_LIST,
   METHOD_PRESETS_LIST,
   METHOD_SESSION_CREATE,
@@ -306,6 +325,13 @@ export const CODE_APPROVAL_UNKNOWN = 'approval-unknown'
  * failures crossing this method keep their own codes instead.
  */
 export const CODE_QUESTION_UNKNOWN = 'question-unknown'
+/**
+ * The bridge could not read the questions it is holding, so it cannot say which
+ * ones are still live. The answer is deliberately not an empty list: a client
+ * retires every card a COMPLETE list does not carry, and a read that failed is
+ * not a complete one — it is a bridge that cannot answer this question today.
+ */
+export const CODE_QUESTION_LIST_UNAVAILABLE = 'question-list-unavailable'
 /**
  * The named session is a delegated child whose durable parent is not a session
  * this connection may read. The bridge follows an addressable child and refuses
@@ -335,6 +361,13 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 13 when the question list shipped: behind {@link CAP_QUESTION_LIST} a client
+ * may call {@link METHOD_QUESTION_LIST} and be answered the questions this
+ * bridge is still holding, so it reads a new reply body off the wire and the
+ * number rises with it. It is what lets a phone stop trusting a card it holds:
+ * the one retirement signal before it was `question.request` with
+ * `state: "settled"`, which a phone that was disconnected when the last client
+ * left never receives.
  * 12 when the command channel shipped: behind {@link CAP_COMMANDS} a client may
  * call {@link METHOD_SESSION_COMMANDS} and {@link METHOD_SESSION_COMMAND}, so it
  * reads a new reply body off the wire and the number rises with it.
@@ -380,7 +413,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 12
+export const MINOR = 13
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -393,6 +426,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_SESSION_SNAPSHOT_TRIM,
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_QUESTIONS,
+  CAP_QUESTION_LIST,
   CAP_SUBAGENT_THREAD,
   CAP_JOBS,
   CAP_AGENTS,

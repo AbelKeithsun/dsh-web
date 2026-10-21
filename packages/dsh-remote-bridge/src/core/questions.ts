@@ -76,6 +76,66 @@ export interface QuestionAnswer {
   readonly answers: readonly QuestionAnswerItem[]
 }
 
+/**
+ * The `question.request` payload for one claim, and the `payload` of every
+ * `question.list` entry.
+ *
+ * One function for both so the card a phone was handed and the card it reads back
+ * out of a list cannot drift apart: `expiresAt` appears only once the claim
+ * learned the host's own deadline, and a blocking ask publishes no such key at
+ * all rather than an empty or null one.
+ * @param state - whether the foreground ask still holds the question.
+ * @param question - the claim being published.
+ * @returns the frozen payload body.
+ */
+export function questionPayload(state: QuestionState, question: ClaimedQuestionView): QuestionRequestPayload {
+  return {
+    sessionId: question.sessionId,
+    callId: question.callId,
+    state,
+    questions: question.questions,
+    ...(question.expiresAt === undefined ? {} : { expiresAt: question.expiresAt }),
+  }
+}
+
+/**
+ * The identity a client knows one question card by.
+ *
+ * The same `sessionId/callId` pair the phone already derives for its own card,
+ * so a list entry and the card it describes are compared as one name instead of
+ * two fields that could be recombined differently on each side.
+ * @param sessionId - the session that asked.
+ * @param callId - the wire call id the client answers with.
+ * @returns the card key.
+ */
+export function questionKey(sessionId: string, callId: string): string {
+  return sessionId + '/' + callId
+}
+
+/** One question this bridge still holds, as `question.list` publishes it. */
+export interface ListedQuestion {
+  /** {@link questionKey}: the card identity the client holds it under. */
+  readonly key: string
+  readonly sessionId: string
+  /** `open` or `continued`; a settled question is not held and never listed. */
+  readonly state: QuestionState
+  /** The `question.request` payload, byte for byte the shape that channel froze. */
+  readonly payload: QuestionRequestPayload
+}
+
+/**
+ * The body of one `question.list` answer.
+ *
+ * `complete` is what a client is allowed to act on: only a complete list may
+ * retire a card it does not carry, so a bridge that could answer only part of the
+ * set must say `false` rather than let the difference read as "the question is
+ * over".
+ */
+export interface QuestionListPayload {
+  readonly questions: readonly ListedQuestion[]
+  readonly complete: boolean
+}
+
 /** Whether a question still holds the foreground ask, or only its late reply. */
 /**
  * `open` while the ask is still waiting, `continued` once the host's foreground
@@ -530,6 +590,26 @@ export class QuestionClaims {
    */
   openClaims(): readonly ClaimedQuestionView[] {
     return [...this.#claims.values()].map(viewOf)
+  }
+
+  /**
+   * Every question this bridge still holds, as `question.list` publishes it.
+   *
+   * The claim registry IS the answer: a question leaves it the moment it is
+   * answered, settled by the host's own UI, withdrawn with the last paired phone
+   * or expired, so a card missing from this list is a card no one can answer any
+   * more. Both live states are listed — `continued` is still answerable through
+   * the host's late-answer path — and a settled question is never here, because
+   * it is never held.
+   * @returns one entry per held claim, in claim order.
+   */
+  listed(): readonly ListedQuestion[] {
+    return [...this.#claims.values()].map(record => ({
+      key: questionKey(record.sessionId, record.callId),
+      sessionId: record.sessionId,
+      state: record.state,
+      payload: questionPayload(record.state, viewOf(record)),
+    }))
   }
 
   /**

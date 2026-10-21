@@ -22,7 +22,8 @@ import type { PendingPromptView } from './approvals.ts'
 import type { BridgeConnectionOptions, BridgeTransport, ConnectionAuth } from './connection.ts'
 import { BridgeConnection } from './connection.ts'
 import { CAP_APPROVALS, CAP_QUESTIONS, TOPIC_APPROVAL_REQUEST, TOPIC_QUESTION_REQUEST } from './protocol.ts'
-import type { ClaimedQuestionView, QuestionAnswer, QuestionRequestPayload, QuestionState, UserQuestionRequestLike } from './questions.ts'
+import { questionPayload } from './questions.ts'
+import type { QuestionAnswer, UserQuestionRequestLike } from './questions.ts'
 
 /**
  * The fields of an approval question this bridge reads. Structural on purpose:
@@ -60,27 +61,6 @@ export interface ApprovalRequestPayload {
  */
 function approvalPayload(prompt: PendingPromptView): ApprovalRequestPayload {
   return { sessionId: prompt.sessionId, id: prompt.id, summary: prompt.summary, toolName: prompt.toolName }
-}
-
-/**
- * The `question.request` payload for one claim.
- *
- * `expiresAt` appears only once the claim learned the host's own deadline from
- * its wait subscription, and it is the host's deadline unchanged: the bridge
- * invents none, because a bridge-invented deadline would be a timeout of the
- * bridge's own — the exact thing this channel must not have. A blocking ask
- * therefore publishes no such key at all, rather than an empty or null one.
- * @param state - whether the foreground ask still holds the question.
- * @param question - the claim being published.
- */
-function questionPayload(state: QuestionState, question: ClaimedQuestionView): QuestionRequestPayload {
-  return {
-    sessionId: question.sessionId,
-    callId: question.callId,
-    state,
-    questions: question.questions,
-    ...(question.expiresAt === undefined ? {} : { expiresAt: question.expiresAt }),
-  }
 }
 
 /** The bridge's live connections plus the answerer it composes onto the approval chain. */
