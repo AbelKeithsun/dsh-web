@@ -40,7 +40,8 @@
 - 例外一：预设把 persona 段设为 `complete: true`（`@deepseek-ai/dsh-persona/lib/index.js:25-30`）。官方装配在 waterfall 之后把该段还原为**唯一**段（`PromptSection.complete` 契约，`@deepseek-ai/dsh-system-prompt/lib/types/index.d.ts:63-69`），本插件的段被丢弃。这类预设主动声明「系统提示词由我独占」，注入方无法绕过。
 - 例外二：任何其它注册 `complete` 段的预设，效果同上。
 - 兜底（若上述预设成为常态）：在**定义保存时**为每个成员物化一个轻量预设包，写 `$DSH_HOME/agent-presets/<member-preset-id>/`，只挂一行 `@deepseek-ai/dsh-persona`，`config.prefix` 为成员 brief，运行该成员时用该预设 id 组合会话；成员若自己也钉了预设，则把被钉预设的插件行复制进这份物化预设并在其后追加 persona 行，使 persona 段仍按 scope 覆盖。代价是定义保存变成一次写操作、预设注册表要跟着刷新、且删除成员必须清理落盘资产；`registerMemberPromptSeam` 是唯一调用点，切换只改这一个函数，账本、路由与运行顺序都不动。
-- M2（整队运行、fork 官方 agent-team 服务）沿用同一判定：teammate 会话同样是 Agent，同样把 `agent.id` 交给 `memberBriefFor`。
+- M2（整队运行、fork 官方 agent-team 服务）沿用同一判定：teammate 会话同样是 Agent，同样把 `agent.id` 交给 `memberBriefFor`，由成员简报段负责。
+- M2 的 Lead 会话不靠简报段：它要的是「本小队有哪些成员、本次目标是什么」，这部分以 `team:squad` **context**（`ctx.systemPrompt.context`）注册，因此不受本节例外一/二影响——`complete` 段还原的是 section，context 照常渲染。实现见 `src/host/squad.ts` 与 `src/index.ts` 的 `registerSquadPromptContext`，fork 侧改动见 [fork-provenance.md](fork-provenance.md)。
 
 ## 验证
 

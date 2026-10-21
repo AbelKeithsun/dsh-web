@@ -10,7 +10,8 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { t } from './locales.ts'
 import { permissionLabel } from './permissions.ts'
-import { runStatusLabel } from './runs.ts'
+import { runStatusLabel, runStatusTone } from './runs.ts'
+import { StatusGlyph } from './icons.tsx'
 import type { MemberDefinition, RunRecord } from '../protocol.ts'
 import css from './agents.module.css'
 
@@ -61,7 +62,17 @@ export function MemberCard({ member, run, busy, notice, onRun, onOpenSession, on
         </div>
       </dl>
       <p className={css.memberBrief} data-dsh-part="member-brief">{brief}</p>
-      {run === undefined ? null : <p className={css.runStatus}>{runStatusLabel(run)}</p>}
+      {/* Always mounted: the status line reserves its own height, so the first
+          run of a member never moves the actions below it, and it is a live
+          region carrying both a glyph and a text label. */}
+      <p className={css.runStatus} role="status" data-dsh-part="member-run-status">
+        {run === undefined ? null : (
+          <>
+            <StatusGlyph tone={runStatusTone(run)} />
+            <span>{runStatusLabel(run)}</span>
+          </>
+        )}
+      </p>
       <div className={css.memberActions}>
         <button type="button" className={css.primary} disabled={busy} onClick={onRun}>
           {busy ? t('member.running') : run === undefined ? t('member.run') : t('member.runAgain')}

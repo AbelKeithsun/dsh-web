@@ -12,7 +12,7 @@ Status: implemented
 
 ## Decision
 
-`packages/dsh-agents` 是独立的家族子插件。它拥有自己的账本（`$DSH_HOME/dsh-agents`）、`/dsh-agents/api` 下的六个路由、`src/host/service.ts` 里的启动顺序，以及通过 `slots.inject` 注册的一条侧栏行和一个主区页面；浏览器半区走自己的 loader 条目。定义与运行之间的接缝是 `src/host/run-gateway.ts`，换启动器不必动账本、路由和界面。包自带展示元数据——`icon.svg` 与带 `meta.title` / `meta.description` 的 `locale/{en,ru,zh}.json`——因为家族行直挂真实包名，宿主读取器要经这个包的 exports 才解析得到它们（[包 README](../../../../packages/dsh-agents/README.zh.md)）。
+`packages/dsh-agents` 是独立的家族子插件。它拥有自己的账本（`$DSH_HOME/dsh-agents`）、`/dsh-agents/api` 下的七个路由、`src/host/service.ts` 里的启动顺序，以及通过 `slots.inject` 注册的一条侧栏行和一个主区页面；浏览器半区走自己的 loader 条目。定义与运行之间的接缝是 `src/host/run-gateway.ts`，换启动器不必动账本、路由和界面。包自带展示元数据——`icon.svg` 与带 `meta.title` / `meta.description` 的 `locale/{en,ru,zh}.json`——因为家族行直挂真实包名，宿主读取器要经这个包的 exports 才解析得到它们（[包 README](../../../../packages/dsh-agents/README.zh.md)）。
 
 成员简报是系统提示词的一段，不是首条用户消息。证据写在[成员简报判定](../../../../packages/dsh-agents/docs/member-prompt.md)：装配上下文只暴露 `Agent`，而它的身份就是会话 id，所以简报是在装配时刻按会话去成员账本里查出来的；段的 `text` 是函数，提示词装配每次都会调用它，因此改简报改的是下一轮而不是那次启动；空段在渲染时被丢弃，非成员会话的系统提示词因此一个字节都不变。同一套身份判定在 M2 也成立：teammate 同样是 `Agent`，`agent.id` 照样查得到简报。
 
@@ -32,9 +32,10 @@ Status: implemented
 - 看板与智能体插件各自持有账本与 id 空间。成员会话不是看板卡片，看板卡片也不是小队成员；两个界面都不列出对方。
 - 聚合的 `lib/` 不再内联本插件的浏览器半区，改 `packages/dsh-agents/src/client` 只需重建这个包，聚合自己的 bundle 继续只做兼容层。
 - 部署里缺少可选的 agent 预设注册表、workspace 注册表、命令派发器或 live agent 名册时，行照常挂载；真要用到那一面时按具名错误码 fail closed，而不是静默降级。行的 `enabled` 开关同时决定账本、路由与提示词段。
-- M2 fork 官方 agent-team 源码并替换 profile bundle：小队届时以团队形态运行（一个 Lead 会话加每个成员一个 teammate），仍走同一道 `run-gateway.ts` 接缝，成员简报段无需第二条注入路径就能覆盖 teammate。现在运行的桌面 profile 并没有启用 `@deepseek-ai/dsh-experimental-agent-team-profile`（启用它的是 `web` profile），所以本聚合眼下没有行 id 冲突需要规避：替换那个 bundle 是 `web` profile 的事，桌面 profile 只是多出这个家族的行。
+- 官方 agent-team 运行期按固定基线 fork 进 `src/team/` 与 `src/tools/`（[fork 来源](../../../../packages/dsh-agents/docs/fork-provenance.md)），小队因此以团队形态运行：一个 Lead 会话加每个成员一个 teammate，仍走同一道 `run-gateway.ts` 接缝，成员简报段无需第二条注入路径就能覆盖 teammate。Team 工具只装进本 Host 自己启动的整队运行会话，且从不关闭任何原生 `tool-subagent*` 工具行；这两处是刻意差异，后续改动不得回退（[运行期差异](../../../../packages/dsh-agents/docs/runtime-deltas.md)）。桌面 profile 没有启用 `@deepseek-ai/dsh-experimental-agent-team-profile`（启用它的是 `web` profile），所以本聚合没有行 id 冲突需要规避：那个 bundle 是 `web` profile 的事，桌面 profile 只是多出这个家族的行。
+- `GET /dsh-agents/api/state` 带上本部署提供的 agent 预设 id（`presets`），小队页据此提供 Lead 预设。这份清单只经「每个预设钉住都会走的那一面」读一次注册表，并排除注册表标记为不可用的预设；部署没有注册表、或注册表出错时该字段整体缺省，而不是给一个空列表。
 - 已知且按现状交付的限制：预设把 persona 段标成 `complete` 时其会话拿不到简报，上文的兜底是已记录的出路。
 
 ## Testing
 
-`packages/dsh-agents/tests/member-prompt.spec.ts` 钉住注入判定——身份提取及其字段改名兜底、按会话取最新运行、定义删除后不再注入、非成员会话为空段、每次装配读一次账本。`node scripts/aggregate.mjs --check` 钉住产出的行、`workspace:*` 依赖，以及这个家族不生成 `shell-metadata` 目录。
+`packages/dsh-agents/tests/member-prompt.spec.ts` 钉住注入判定——身份提取及其字段改名兜底、按会话取最新运行、定义删除后不再注入、非成员会话为空段、每次装配读一次账本。`packages/dsh-agents/tests/squad.spec.ts` 钉住 `team:squad` 名单文本、整队运行记录先于首条消息落盘，以及 Lead 预设与工作区的 fail-closed。`packages/dsh-agents/tests/team-runtime.spec.ts` 钉住 fork 运行期的不变量：`agentTeam` 投影在 `stateVersion` 4 上每次挂载恰好注册一次、安装门禁（普通根会话零工具、整队会话九个工具）、pin 顺序 preset → start → permission/model → checkpoint，以及一条源码扫描证明本包没有任何行、配置或源码关闭原生 subagent 工具。`packages/dsh-agents/tests/routes.spec.ts` 钉住服务的 state 正文，含预设清单与注册表缺失时该字段的缺省。`node scripts/aggregate.mjs --check` 钉住产出的行、`workspace:*` 依赖，以及这个家族不生成 `shell-metadata` 目录。

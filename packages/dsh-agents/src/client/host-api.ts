@@ -9,8 +9,17 @@
  */
 import { t } from './locales.ts'
 import type { AgentsKey } from './locales.ts'
-import { DSH_AGENTS_API_PREFIX } from '../protocol.ts'
-import type { AgentsErrorCode, AgentsStateView, MemberDraft, RunRecord, TeamDefinition, TeamDraft } from '../protocol.ts'
+import { DSH_AGENTS_API_PREFIX, DSH_AGENTS_SQUAD_TEAM_PATH } from '../protocol.ts'
+import type {
+  AgentsErrorCode,
+  AgentsStateView,
+  MemberDraft,
+  RunRecord,
+  SquadRunRequestBody,
+  SquadTeamResponseBody,
+  TeamDefinition,
+  TeamDraft,
+} from '../protocol.ts'
 
 /**
  * The page is served with `<base href="./">`, so the browser half addresses
@@ -41,6 +50,14 @@ export type AgentsFailure =
   | 'unknown-preset'
   /** Neither the squad nor the member has a usable workspace. */
   | 'no-workspace'
+  /** The addressed squad is gone: deleted between the read and the write. */
+  | 'squad-missing'
+  /** The Host refused to create the squad Lead session. */
+  | 'lead-create-failed'
+  /** The Lead session exists but could not be renamed or prompted, so the run is dead. */
+  | 'lead-prepare-failed'
+  /** The squad ledger is owned by another process, corrupt, or unwritable. */
+  | 'ledger-unavailable'
   | 'timeout'
   | 'unreachable'
   | 'unexpected'
@@ -61,6 +78,10 @@ const FAILURE_KEYS: Record<AgentsFailure, AgentsKey> = {
   'rejected': 'error.rejected',
   'unknown-preset': 'error.unknownPreset',
   'no-workspace': 'error.noWorkspace',
+  'squad-missing': 'error.squadMissing',
+  'lead-create-failed': 'error.leadCreateFailed',
+  'lead-prepare-failed': 'error.leadPrepareFailed',
+  'ledger-unavailable': 'error.ledgerUnavailable',
   'timeout': 'error.timeout',
   'unreachable': 'error.unreachable',
   'unexpected': 'error.unexpected',
@@ -84,6 +105,16 @@ const HOST_FAILURE_CODES: Partial<Record<AgentsErrorCode, AgentsFailure>> = {
   'workspace-unknown': 'no-workspace',
   'workspace-unavailable': 'no-workspace',
   'forbidden': 'forbidden',
+  // M2 squad-run codes: a Lead this Host never managed to launch reads as its
+  // own failure instead of one generic refusal, and a ledger this browser cannot
+  // write reads as the ledger rather than as the run.
+  'team-not-found': 'squad-missing',
+  'session-create-failed': 'lead-create-failed',
+  'session-rename-failed': 'lead-prepare-failed',
+  'session-prompt-failed': 'lead-prepare-failed',
+  'ledger-corrupt': 'ledger-unavailable',
+  'ledger-owned': 'ledger-unavailable',
+  'ledger-write-failed': 'ledger-unavailable',
 }
 
 /** Read the stable code of one error body. */
@@ -187,6 +218,15 @@ export interface AgentsTransport {
   deleteMember(teamId: string, memberId: string): Promise<TeamDefinition>
   /** Start the member's own session (点播). */
   run(teamId: string, memberId: string, firstMessage?: string): Promise<RunRecord>
+  /** Start one whole squad: the Lead session whose model spawns the teammates. */
+  runSquad(request: SquadRunRequestBody): Promise<RunRecord>
+  /**
+   * Read the live roster of one squad run from the PROPOSED read-only route.
+   * The page only calls it when the shared projection store is out of reach, so
+   * a Host that never adopts the route answers "not mounted" and the page says
+   * live state is unavailable instead of polling a missing route forever.
+   */
+  squadTeam(sessionId: string, signal?: AbortSignal): Promise<SquadTeamResponseBody>
 }
 
 /**
@@ -217,6 +257,17 @@ export function createAgentsTransport(fetchImpl: typeof fetch = fetch): AgentsTr
     async run(teamId: string, memberId: string, firstMessage?: string): Promise<RunRecord> {
       const body = await readJson<{ run: RunRecord }>(await send('run', postInit(firstMessage === undefined ? { teamId, memberId } : { teamId, memberId, firstMessage })))
       return body.run
+    },
+    async runSquad(request: SquadRunRequestBody): Promise<RunRecord> {
+      const body = await readJson<{ run: RunRecord }>(await send('squad/run', postInit(request)))
+      return body.run
+    },
+    async squadTeam(sessionId: string, signal?: AbortSignal): Promise<SquadTeamResponseBody> {
+      // The proposed route is addressed document-relative like every other one, so
+      // only its part BELOW the shared prefix is appended to `send`; the id rides
+      // a query parameter because the route path itself stays exact.
+      const route = DSH_AGENTS_SQUAD_TEAM_PATH.slice(DSH_AGENTS_API_PREFIX.length + 1)
+      return readJson<SquadTeamResponseBody>(await send(route + '?sessionId=' + encodeURIComponent(sessionId), { method: 'GET', headers: JSON_HEADERS }, signal))
     },
   }
 }

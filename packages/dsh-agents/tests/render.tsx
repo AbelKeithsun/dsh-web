@@ -89,6 +89,21 @@ export function typeInto(input: HTMLInputElement | HTMLTextAreaElement, value: s
   })
 }
 
+/**
+ * Pick one option of a controlled select the way a user does: set the value
+ * through the prototype setter, then dispatch the change event React listens
+ * for on a select.
+ * @param select - the select to drive.
+ * @param value - the option value to pick.
+ */
+export function selectOption(select: HTMLSelectElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+  act(() => {
+    setter?.call(select, value)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+}
+
 /** Unmount everything still mounted and empty the body. */
 export function unmountAll(): void {
   for (const root of roots.splice(0)) act(() => { root.unmount() })

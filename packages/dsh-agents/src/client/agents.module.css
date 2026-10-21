@@ -311,11 +311,22 @@
   overflow-wrap: anywhere;
 }
 
+/* One status line: a glyph plus a text label, always mounted with its own height
+   reserved, so a run that starts or settles never moves the actions below it. */
 .runStatus {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin: 0;
+  min-block-size: 18px;
   font-size: 11px;
+  line-height: 1.4;
   color: var(--dsw-alias-label-tertiary, #6b7280);
   overflow-wrap: anywhere;
+}
+
+.runStatus svg {
+  flex: 0 0 auto;
 }
 
 .memberActions {
@@ -329,7 +340,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-block-size: 32px;
+  min-block-size: 44px;
+  min-inline-size: 44px;
   max-inline-size: 100%;
   padding: 0 12px;
   border: 1px solid transparent;
@@ -342,6 +354,7 @@
   text-align: center;
   overflow-wrap: anywhere;
   cursor: pointer;
+  transition: background-color 120ms ease;
 }
 
 .primary:hover:not(:disabled) {
@@ -357,7 +370,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-block-size: 32px;
+  min-block-size: 44px;
+  min-inline-size: 44px;
   max-inline-size: 100%;
   padding: 0 12px;
   border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
@@ -370,6 +384,7 @@
   text-align: center;
   overflow-wrap: anywhere;
   cursor: pointer;
+  transition: background-color 120ms ease;
 }
 
 .secondary:hover:not(:disabled) {
@@ -391,7 +406,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-block-size: 32px;
+  min-block-size: 44px;
+  min-inline-size: 44px;
   max-inline-size: 100%;
   padding: 0 12px;
   border: 1px solid var(--dsw-alias-state-error-primary, #b91c1c);
@@ -501,6 +517,206 @@
   gap: 8px;
 }
 
+/* The squad-run control: the page's primary action block. It takes the same
+   hairline, radius, surface and padding tokens as a member card, so it reads as
+   one block of the same page rather than as a second card family. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, transparent);
+}
+
+.panelTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+
+/* The read-only reading of a value that has no picker in this deployment: it
+   occupies the same two-line field box a select would, so a Host that starts
+   reporting presets does not move anything around it. */
+.fieldValue {
+  display: flex;
+  align-items: center;
+  min-block-size: 34px;
+  margin: 0;
+  max-inline-size: 100%;
+  padding: 0 9px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  overflow-wrap: anywhere;
+}
+
+.runActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+/* The run's own feedback: always mounted, one line tall, so the sections below
+   never jump when a run is refused or started. */
+.feedback {
+  margin: 0;
+  min-block-size: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.feedbackOk {
+  color: var(--dsw-alias-state-success-primary, #15803d);
+}
+
+.feedbackError {
+  color: var(--dsw-alias-state-error-primary, #b91c1c);
+}
+
+.teamGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  gap: 10px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.runGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: 10px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One session row of the live roster or the run history. */
+.row {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2, transparent);
+}
+
+.rowHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+/* Names wrap instead of truncating: a teammate whose name is cut in half is a
+   person the operator cannot identify. */
+.rowTitle {
+  margin: 0;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rowBadge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+/* Status carries a colour slot AND a glyph AND its own text label; the colour
+   alone never has to mean anything. */
+.rowStatus {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  min-block-size: 18px;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rowStatus svg {
+  flex: 0 0 auto;
+}
+
+.rowDetail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  max-inline-size: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  overflow-wrap: anywhere;
+}
+
+.rowTime {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.tonePending {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+.toneActive {
+  color: var(--dsw-alias-state-business-primary, currentColor);
+}
+
+.toneSuccess {
+  color: var(--dsw-alias-state-success-primary, #15803d);
+}
+
+.toneError {
+  color: var(--dsw-alias-state-error-primary, #b91c1c);
+}
+
+/* Destructive actions leave the reading order of the page alone: one hairline
+   separates them from the history, and they stay secondary. */
+.dangerZone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-inline-size: 0;
+  margin-block-start: 4px;
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+}
+
 @media (max-width: 420px) {
   .header {
     padding: 12px 12px 8px;
@@ -513,5 +729,16 @@
   .banner {
     margin-inline: 12px;
     max-inline-size: calc(100% - 24px);
+  }
+}
+
+/* Motion is one reversible background transition per action button; with the
+   reduced-motion preference set it is removed entirely, and nothing here moves
+   spatially, so no lifecycle is lost. */
+@media (prefers-reduced-motion: reduce) {
+  .primary,
+  .secondary,
+  .danger {
+    transition: none;
   }
 }

@@ -14,9 +14,12 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { createAgentsTransport } from './host-api.ts'
+import type { AgentsTransport } from './host-api.ts'
 import { registerAgentLocales } from './locales.ts'
 import type { LocaleRegistrar } from './locales.ts'
 import { registerAgentsPanel } from './panel.tsx'
+import { createTeamSource, sessionListFace } from './team-source.ts'
+import type { SquadTeamSource } from './team-source.ts'
 
 /**
  * Services cordis waits for before it runs apply. The locale seat is required,
@@ -44,6 +47,26 @@ function sessionOpener(ctx: ClientContext): ((sessionId: string) => void) | unde
 }
 
 /**
+ * Resolve the surface the squad page reads the live team from.
+ *
+ * The shared session catalog is the preferred one, and it is PROBED rather than
+ * injected: this entry must still mount on a deployment that serves no session
+ * service, and the adapter then falls back to the proposed roster route. The
+ * probe is the one place the choice is made - `team-source.ts` owns both
+ * implementations, so adopting the Host-side route changes no page code.
+ * @param ctx - client root context (service: sessions, optional).
+ * @param transport - the frozen-contract transport, used by the fallback poll.
+ */
+function teamSourceOf(ctx: ClientContext, transport: AgentsTransport): SquadTeamSource {
+  try {
+    const get = (ctx as unknown as { get?: (name: string) => unknown }).get
+    return createTeamSource(sessionListFace(get === undefined ? undefined : get.call(ctx, 'sessions')), transport)
+  } catch {
+    return createTeamSource(undefined, transport)
+  }
+}
+
+/**
  * Mount the agents plugin.
  * @param ctx - client root context.
  */
@@ -52,5 +75,6 @@ export function apply(ctx: ClientContext): void {
 
   const transport = createAgentsTransport()
   const openSession = sessionOpener(ctx)
-  ctx.effect(() => registerAgentsPanel(ctx, transport, openSession), 'dsh-agents: sidebar row and page')
+  const teamSource = teamSourceOf(ctx, transport)
+  ctx.effect(() => registerAgentsPanel(ctx, transport, openSession, teamSource), 'dsh-agents: sidebar row and page')
 }

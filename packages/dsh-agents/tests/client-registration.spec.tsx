@@ -143,6 +143,11 @@ describe('agents entry services', () => {
   })
 })
 
+/** The {placeholder} names one value carries, sorted so two dictionaries compare. */
+function placeholdersOf(value: string): string[] {
+  return (value.match(/\{[a-z]+\}/gu) ?? []).sort()
+}
+
 describe('agents dictionaries', () => {
   it('operator sees the zh and en dictionaries registered under one namespace', () => {
     // Given a locale service that records registrations
@@ -166,5 +171,50 @@ describe('agents dictionaries', () => {
     expect(t('entry.label')).toBe(zh['entry.label'])
     dispose()
     expect(releaseDictionary).toBe(1)
+  })
+
+  it('operator sees every string exist in both languages under the same keys', () => {
+    // Given the two dictionaries this plugin registers
+    // When their key sets and their placeholders are compared
+    // Then they are identical key for key, every value is written, and a key
+    // keeps the same placeholders in both languages
+    expect(Object.keys(en)).toEqual(Object.keys(zh))
+    for (const key of Object.keys(zh) as Array<keyof typeof zh>) {
+      expect(zh[key]).not.toBe('')
+      expect(en[key]).not.toBe('')
+      expect(placeholdersOf(en[key])).toEqual(placeholdersOf(zh[key]))
+    }
+  })
+
+  it('operator sees the M2 squad surfaces carry copy in both languages', () => {
+    // Given the surfaces M2 adds to the page
+    const m2Keys = [
+      'squad.runTitle',
+      'squad.run',
+      'squad.runStarted',
+      'squad.leadPresetLabel',
+      'squad.liveTitle',
+      'squad.liveUnavailable',
+      'squad.lead',
+      'squad.teammate',
+      'squad.phase.active',
+      'squad.historyTitle',
+      'squad.kind.squad',
+      'squad.memberGone',
+      'squad.goalLine',
+      'error.squadMissing',
+      'error.leadCreateFailed',
+      'error.leadPrepareFailed',
+      'error.ledgerUnavailable',
+      'form.leadPreset',
+    ]
+    // When each one is resolved in both dictionaries
+    // Then neither language is missing it, and both say something
+    for (const key of m2Keys) {
+      expect(Object.keys(zh)).toContain(key)
+      expect(Object.keys(en)).toContain(key)
+      expect(zh[key as keyof typeof zh]).not.toBe('')
+      expect(en[key as keyof typeof en]).not.toBe('')
+    }
   })
 })

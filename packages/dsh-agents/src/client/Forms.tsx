@@ -14,6 +14,29 @@ import { PERMISSION_MODES, permissionLabel } from './permissions.ts'
 import type { MemberDraft, MemberDefinition, AgentsPermission, TeamDefinition, TeamDraft } from '../protocol.ts'
 import css from './agents.module.css'
 
+/**
+ * The full-draft view of one squad.
+ *
+ * The Host replaces every editable field with what a `POST /team` draft carries:
+ * a field the draft omits is cleared, not preserved. Anything that saves a squad
+ * therefore starts from this function, so an action that only changes one field
+ * cannot silently drop the workspace pin, the Lead preset or the sort order.
+ * @param team - the current squad.
+ * @param overrides - fields the caller is changing; an explicit `undefined`
+ *   clears that field.
+ */
+export function teamDraftOf(team: TeamDefinition, overrides?: { leadPreset?: string }): TeamDraft {
+  const leadPreset = overrides !== undefined && 'leadPreset' in overrides ? overrides.leadPreset : team.leadPreset
+  return {
+    id: team.id,
+    name: team.name,
+    ...(team.description === undefined ? {} : { description: team.description }),
+    ...(team.workspaceId === undefined ? {} : { workspaceId: team.workspaceId }),
+    ...(leadPreset === undefined ? {} : { leadPreset }),
+    ...(team.order === undefined ? {} : { order: team.order }),
+  }
+}
+
 export interface TeamFormProps {
   /** The squad being edited; omitted when creating one. */
   team: TeamDefinition | undefined
@@ -30,6 +53,7 @@ export function TeamForm({ team, busy, onSubmit, onCancel }: TeamFormProps): Rea
   const [name, setName] = useState(team?.name ?? '')
   const [description, setDescription] = useState(team?.description ?? '')
   const [workspaceId, setWorkspaceId] = useState(team?.workspaceId ?? '')
+  const [leadPreset, setLeadPreset] = useState(team?.leadPreset ?? '')
   const [error, setError] = useState('')
   const submit = (): void => {
     if (name.trim() === '') {
@@ -37,11 +61,16 @@ export function TeamForm({ team, busy, onSubmit, onCancel }: TeamFormProps): Rea
       return
     }
     setError('')
+    const pinnedLead = leadPreset.trim()
     onSubmit({
-      ...(team === undefined ? {} : { id: team.id }),
+      ...(team === undefined ? {} : teamDraftOf(team)),
       name: name.trim(),
       description,
       workspaceId,
+      // Always present so clearing the field actually clears the pin: the Host
+      // reads an absent field as "keep nothing" for a replace and drops the key
+      // from the JSON body either way.
+      leadPreset: pinnedLead === '' ? undefined : pinnedLead,
     })
   }
   return (
@@ -58,6 +87,10 @@ export function TeamForm({ team, busy, onSubmit, onCancel }: TeamFormProps): Rea
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('form.workspace')}</span>
         <input className={css.input} value={workspaceId} placeholder={t('form.workspacePlaceholder')} onChange={(event) => { setWorkspaceId(event.target.value) }} />
+      </label>
+      <label className={css.field}>
+        <span className={css.fieldLabel}>{t('form.leadPreset')}</span>
+        <input className={css.input} value={leadPreset} placeholder={t('form.leadPresetPlaceholder')} onChange={(event) => { setLeadPreset(event.target.value) }} />
       </label>
       {error === '' ? null : <p className={css.noticeError} role="alert">{error}</p>}
       <div className={css.formActions}>

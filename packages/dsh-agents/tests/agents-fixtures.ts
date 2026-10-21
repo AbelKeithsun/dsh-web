@@ -6,7 +6,18 @@
  * counted on the fake, and every answer is the frozen wire shape.
  */
 import type { AgentsTransport } from '../src/client/host-api.ts'
-import type { AgentsStateView, MemberDefinition, MemberDraft, RunRecord, TeamDefinition, TeamDraft } from '../src/protocol.ts'
+import type { SessionListFace, SquadTeamSnapshot, SquadTeamSource } from '../src/client/team-source.ts'
+import type {
+  AgentsStateView,
+  MemberDefinition,
+  MemberDraft,
+  RunRecord,
+  SquadRunRequestBody,
+  SquadTeamMemberWire,
+  SquadTeamResponseBody,
+  TeamDefinition,
+  TeamDraft,
+} from '../src/protocol.ts'
 
 /** One squad with no members unless overridden. */
 export function teamOf(overrides: Partial<TeamDefinition> = {}): TeamDefinition {
@@ -51,15 +62,50 @@ export function runOf(overrides: Partial<RunRecord> = {}): RunRecord {
   }
 }
 
+/** One whole-squad run, the Lead session a live roster belongs to. */
+export function squadRunOf(overrides: Partial<RunRecord> = {}): RunRecord {
+  return {
+    id: 'squad-run-1',
+    teamId: 'team-1',
+    sessionId: 'lead-session-1',
+    createdAt: 1_000,
+    status: 'running',
+    kind: 'squad',
+    goal: 'Ship the review notes',
+    ...overrides,
+  }
+}
+
+/**
+ * The `agentTeam` projection value exactly as the host publishes it: the Lead
+ * first (the projection names it `lead`), then the teammates it spawned.
+ * @param members - the teammates, in spawn order.
+ * @param overrides - a projection failure, when the fold broke.
+ */
+export function agentTeamOf(
+  members: readonly Omit<SquadTeamMemberWire, 'role'>[],
+  overrides: { failure?: string; leadSessionId?: string } = {},
+): SquadTeamResponseBody {
+  return {
+    members: [
+      { id: overrides.leadSessionId ?? 'lead-session-1', name: 'lead', role: 'lead', phase: 'active' },
+      ...members.map(member => ({ ...member, role: 'teammate' as const })),
+    ],
+    ...(overrides.failure === undefined ? {} : { failure: overrides.failure }),
+  }
+}
+
 /** One published state. */
-export function stateOf(teams: TeamDefinition[], runs: RunRecord[] = []): AgentsStateView {
-  return { teams, runs, host: { ownerPid: 4242 } }
+export function stateOf(teams: TeamDefinition[], runs: RunRecord[] = [], presets?: readonly string[]): AgentsStateView {
+  return { teams, runs, host: { ownerPid: 4242 }, ...(presets === undefined ? {} : { presets }) }
 }
 
 /** The fake's configuration; every hook is optional except the read. */
 export interface FakeTransportConfig {
   state: (read: number) => Promise<AgentsStateView>
   run?: (teamId: string, memberId: string) => Promise<RunRecord>
+  runSquad?: (request: SquadRunRequestBody) => Promise<RunRecord>
+  squadTeam?: (sessionId: string) => Promise<SquadTeamResponseBody>
   createTeam?: (draft: TeamDraft) => Promise<TeamDefinition>
   deleteTeam?: (teamId: string) => Promise<void>
   saveMember?: (teamId: string, member: MemberDraft) => Promise<TeamDefinition>
@@ -70,6 +116,12 @@ export interface FakeTransportConfig {
 export interface FakeTransport extends AgentsTransport {
   readonly reads: number
   readonly runs: number
+  readonly squadRuns: number
+  readonly teamReads: number
+  /** Every squad-run request the page posted, in order. */
+  readonly squadRequests: readonly SquadRunRequestBody[]
+  /** Every team draft the page saved, in order. */
+  readonly teamSaves: readonly TeamDraft[]
 }
 
 /**
@@ -79,10 +131,18 @@ export interface FakeTransport extends AgentsTransport {
 export function fakeTransport(config: FakeTransportConfig): FakeTransport {
   let reads = 0
   let runs = 0
+  let squadRuns = 0
+  let teamReads = 0
+  const squadRequests: SquadRunRequestBody[] = []
+  const teamSaves: TeamDraft[] = []
   const missing = (route: string): never => { throw new Error(route + ' is not configured in this fake') }
   return {
     get reads(): number { return reads },
     get runs(): number { return runs },
+    get squadRuns(): number { return squadRuns },
+    get teamReads(): number { return teamReads },
+    get squadRequests(): readonly SquadRunRequestBody[] { return squadRequests },
+    get teamSaves(): readonly TeamDraft[] { return teamSaves },
     async state(_signal?: AbortSignal): Promise<AgentsStateView> {
       reads += 1
       return config.state(reads)
@@ -91,7 +151,17 @@ export function fakeTransport(config: FakeTransportConfig): FakeTransport {
       runs += 1
       return config.run === undefined ? missing('run') : config.run(teamId, memberId)
     },
+    async runSquad(request: SquadRunRequestBody): Promise<RunRecord> {
+      squadRuns += 1
+      squadRequests.push(request)
+      return config.runSquad === undefined ? missing('runSquad') : config.runSquad(request)
+    },
+    async squadTeam(sessionId: string): Promise<SquadTeamResponseBody> {
+      teamReads += 1
+      return config.squadTeam === undefined ? missing('squadTeam') : config.squadTeam(sessionId)
+    },
     async createTeam(draft: TeamDraft): Promise<TeamDefinition> {
+      teamSaves.push(draft)
       return config.createTeam === undefined ? missing('createTeam') : config.createTeam(draft)
     },
     async deleteTeam(teamId: string): Promise<void> {
@@ -102,6 +172,72 @@ export function fakeTransport(config: FakeTransportConfig): FakeTransport {
     },
     async deleteMember(teamId: string, memberId: string): Promise<TeamDefinition> {
       return config.deleteMember === undefined ? missing('deleteMember') : config.deleteMember(teamId, memberId)
+    },
+  }
+}
+
+/** A live-team source the suite drives itself, so a page test never depends on
+ * which surface a deployment happens to expose. */
+export interface FakeTeamSource extends SquadTeamSource {
+  /** Every Lead session the page asked to follow, in order. */
+  readonly watches: readonly string[]
+  /** How many subscribers are attached right now. */
+  readonly watchers: number
+  /** Push a new snapshot to every subscriber, as a live surface would. */
+  publish(snapshot: SquadTeamSnapshot): void
+}
+
+/**
+ * Build the driven live-team source.
+ * @param initial - the snapshot a fresh subscriber receives, if any.
+ */
+export function fakeTeamSource(initial: SquadTeamSnapshot | undefined): FakeTeamSource {
+  const watches: string[] = []
+  let listeners: Array<(snapshot: SquadTeamSnapshot) => void> = []
+  let current = initial
+  return {
+    kind: 'projection',
+    get watches(): readonly string[] { return watches },
+    get watchers(): number { return listeners.length },
+    watch(sessionId: string, onChange: (snapshot: SquadTeamSnapshot) => void): () => void {
+      watches.push(sessionId)
+      if (current !== undefined) onChange(current)
+      listeners = [...listeners, onChange]
+      return () => { listeners = listeners.filter(candidate => candidate !== onChange) }
+    },
+    publish(snapshot: SquadTeamSnapshot): void {
+      current = snapshot
+      for (const listener of listeners) listener(snapshot)
+    },
+  }
+}
+
+/** The shared session catalog's list face, driven from the outside. */
+export interface FakeSessionList extends SessionListFace {
+  /** Publish one session's projection values, as a Host frame would. */
+  set(sessionId: string, values: Readonly<Record<string, unknown>>): void
+}
+
+/**
+ * Build a fake of the client session catalog: exactly the `projectionsBySession`
+ * surface the official UI reads `agentTeam` from.
+ * @param initial - projection values by Lead session id.
+ */
+export function sessionListOf(initial: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {}): FakeSessionList {
+  const bySession: Record<string, { values: Readonly<Record<string, unknown>> }> = {}
+  for (const [sessionId, values] of Object.entries(initial)) bySession[sessionId] = { values }
+  let listeners: Array<() => void> = []
+  return {
+    getSnapshot() {
+      return { projectionsBySession: bySession }
+    },
+    subscribe(listener: () => void): () => void {
+      listeners = [...listeners, listener]
+      return () => { listeners = listeners.filter(candidate => candidate !== listener) }
+    },
+    set(sessionId: string, values: Readonly<Record<string, unknown>>): void {
+      bySession[sessionId] = { values }
+      for (const listener of listeners) listener()
     },
   }
 }

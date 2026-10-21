@@ -118,6 +118,13 @@ describe('reading state', () => {
     expect(state.body.runs).toEqual([])
   })
 
+  it('user reads the preset list the host serves over the wire', async () => {
+    // Given a registry serving one preset, When the panel polls state, Then the body carries that id as the Lead preset offer.
+    const state = await get('/dsh-agents/api/state')
+    expect(state.status).toBe(200)
+    expect(state.body.presets).toEqual(['xundong'])
+  })
+
   it('operator refuses the wrong method with its own code', async () => {
     // Given a POST to the read-only route, When it arrives, Then it is refused as method-not-allowed.
     const response = await post('/dsh-agents/api/state', {})

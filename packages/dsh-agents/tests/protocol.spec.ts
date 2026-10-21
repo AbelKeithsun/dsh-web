@@ -21,8 +21,8 @@ import {
 } from '../src/protocol.ts'
 
 describe('frozen route contract', () => {
-  it('operator serves exactly the six contract paths under the root-absolute prefix', () => {
-    // Given the frozen contract, When the route list is read, Then it is the six API paths and nothing else.
+  it('operator serves exactly the seven contract paths under the root-absolute prefix', () => {
+    // Given the frozen contract (M1's six paths plus M2's whole-squad run), When the route list is read, Then it is exactly those API paths.
     expect(DSH_AGENTS_API_PREFIX).toBe('/dsh-agents/api')
     expect([...DSH_AGENTS_ROUTE_PATHS]).toEqual([
       '/dsh-agents/api/state',
@@ -31,6 +31,7 @@ describe('frozen route contract', () => {
       '/dsh-agents/api/member',
       '/dsh-agents/api/member/delete',
       '/dsh-agents/api/run',
+      '/dsh-agents/api/squad/run',
     ])
   })
 

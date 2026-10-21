@@ -25,6 +25,7 @@ import {
   ID_MAX_LENGTH,
   NAME_MAX_LENGTH,
   PIN_MAX_LENGTH,
+  SQUAD_GOAL_MAX_LENGTH,
   isAgentsPermission,
   type MemberDefinition,
   type RunRecord,
@@ -127,6 +128,7 @@ function readTeamRow(value: unknown): TeamDefinition | undefined {
   const row = value as Record<string, unknown>
   if (!isText(row.id, ID_MAX_LENGTH) || !isText(row.name, NAME_MAX_LENGTH)) return undefined
   if (!optionalText(row.description, DESCRIPTION_MAX_LENGTH) || !optionalText(row.workspaceId, PIN_MAX_LENGTH)) return undefined
+  if (!optionalText(row.leadPreset, PIN_MAX_LENGTH)) return undefined
   if (row.order !== undefined && (typeof row.order !== 'number' || !Number.isInteger(row.order))) return undefined
   if (!isTimestamp(row.createdAt) || !isTimestamp(row.updatedAt)) return undefined
   if (!Array.isArray(row.members)) return undefined
@@ -142,6 +144,7 @@ function readTeamRow(value: unknown): TeamDefinition | undefined {
     name: row.name,
     ...(row.description === undefined ? {} : { description: row.description as string }),
     ...(row.workspaceId === undefined ? {} : { workspaceId: row.workspaceId as string }),
+    ...(row.leadPreset === undefined ? {} : { leadPreset: row.leadPreset as string }),
     ...(row.order === undefined ? {} : { order: row.order }),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -149,22 +152,34 @@ function readTeamRow(value: unknown): TeamDefinition | undefined {
   }
 }
 
-/** Validate one persisted run row. */
+/**
+ * Validate one persisted run row. A member run carries the member it launched;
+ * a squad run carries the goal its Lead session was given and no member at all,
+ * so a squad run can never be mistaken for a member run in the browser's
+ * member rows.
+ */
 function readRunRow(value: unknown): RunRecord | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const row = value as Record<string, unknown>
-  if (!isText(row.id, ID_MAX_LENGTH) || !isText(row.teamId, ID_MAX_LENGTH) || !isText(row.memberId, ID_MAX_LENGTH)) return undefined
+  if (!isText(row.id, ID_MAX_LENGTH) || !isText(row.teamId, ID_MAX_LENGTH)) return undefined
   if (!isText(row.sessionId, ID_MAX_LENGTH) || !isTimestamp(row.createdAt)) return undefined
   if (row.status !== 'running' && row.status !== 'settled' && row.status !== 'failed') return undefined
   if (row.failure !== undefined && typeof row.failure !== 'string') return undefined
+  if (row.kind !== undefined && row.kind !== 'member' && row.kind !== 'squad') return undefined
+  const kind = row.kind ?? 'member'
+  if (kind === 'member' && !isText(row.memberId, ID_MAX_LENGTH)) return undefined
+  if (kind === 'squad' && row.memberId !== undefined) return undefined
+  if (row.goal !== undefined && (typeof row.goal !== 'string' || row.goal.length > SQUAD_GOAL_MAX_LENGTH)) return undefined
   return {
     id: row.id,
     teamId: row.teamId,
-    memberId: row.memberId,
+    ...(kind === 'squad' ? {} : { memberId: row.memberId as string }),
     sessionId: row.sessionId,
     createdAt: row.createdAt,
     status: row.status,
     ...(row.failure === undefined ? {} : { failure: row.failure }),
+    ...(kind === 'squad' ? { kind: 'squad' as const } : {}),
+    ...(row.goal === undefined ? {} : { goal: row.goal }),
   }
 }
 

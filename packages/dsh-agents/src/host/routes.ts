@@ -19,6 +19,7 @@ import {
   parseMemberDeleteRequestBody,
   parseMemberRequestBody,
   parseRunRequestBody,
+  parseSquadRunRequestBody,
   parseTeamDeleteRequestBody,
   parseTeamRequestBody,
   type AgentsErrorBody,
@@ -140,11 +141,11 @@ export function makeAgentsRoutes(service: AgentsHostService): WebRoute[] {
     {
       kind: 'exact',
       path: DSH_AGENTS_API_PREFIX + '/state',
-      handler: (req, res): void => {
+      handler: async (req, res): Promise<void> => {
         if (req.method !== 'GET') return refuse(res, 405, 'method-not-allowed', 'this route serves GET only')
         if (!guard(req, res)) return
         try {
-          writeJson(res, 200, service.state)
+          writeJson(res, 200, await service.stateView())
         } catch (error) {
           replyFailure(res, error)
         }
@@ -221,6 +222,21 @@ export function makeAgentsRoutes(service: AgentsHostService): WebRoute[] {
           const body = parseRunRequestBody(await post(req, res))
           if (body === undefined) return refuse(res, 400, 'invalid-request', 'the run request does not name one member of one team')
           writeJson(res, 200, { run: await service.run(body) })
+        } catch (error) {
+          replyFailure(res, error)
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: DSH_AGENTS_API_PREFIX + '/squad/run',
+      handler: async (req, res): Promise<void> => {
+        if (req.method !== 'POST') return refuse(res, 405, 'method-not-allowed', 'this route serves POST only')
+        if (!guard(req, res)) return
+        try {
+          const body = parseSquadRunRequestBody(await post(req, res))
+          if (body === undefined) return refuse(res, 400, 'invalid-request', 'the squad run request does not name one team')
+          writeJson(res, 200, { run: await service.runSquad(body) })
         } catch (error) {
           replyFailure(res, error)
         }

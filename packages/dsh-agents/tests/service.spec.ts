@@ -318,6 +318,46 @@ describe('run: a launched session is never invisible', () => {
   })
 })
 
+describe('the preset list the state view reports', () => {
+  it('user reads the presets this deployment serves and is not offered the unusable one', async () => {
+    // Given a registry holding two presets, one reported unusable, When the panel reads state, Then only the composeable id is offered.
+    const instance = service({ gateway: gateway({ listPresets: vi.fn(async () => [{ id: 'xundong' }, { id: 'michun', broken: 'its model route is gone' }]) }) })
+    expect(await instance.stateView()).toMatchObject({ presets: ['xundong'] })
+  })
+
+  it('operator omits the field entirely when the deployment serves no preset registry', async () => {
+    // Given no registry, When the panel reads state, Then the body carries no presets key, so the page states the squad's own pin instead of "none exist".
+    const instance = service({ gateway: gateway({ listPresets: vi.fn(async () => undefined) }) })
+    const state = await instance.stateView()
+    expect(state.presets).toBeUndefined()
+    expect('presets' in state).toBe(false)
+    expect(state.host).toEqual({ ownerPid: process.pid })
+  })
+
+  it('operator offers nothing at all when every preset in the registry is unusable', async () => {
+    // Given a registry whose only preset is broken, When the panel reads state, Then the field is absent rather than an empty list.
+    const instance = service({ gateway: gateway({ listPresets: vi.fn(async () => [{ id: 'michun', broken: 'its model route is gone' }]) }) })
+    expect('presets' in await instance.stateView()).toBe(false)
+  })
+
+  it('operator omits the field when the registry itself fails', async () => {
+    // Given a registry read that throws, When the panel reads state, Then the body still answers and carries no presets key.
+    const instance = service({ gateway: gateway({ listPresets: vi.fn(async () => { throw new Error('no agentPresets namespace here') }) }) })
+    const state = await instance.stateView()
+    expect('presets' in state).toBe(false)
+  })
+
+  it('operator refuses the state view when the ledger is unreadable, as every other read does', async () => {
+    // Given a corrupt ledger, When the panel reads the served state, Then the named failure survives the async path and the registry is never consulted.
+    const dir = tempDir()
+    writeFileSync(join(dir, AGENTS_LEDGER_FILE), '{ teams: ')
+    const fake = gateway()
+    const instance = service({ dir, gateway: fake })
+    expect(await asyncCodeOf(() => instance.stateView())).toBe('ledger-corrupt')
+    expect(fake.listPresets).not.toHaveBeenCalled()
+  })
+})
+
 describe('a ledger this host cannot read', () => {
   it('operator refuses every operation with the named failure and leaves the file alone', () => {
     // Given a corrupt ledger, When definitions are read or written, Then each call answers ledger-corrupt and the bytes are untouched.

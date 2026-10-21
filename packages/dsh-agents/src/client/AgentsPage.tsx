@@ -1,22 +1,30 @@
 /**
- * The agents page: one load state, one poll loop, and the squad/member
- * actions that write through the transport.
+ * The agents page: one load state, one poll loop, and the squad/member actions
+ * that write through the transport.
  *
- * M1 refreshes by polling GET state every {@link AGENTS_POLL_INTERVAL_MS}
- * while the page is mounted, plus the manual refresh control in the header;
- * the loop stops and its in-flight read is aborted on unmount. A poll that
- * fails after a good read keeps the last snapshot on screen and reports the
- * failure as a banner, so a flaky phone link never blanks the list.
+ * M1 refreshes by polling GET state every {@link AGENTS_POLL_INTERVAL_MS} while
+ * the page is mounted, plus the manual refresh control in the header; the loop
+ * stops and its in-flight read is aborted on unmount. A poll that fails after a
+ * good read keeps the last snapshot on screen and reports the failure as a
+ * banner, so a flaky phone link never blanks the list.
+ *
+ * M2 adds the whole-squad action and the live team of its Lead. The live team is
+ * read through `team-source.ts`, which prefers the shared session store's
+ * `agentTeam` projection and only falls back to a bounded poll when that
+ * surface is out of reach from this context.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { failureOf } from './host-api.ts'
 import type { AgentsFailure, AgentsTransport } from './host-api.ts'
 import { t } from './locales.ts'
-import { TeamForm, MemberForm } from './Forms.tsx'
+import { newestSquadRun } from './runs.ts'
+import { teamDraftOf, TeamForm, MemberForm } from './Forms.tsx'
 import { SquadList } from './SquadList.tsx'
 import { SquadDetail } from './SquadDetail.tsx'
 import type { MemberNotice } from './MemberCard.tsx'
+import type { SquadNotice, SquadRunRequest } from './SquadRunPanel.tsx'
+import type { SquadTeamSnapshot, SquadTeamSource } from './team-source.ts'
 import type { AgentsStateView, MemberDefinition, MemberDraft, TeamDefinition, TeamDraft } from '../protocol.ts'
 import css from './agents.module.css'
 
@@ -38,17 +46,26 @@ export interface AgentsPageProps {
   transport: AgentsTransport
   /** Switch the GUI to an existing member session; absent when the deployment has none. */
   openSession?: (sessionId: string) => void
+  /** Where the live team of a squad run is read from; absent when this context serves none. */
+  teamSource?: SquadTeamSource
+}
+
+/** The preset list a Host reports, or none: a Host that reports nothing offers no list. */
+function presetsOf(state: AgentsStateView): readonly string[] {
+  return Array.isArray(state.presets) ? state.presets : []
 }
 
 /**
  * Render the whole agents page.
- * @param props - the transport and the optional session opener.
+ * @param props - the transport, the optional session opener and the live-team source.
  */
-export function AgentsPage({ transport, openSession }: AgentsPageProps): ReactNode {
+export function AgentsPage({ transport, openSession, teamSource }: AgentsPageProps): ReactNode {
   const [load, setLoad] = useState<Load>({ phase: 'loading' })
   const [selectedTeamId, setSelectedTeamId] = useState<string | undefined>(undefined)
   const [form, setForm] = useState<Form | undefined>(undefined)
   const [notice, setNotice] = useState<MemberNotice | undefined>(undefined)
+  const [squadNotice, setSquadNotice] = useState<SquadNotice | undefined>(undefined)
+  const [teamView, setTeamView] = useState<SquadTeamSnapshot | undefined>(undefined)
   const [pageError, setPageError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const mounted = useRef(true)
@@ -80,6 +97,24 @@ export function AgentsPage({ transport, openSession }: AgentsPageProps): ReactNo
       controller.abort()
     }
   }, [refresh])
+
+  const selectedTeam = load.phase === 'ready' ? load.state.teams.find(team => team.id === selectedTeamId) : undefined
+  const leadRun = selectedTeam === undefined || load.phase !== 'ready' ? undefined : newestSquadRun(load.state.runs, selectedTeam.id)
+  const leadSessionId = leadRun?.sessionId
+
+  useEffect(() => {
+    if (leadSessionId === undefined) {
+      setTeamView(undefined)
+      return
+    }
+    if (teamSource === undefined) {
+      setTeamView({ state: 'unavailable' })
+      return
+    }
+    return teamSource.watch(leadSessionId, (snapshot) => {
+      if (mounted.current) setTeamView(snapshot)
+    })
+  }, [teamSource, leadSessionId])
 
   /** Run one write, report its failure at page level, and re-read on success. */
   const perform = async (action: () => Promise<void>): Promise<void> => {
@@ -115,6 +150,38 @@ export function AgentsPage({ transport, openSession }: AgentsPageProps): ReactNo
     })()
   }
 
+  /**
+   * Launch the whole squad. The Lead preset is a property of the squad on the
+   * wire, so a changed choice is saved onto the definition first: the run the
+   * user sees is the run they configured. A failed save stops the launch, and
+   * every failure class the Host can answer with lands in the panel's own live
+   * region as copy.
+   */
+  const runSquad = (team: TeamDefinition, request: SquadRunRequest): void => {
+    void (async () => {
+      setBusy(true)
+      setSquadNotice(undefined)
+      setPageError(undefined)
+      try {
+        if (request.leadPreset !== team.leadPreset) {
+          await transport.createTeam(teamDraftOf(team, { leadPreset: request.leadPreset }))
+        }
+        const run = await transport.runSquad({
+          teamId: team.id,
+          ...(request.goal === undefined ? {} : { goal: request.goal }),
+        })
+        if (!mounted.current) return
+        setSquadNotice({ kind: 'ok', message: t('squad.runStarted', { session: run.sessionId }) })
+        await refresh()
+      } catch (error) {
+        if (!mounted.current) return
+        setSquadNotice({ kind: 'failed', message: failureOf(error).message })
+      } finally {
+        if (mounted.current) setBusy(false)
+      }
+    })()
+  }
+
   const submitTeam = (draft: TeamDraft): void => {
     void perform(async () => {
       const team = await transport.createTeam(draft)
@@ -129,8 +196,6 @@ export function AgentsPage({ transport, openSession }: AgentsPageProps): ReactNo
       setForm(undefined)
     })
   }
-
-  const selectedTeam = load.phase === 'ready' ? load.state.teams.find(team => team.id === selectedTeamId) : undefined
 
   const body = ((): ReactNode => {
     if (form !== undefined && form.kind === 'team') {
@@ -158,8 +223,11 @@ export function AgentsPage({ transport, openSession }: AgentsPageProps): ReactNo
           runs={load.state.runs}
           busy={busy}
           notice={notice}
+          squadNotice={squadNotice}
+          presets={presetsOf(load.state)}
+          teamView={teamView}
           actions={{
-            back: () => { setSelectedTeamId(undefined); setNotice(undefined) },
+            back: () => { setSelectedTeamId(undefined); setNotice(undefined); setSquadNotice(undefined) },
             editTeam: () => { setForm({ kind: 'team', team: selectedTeam }) },
             deleteTeam: () => {
               void perform(async () => {
@@ -177,6 +245,7 @@ export function AgentsPage({ transport, openSession }: AgentsPageProps): ReactNo
               void perform(async () => { await transport.deleteMember(selectedTeam.id, memberId) })
             },
             run: (memberId: string) => { runMember(selectedTeam.id, memberId) },
+            runSquad: (request: SquadRunRequest) => { runSquad(selectedTeam, request) },
             ...(openSession === undefined ? {} : { openSession }),
           }}
         />
@@ -185,7 +254,7 @@ export function AgentsPage({ transport, openSession }: AgentsPageProps): ReactNo
     return (
       <SquadList
         teams={load.state.teams}
-        onOpen={(teamId: string) => { setSelectedTeamId(teamId); setNotice(undefined) }}
+        onOpen={(teamId: string) => { setSelectedTeamId(teamId); setNotice(undefined); setSquadNotice(undefined) }}
         onNew={() => { setForm({ kind: 'team', team: undefined }) }}
       />
     )

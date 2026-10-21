@@ -102,8 +102,10 @@ describe('agents transport failure classes', () => {
   })
 
   it('operator sees a refusal without its own class carry the Host sentence', async () => {
-    // Given a Host refusal this page has no class for
-    const refusing = fetchAnswering(503, '{"ok":false,"code":"ledger-owned","error":"Another DSH process owns the ledger."}')
+    // Given a Host refusal this page has no class for (the M2 mapping names the
+    // ledger, the Lead and the squad apart, so the generic class is proven with
+    // a code outside every table)
+    const refusing = fetchAnswering(500, '{"ok":false,"code":"internal-error","error":"the dsh-agents host failed to serve this request"}')
     // When the member is started
     try {
       await createAgentsTransport(refusing).run('team-1', 'member-1')
@@ -112,7 +114,30 @@ describe('agents transport failure classes', () => {
       // Then the generic rejection class still shows the Host's own sentence
       if (!(error instanceof AgentsApiError)) throw error
       expect(error.failure).toBe('rejected')
-      expect(error.message).toBe(t('error.rejected', { detail: 'Another DSH process owns the ledger.' }))
+      expect(error.message).toBe(t('error.rejected', { detail: 'the dsh-agents host failed to serve this request' }))
+    }
+  })
+
+  it('operator sees the M2 squad-run refusals mapped to their own classes', async () => {
+    // Given the Host codes a whole-squad launch adds
+    const cases = [
+      { code: 'session-create-failed', failure: 'lead-create-failed', copy: t('error.leadCreateFailed') },
+      { code: 'session-rename-failed', failure: 'lead-prepare-failed', copy: t('error.leadPrepareFailed') },
+      { code: 'team-not-found', failure: 'squad-missing', copy: t('error.squadMissing') },
+      { code: 'ledger-owned', failure: 'ledger-unavailable', copy: t('error.ledgerUnavailable') },
+    ]
+    for (const expected of cases) {
+      // When the squad run is refused with that code
+      const refusing = fetchAnswering(409, JSON.stringify({ ok: false, code: expected.code, error: 'raw host text' }))
+      try {
+        await createAgentsTransport(refusing).runSquad({ teamId: 'team-1', goal: 'Ship the review notes' })
+        throw new Error('the squad run was expected to be refused')
+      } catch (error) {
+        // Then the page can say what to fix instead of repeating the Host text
+        if (!(error instanceof AgentsApiError)) throw error
+        expect(error.failure).toBe(expected.failure)
+        expect(error.message).toBe(expected.copy)
+      }
     }
   })
 

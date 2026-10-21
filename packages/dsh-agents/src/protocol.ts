@@ -6,9 +6,10 @@
  * contract: the client half type-imports these declarations and never restates
  * them, and no route outside the list below may be registered.
  *
- * M1 scope: definitions (teams and their members) and single-member runs.
- * Whole-squad runs are M2 and will reach this contract as new routes, not as a
- * reinterpretation of these.
+ * M2 scope: definitions (teams and their members), single-member runs, and the
+ * whole-squad run that creates the Lead session. Every M2 addition is additive:
+ * a field this build adds is optional, and every M1 route keeps its exact shape,
+ * so the existing browser half keeps compiling and working unchanged.
  *
  * @module @linxin666/dsh-agents/protocol
  */
@@ -45,6 +46,9 @@ export const ID_MAX_LENGTH = 128
 
 /** Longest accepted first user message on a run request. */
 export const FIRST_MESSAGE_MAX_LENGTH = 32_000
+
+/** Longest accepted squad goal; it reaches the Lead through the system prompt. */
+export const SQUAD_GOAL_MAX_LENGTH = 4_000
 
 /**
  * Stable machine codes every error reply carries. The browser switches on this
@@ -127,21 +131,34 @@ export interface TeamDefinition {
   name: string
   description?: string
   workspaceId?: string
+  /**
+   * Agent preset the whole-squad run composes the Lead session from. Absent
+   * means the deployment (or the deployment preset) composes it.
+   */
+  leadPreset?: string
   order?: number
   createdAt: number
   updatedAt: number
   members: MemberDefinition[]
 }
 
-/** One launched member session. */
+/** What one run launched: one member session, or the Lead session of a whole squad. */
+export type RunKind = 'member' | 'squad'
+
+/** One launched session: a member session, or the Lead session of a squad run. */
 export interface RunRecord {
   id: string
   teamId: string
-  memberId: string
+  /** The launched member; absent on a squad run, whose session leads the whole team. */
+  memberId?: string
   sessionId: string
   createdAt: number
   status: 'running' | 'settled' | 'failed'
   failure?: string
+  /** Absent on runs recorded before M2, which are member runs by construction. */
+  kind?: RunKind
+  /** The goal handed to the Lead session of a squad run; absent on member runs. */
+  goal?: string
 }
 
 /** Definition fields a caller may write; `id` addresses an existing member. */
@@ -155,6 +172,13 @@ export interface AgentsStateView {
   teams: TeamDefinition[]
   runs: RunRecord[]
   host: { ownerPid: number }
+  /**
+   * Agent preset ids this deployment serves, as the Host's own preset registry
+   * reports them. Additive and optional: M1 Hosts answer without it, and the
+   * browser then offers no preset list instead of inventing one. The squad page
+   * uses it to offer the Lead preset of a whole-squad run.
+   */
+  presets?: readonly string[]
 }
 
 /** `POST {DSH_AGENTS_API_PREFIX}/team` body. */
@@ -200,6 +224,19 @@ export interface RunRequestBody {
 /** `POST {DSH_AGENTS_API_PREFIX}/run` reply. */
 export interface RunResponseBody {
   run: RunRecord
+}
+
+/**
+ * `POST {DSH_AGENTS_API_PREFIX}/squad/run` body: launch the Lead session of one
+ * whole squad. The goal travels through the `team:squad` system-prompt context,
+ * never through the first user message, which is reserved for the user.
+ */
+export interface SquadRunRequestBody {
+  teamId: string
+  /** What the squad must achieve; absent leaves the Lead without a stated goal. */
+  goal?: string
+  /** Optional first user message queued on the Lead session. */
+  firstMessage?: string
 }
 
 /** `POST {DSH_AGENTS_API_PREFIX}/team/delete` reply. */
@@ -288,7 +325,7 @@ export function parseMemberDraft(value: unknown): MemberDraft | undefined {
  */
 export function parseTeamDraft(value: unknown): TeamDraft | undefined {
   const draft = record(value)
-  if (draft === undefined || !exactKeys(draft, ['id', 'name', 'description', 'workspaceId', 'order'])) return undefined
+  if (draft === undefined || !exactKeys(draft, ['id', 'name', 'description', 'workspaceId', 'leadPreset', 'order'])) return undefined
   if (typeof draft.name !== 'string') return undefined
   const name = draft.name.trim()
   if (name === '' || name.length > NAME_MAX_LENGTH) return undefined
@@ -297,12 +334,14 @@ export function parseTeamDraft(value: unknown): TeamDraft | undefined {
   if (draft.order !== undefined && (typeof draft.order !== 'number' || !Number.isInteger(draft.order))) return undefined
   const description = optionalText(draft.description, DESCRIPTION_MAX_LENGTH)
   const workspaceId = optionalText(draft.workspaceId, PIN_MAX_LENGTH)
-  if (description === null || workspaceId === null) return undefined
+  const leadPreset = optionalText(draft.leadPreset, PIN_MAX_LENGTH)
+  if (description === null || workspaceId === null || leadPreset === null) return undefined
   return {
     ...(id === undefined ? {} : { id }),
     name,
     ...(description === undefined ? {} : { description }),
     ...(workspaceId === undefined ? {} : { workspaceId }),
+    ...(leadPreset === undefined ? {} : { leadPreset }),
     ...(draft.order === undefined ? {} : { order: draft.order }),
   }
 }
@@ -359,6 +398,54 @@ export function parseRunRequestBody(value: unknown): RunRequestBody | undefined 
 }
 
 /**
+ * Gate the `POST /squad/run` body. Same exact-key rule as every other route:
+ * a caller cannot smuggle a field this build does not read.
+ */
+export function parseSquadRunRequestBody(value: unknown): SquadRunRequestBody | undefined {
+  const body = record(value)
+  if (body === undefined || !exactKeys(body, ['teamId', 'goal', 'firstMessage'])) return undefined
+  const teamId = definitionId(body.teamId)
+  if (teamId === undefined) return undefined
+  if (body.goal !== undefined && !boundedString(body.goal, SQUAD_GOAL_MAX_LENGTH)) return undefined
+  if (body.firstMessage !== undefined && !boundedString(body.firstMessage, FIRST_MESSAGE_MAX_LENGTH)) return undefined
+  const goal = typeof body.goal === 'string' && body.goal.trim() !== '' ? body.goal.trim() : undefined
+  const firstMessage = typeof body.firstMessage === 'string' && body.firstMessage.trim() !== '' ? body.firstMessage : undefined
+  return { teamId, ...(goal === undefined ? {} : { goal }), ...(firstMessage === undefined ? {} : { firstMessage }) }
+}
+
+/**
+ * The read-only roster route the browser falls back to when the shared session
+ * store's `agentTeam` projection is not reachable from its context.
+ *
+ * PROPOSED, not served by this build: it is deliberately OUTSIDE
+ * {@link DSH_AGENTS_ROUTE_PATHS}, which stays the exact list of routes the Host
+ * registers today. A Host that adopts it answers
+ * `{ members, failure? }` for one Lead session id and nothing else; the browser
+ * half reads it through `src/client/team-source.ts`, so adopting it is one file
+ * (plus this route) and no page change.
+ */
+export const DSH_AGENTS_SQUAD_TEAM_PATH = DSH_AGENTS_API_PREFIX + '/squad/team'
+
+/** One live squad session as the proposed roster route would report it. */
+export interface SquadTeamMemberWire {
+  /** Session id of the Lead or of one teammate session. */
+  id: string
+  /** Display name the Lead gave the teammate; the projection names the Lead `lead`. */
+  name: string
+  role: 'lead' | 'teammate'
+  phase: 'provisioning' | 'active' | 'failed'
+  /** Why this member failed to start, when it did. */
+  error?: string
+}
+
+/** `GET {DSH_AGENTS_SQUAD_TEAM_PATH}?sessionId=<lead session id>` reply. */
+export interface SquadTeamResponseBody {
+  members: SquadTeamMemberWire[]
+  /** The Lead's own projection failure, when the team state could not be folded. */
+  failure?: string
+}
+
+/**
  * The exact path of every route this plugin serves. The Host registers these
  * and nothing else; a caller that wants a new operation amends this list first.
  */
@@ -369,4 +456,5 @@ export const DSH_AGENTS_ROUTE_PATHS = [
   DSH_AGENTS_API_PREFIX + '/member',
   DSH_AGENTS_API_PREFIX + '/member/delete',
   DSH_AGENTS_API_PREFIX + '/run',
+  DSH_AGENTS_API_PREFIX + '/squad/run',
 ] as const

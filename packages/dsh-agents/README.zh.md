@@ -12,11 +12,20 @@ DSH Web GUI 的 Agent 小队：可复用的成员定义（agent 预设、权限�
 - 简报进入**该成员会话的系统提示词**，绝不写进首条用户消息；普通会话不受影响，其它装配收到的是空段，由 Host 丢弃。
 - 运行成员时经宿主 agent 预设注册表解析预设、经宿主网关创建会话、把会话改名为 `<小队名> / <成员名>`、钉住权限与模型路由，并记录一条运行记录。
 
-## 当前里程碑范围
+## Agent Teams 运行期
 
-- 一个成员开启一个会话；运行记录是 Host 对「该会话确实存在」的证据。
-- 整队运行不属于本里程碑；定义与运行之间的接缝（`src/host/run-gateway.ts`）就是官方 agent-team 服务将来的接入点。
-- 运行结算不在此处观察：已启动的运行保持 `running`，直到小队服务接管其结果。
+- 整队运行是小队页上的一个动作：可选目标加可选 Lead 预设。目标随运行请求上送；Lead 预先是小队自己的字段（`TeamDefinition.leadPreset`），因此这次选择跨过这次请求、跨过页面刷新、也跨过下一台设备，而不是随一次运行消失。
+- Lead 预设选择器只提供 `GET /state` 在 `presets` 里报出的 id，注册表标记为不可用的预设不会出现。部署没有预设注册表、或注册表出错时该字段整体缺省；注册表里没有一个可用预设时同样缺省。页面改为陈述小队自己钉住的值，而不是给一个空列表。
+- 启动顺序就是契约：先校验小队钉住的工作区，再在任何会话存在之前向注册表解析 Lead 预设，把会话改名为 `<小队名> / Lead`，并在首条消息入队之前写入整队运行记录，因此 Lead 的第一次装配就知道自己带的是哪支小队。
+- Lead 的模型工具按成员派出 teammate。每个 teammate 都按该成员定义的钉住值组装：预设先于子会话存在解析，权限与模型路由在 teammate 首条提示被 checkpoint 之前落到该会话。本部署兑现不了的钉住会让这次派出以具名错误失败，绝不悄悄退回部署默认值。
+- 小队成员名单与目标以 `team:squad` 系统提示词 **context**（不是 section）送达 Lead，因此登记了 `complete` 段的成员预设也无法把它们丢掉。
+- 实时队伍视图从共享的客户端会话仓库读取 fork 运行期的 `agentTeam` 会话投影（`stateVersion` 4）：Lead、它派出的每个 teammate、每行的角色与阶段，以及没能启动的成员的失败文字。该投影能作答期间，页面不做任何轮询。
+- Team 工具只安装到本 Host 自己启动的整队运行会话里。普通会话（日常对话、普通协调回合）看不到任何 Team 工具，并继续保留原生 subagent 工具——本包从不关闭它们。
+- 运行记录同时覆盖两类：带 Lead 会话与目标的整队运行，以及带成员名与「打开会话」动作的成员运行；最新在前，上限是 Host 保留的 200 条。
+- 页面把每一种失败变成一句话：传输层失败读作 not-mounted、unauthorized、forbidden、timeout、unreachable 或 unexpected；Host 拒绝在 unknown-preset、no-workspace、squad-missing、lead-create-failed、lead-prepare-failed、ledger-unavailable 上保留自己的类别；其余 code 一律读作普通拒绝，引用 Host 那句有界原文。
+- 运行结算不在此处观察：已启动的运行保持 `running`，直到后续里程碑接管其结果。
+
+上述每一处差异，以及它偏离的精确上游基线，都记录在 [docs/fork-provenance.md](docs/fork-provenance.md) 与 [docs/runtime-deltas.md](docs/runtime-deltas.md)；两者是维护者契约，不是建议。
 
 ## 安装
 
@@ -40,9 +49,10 @@ POST /dsh-agents/api/team/delete
 POST /dsh-agents/api/member
 POST /dsh-agents/api/member/delete
 POST /dsh-agents/api/run
+POST /dsh-agents/api/squad/run
 ```
 
-- 浏览器半区去掉前导斜杠，与任务看板的前缀处理一致；M1 在页面挂载期间轮询 `state` 刷新。
+- 浏览器半区去掉前导斜杠，与任务看板的前缀处理一致；页面挂载期间轮询 `state` 刷新。
 - 失败一律是 JSON：稳定 code 加一句有界文字；协议上不出现堆栈、账本内容或会话文本。
 
 ## 存储
