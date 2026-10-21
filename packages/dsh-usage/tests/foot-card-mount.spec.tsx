@@ -4,18 +4,27 @@
  * Sidebar foot card mounting: the container seats in the shell foot area
  * directly above the Settings row (keeping Settings the terminal row),
  * self-heals through the shared body-mutation hub when the shell re-renders
- * around it, stays single under duplicate mounts, and replays the user's
- * settings path on click-through.
+ * around it, stays single under duplicate mounts, and opens the usage section
+ * through the shell's settings store with a DOM replay as the fallback.
  * The React body is covered by foot-card.spec.tsx; here only DOM placement
- * and the settings-navigation replay are under test.
+ * and the settings-navigation paths are under test.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
-import { FOOT_CARD_SELECTOR, mountUsageFootCard, openUsageSettings } from '../src/client/foot-card-mount.tsx'
+import {
+  FOOT_CARD_SELECTOR, mountUsageFootCard, openUsageSettings, settingsShellStore,
+  type SettingsShellStore, type SlotSeatReader,
+} from '../src/client/foot-card-mount.tsx'
 import type { UsageFootCardProps } from '../src/client/UsageFootCard.tsx'
 import type { UsageSettings } from '../src/client/UsageSectionCard.tsx'
 import type { UsageStoreInstance, UsageUiState } from '../src/client/usage-store.ts'
+
+/** The section id the apply body registers and the store must select. */
+const SECTION_ID = 'dsh-usage'
+
+/** The section's nav label in the shell's zh locale. */
+const SECTION_LABEL = '使用统计'
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -58,6 +67,77 @@ function mountProps(extra: Partial<UsageFootCardProps> = {}): UsageFootCardProps
     mutate: () => Promise.resolve(false),
   } as unknown as ConfigForm<UsageSettings>
   return { store, poll: () => {}, onOpen: () => {}, settings, ...extra }
+}
+
+/** A settings nav panel carrying one clickable row per label, mounted by a launcher. */
+function panel(labels: string[]): HTMLElement {
+  const dialog = document.createElement('div')
+  dialog.setAttribute('role', 'dialog')
+  const nav = document.createElement('nav')
+  for (const label of labels) {
+    const row = document.createElement('button')
+    row.type = 'button'
+    row.textContent = label
+    row.addEventListener('click', () => { row.dataset.clicked = 'true' })
+    nav.append(row)
+  }
+  dialog.append(nav)
+  return dialog
+}
+
+/** The shell's own gear: a dialog trigger that mounts the panel on click. */
+function gearTrigger(labels: string[]): { button: HTMLButtonElement; clicks: () => number } {
+  let clicks = 0
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.setAttribute('aria-haspopup', 'dialog')
+  button.addEventListener('click', () => {
+    clicks += 1
+    document.body.append(panel(labels))
+  })
+  return { button, clicks: () => clicks }
+}
+
+/**
+ * The account row: a menu launcher occupying settings.launcher. Its first item
+ * is Settings, which mounts the panel — the shape the reported bug landed in.
+ */
+function accountRow(labels: string[]): {
+  button: HTMLButtonElement
+  clicks: () => number
+  itemClicks: () => number
+} {
+  let clicks = 0
+  let itemClicks = 0
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.setAttribute('aria-haspopup', 'menu')
+  const menu = document.createElement('div')
+  menu.setAttribute('role', 'menu')
+  const settingsItem = document.createElement('button')
+  settingsItem.type = 'button'
+  settingsItem.setAttribute('role', 'menuitem')
+  settingsItem.textContent = '设置'
+  settingsItem.addEventListener('click', () => {
+    itemClicks += 1
+    menu.remove()
+    document.body.append(panel(labels))
+  })
+  menu.append(settingsItem)
+  button.addEventListener('click', () => {
+    clicks += 1
+    document.body.append(menu)
+  })
+  return { button, clicks: () => clicks, itemClicks: () => itemClicks }
+}
+
+/** The shell settings store handle recording every section it is asked to open. */
+function shellStore(): { store: SettingsShellStore; opened: string[] } {
+  const opened: string[] = []
+  return {
+    store: { create: () => ({ actions: { openSection: (id: string) => { opened.push(id) } } }) },
+    opened,
+  }
 }
 
 describe('mountUsageFootCard placement', () => {
@@ -140,45 +220,90 @@ describe('mountUsageFootCard placement', () => {
   })
 })
 
-describe('openUsageSettings navigation replay', () => {
-  /** A Settings trigger whose click mounts a fake panel whose rows record clicks. */
-  function trigger(navLabels: string[]): { button: HTMLButtonElement; clicks: () => number } {
-    let clicks = 0
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.addEventListener('click', () => {
-      clicks += 1
-      const dialog = document.createElement('div')
-      dialog.setAttribute('role', 'dialog')
-      const nav = document.createElement('nav')
-      for (const label of navLabels) {
-        const row = document.createElement('button')
-        row.type = 'button'
-        row.textContent = label
-        row.addEventListener('click', () => { row.dataset.clicked = 'true' })
-        nav.append(row)
-      }
-      dialog.append(nav)
-      document.body.append(dialog)
-    })
-    return { button, clicks: () => clicks }
-  }
+describe('settingsShellStore seat lookup', () => {
+  it('user reads the shell settings store from the settings seat', () => {
+    // Given the shell registered its settings shell with a store seat
+    const { store } = shellStore()
+    const slots: SlotSeatReader = { entries: () => [{ store }] }
 
+    // When the card resolves the seat
+    const resolved = settingsShellStore(slots)
+
+    // Then it gets the shell's own handle back, not a copy
+    expect(resolved).toBe(store)
+  })
+
+  it('user degrades to the DOM replay when the settings seat carries no store', () => {
+    // Given a shell whose seat is unregistered, storeless, or torn down
+    const { store } = shellStore()
+    const empty: SlotSeatReader = { entries: () => [] }
+    const storeless: SlotSeatReader = { entries: () => [{ store: {} }] }
+    const tornDown: SlotSeatReader = { entries: () => { throw new Error('registry closed') } }
+
+    // When the card resolves each seat
+    // Then every shape yields no handle, so the replay path owns the click
+    expect(settingsShellStore(empty)).toBeUndefined()
+    expect(settingsShellStore(storeless)).toBeUndefined()
+    expect(settingsShellStore(tornDown)).toBeUndefined()
+    expect(settingsShellStore(undefined)).toBeUndefined()
+    expect(settingsShellStore({ entries: () => [{ store }] })).toBe(store)
+  })
+})
+
+describe('openUsageSettings store path', () => {
+  it('user lands on the usage section through the seat store while an account row owns the launcher', () => {
+    // Given an account row occupying settings.launcher and a shell store seat
+    const { settingsArea } = shell()
+    const account = accountRow(['General', SECTION_LABEL])
+    settingsArea.append(account.button)
+    const opened: string[] = []
+    const store: SettingsShellStore = { create: () => ({ actions: { openSection: (id) => { opened.push(id) } } }) }
+
+    // When the card opens settings
+    openUsageSettings({ id: SECTION_ID, label: () => SECTION_LABEL, store })
+
+    // Then the store opens the section itself, so no account menu ever opens
+    expect(opened).toEqual([SECTION_ID])
+    expect(account.clicks()).toBe(0)
+    expect(document.querySelectorAll('[role="menu"]')).toHaveLength(0)
+  })
+
+  it('user still reaches the panel when the seat store rejects the call', async () => {
+    // Given a foreign store seat that throws and the shell's gear in the seat
+    const { settingsArea } = shell()
+    const gear = gearTrigger(['General', SECTION_LABEL])
+    settingsArea.append(gear.button)
+    const store: SettingsShellStore = { create: () => { throw new Error('not a settings shell') } }
+
+    // When the card opens settings
+    openUsageSettings({ id: SECTION_ID, label: () => SECTION_LABEL, store })
+
+    // Then the DOM replay opens the panel and selects the usage row
+    await vi.waitFor(() => {
+      expect(gear.clicks()).toBe(1)
+      const usageRow = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] nav button')]
+        .find((row) => row.textContent?.includes(SECTION_LABEL))
+      expect(usageRow?.dataset.clicked).toBe('true')
+    })
+  })
+})
+
+describe('openUsageSettings navigation replay', () => {
   it('user lands on the usage section when the card opens settings', async () => {
     // Given the shell sidebar whose Settings trigger opens a panel with a usage row
     const { settingsArea } = shell()
-    const settingsTrigger = trigger(['General', '使用统计'])
-    settingsArea.append(settingsTrigger.button)
+    const gear = gearTrigger(['General', SECTION_LABEL])
+    settingsArea.append(gear.button)
 
     // When the card's open path runs
-    openUsageSettings(() => '使用统计')
+    openUsageSettings({ id: SECTION_ID, label: () => SECTION_LABEL })
 
     // Then the trigger opens the panel and the usage nav row gets selected
     await vi.waitFor(() => {
-      expect(settingsTrigger.clicks()).toBe(1)
+      expect(gear.clicks()).toBe(1)
       expect(document.querySelectorAll('[role="dialog"] nav button')).toHaveLength(2)
       const usageRow = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] nav button')]
-        .find((row) => row.textContent?.includes('使用统计'))
+        .find((row) => row.textContent?.includes(SECTION_LABEL))
       expect(usageRow?.dataset.clicked).toBe('true')
     })
     // And the foreign row stays untouched
@@ -187,28 +312,60 @@ describe('openUsageSettings navigation replay', () => {
     expect(general?.dataset.clicked).toBeUndefined()
   })
 
-  it('user keeps the already open panel when its nav lacks the usage row', () => {
-    // Given an already open settings panel without the usage section
-    const dialog = document.createElement('div')
-    dialog.setAttribute('role', 'dialog')
-    const nav = document.createElement('nav')
-    const general = document.createElement('button')
-    general.type = 'button'
-    general.textContent = 'General'
-    general.addEventListener('click', () => { general.dataset.clicked = 'true' })
-    nav.append(general)
-    dialog.append(nav)
-    document.body.append(dialog)
+  it('user reaches the panel through the dialog trigger, not a menu sitting beside it', async () => {
+    // Given a settings seat where the account row precedes the shell's gear
     const { settingsArea } = shell()
-    const settingsTrigger = trigger(['General'])
-    settingsArea.append(settingsTrigger.button)
+    const account = accountRow(['General', SECTION_LABEL])
+    const gear = gearTrigger(['General', SECTION_LABEL])
+    settingsArea.append(account.button, gear.button)
 
     // When the card's open path runs
-    openUsageSettings(() => '使用统计')
+    openUsageSettings({ id: SECTION_ID, label: () => SECTION_LABEL })
 
-    // Then the trigger never toggles the open panel shut and no foreign row is clicked
-    expect(settingsTrigger.clicks()).toBe(0)
+    // Then the dialog trigger is clicked and the account menu stays shut
+    await vi.waitFor(() => {
+      expect(gear.clicks()).toBe(1)
+      const usageRow = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] nav button')]
+        .find((row) => row.textContent?.includes(SECTION_LABEL))
+      expect(usageRow?.dataset.clicked).toBe('true')
+    })
+    expect(account.clicks()).toBe(0)
+  })
+
+  it('user reaches the panel through the account menu when no gear is mounted', async () => {
+    // Given a settings seat carrying only the account row (the reported shell)
+    const { settingsArea } = shell()
+    const account = accountRow(['General', SECTION_LABEL])
+    settingsArea.append(account.button)
+
+    // When the card's open path runs
+    openUsageSettings({ id: SECTION_ID, label: () => SECTION_LABEL })
+
+    // Then the account menu opens, its first Settings item runs, and the usage row is selected
+    await vi.waitFor(() => {
+      expect(account.clicks()).toBe(1)
+      expect(account.itemClicks()).toBe(1)
+      const usageRow = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] nav button')]
+        .find((row) => row.textContent?.includes(SECTION_LABEL))
+      expect(usageRow?.dataset.clicked).toBe('true')
+    })
+  })
+
+  it('user keeps the already open panel when its nav lacks the usage row', () => {
+    // Given an already open settings panel without the usage section
+    const open = panel(['General'])
+    document.body.append(open)
+    const { settingsArea } = shell()
+    const gear = gearTrigger(['General'])
+    settingsArea.append(gear.button)
+
+    // When the card's open path runs
+    openUsageSettings({ id: SECTION_ID, label: () => SECTION_LABEL })
+
+    // Then the launcher never toggles the open panel shut and no foreign row is clicked
+    expect(gear.clicks()).toBe(0)
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
-    expect(general.dataset.clicked).toBeUndefined()
+    const general = document.querySelector<HTMLButtonElement>('[role="dialog"] nav button')
+    expect(general?.dataset.clicked).toBeUndefined()
   })
 })
