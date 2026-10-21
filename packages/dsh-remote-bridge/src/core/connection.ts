@@ -41,6 +41,7 @@ import {
   CAP_SESSION_SNAPSHOT_PAGE,
   CAP_SESSION_SNAPSHOT_SINCE,
   CAP_SESSION_SNAPSHOT_TRIM,
+  CAP_SQUADS,
   CAP_SUBAGENT_THREAD,
   CAP_WORKSPACE,
   CODE_APPROVAL_UNKNOWN,
@@ -54,6 +55,7 @@ import {
   CODE_SESSION_NOT_FOLLOWABLE,
   CODE_SNAPSHOT_TOO_LARGE,
   CODE_SNAPSHOT_UNAVAILABLE,
+  CODE_SQUADS_UNAVAILABLE,
   CODE_TOKEN_INVALID,
   CODE_UNKNOWN_METHOD,
   CODE_UNPAIRED,
@@ -87,6 +89,11 @@ import {
   METHOD_SESSION_TITLES,
   METHOD_SESSION_UNARCHIVE,
   METHOD_SESSION_UNPIN,
+  METHOD_SQUADS_LIST,
+  METHOD_SQUADS_RUNS,
+  METHOD_SQUADS_RUN_MEMBER,
+  METHOD_SQUADS_RUN_SQUAD,
+  METHOD_SQUADS_STATE,
   METHOD_WORKSPACE_LIST,
   MINOR,
   PROTO,
@@ -97,6 +104,7 @@ import {
   UNPAIRED_METHODS,
 } from './protocol.ts'
 import { base64UrlDecode, verifyEs256 } from './crypto.ts'
+import { isSquadRefusal, parseSquadMemberRun, parseSquadRun, squadRunOf, SQUAD_METHODS, squadsStateOf, type SquadTransport, type SquadsState } from './squads.ts'
 import { TITLES_MAX_IDS, type SessionMeta } from './session-meta.ts'
 import type { SessionPermissions } from './session-permissions.ts'
 import type { BridgeGateway, GatewayPeer } from './wire.ts'
@@ -192,6 +200,12 @@ export interface BridgeConnectionOptions {
    * `KNOWN_METHODS` answers `unknown-method`.
    */
   readonly extensions?: RemoteBridgeRegistry
+  /**
+   * The host's squad domain, behind the `squads.v1` channel. Absent is a host
+   * that serves no `dsh-agents` domain: the capability stays advertised and only
+   * a call that needs the domain answers `squads-unavailable`.
+   */
+  readonly squads?: SquadTransport
 }
 
 /** A device the connection proved itself to be, resolved from the upgrade request. */
@@ -794,6 +808,12 @@ export class BridgeConnection {
         || frame.m === METHOD_SESSION_UNARCHIVE)) {
       return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
     }
+    // The squads channel is one capability: without `squads.v1` none of the five
+    // commands is part of this client's protocol, so no squad domain is read and
+    // no session is launched on behalf of a client that never asked to drive one.
+    if (SQUAD_METHODS.has(frame.m) && !this.declares(CAP_SQUADS)) {
+      return refusal(CODE_UNKNOWN_METHOD, `unknown method ${frame.m}`)
+    }
     // Unconditional: a loopback Host buys nothing here. Without a device token
     // only the handshake and the two pairing steps run.
     if (!this.paired && !UNPAIRED_METHODS.has(frame.m)) return refusal(CODE_UNPAIRED, 'this connection is not paired')
@@ -827,6 +847,11 @@ export class BridgeConnection {
       case METHOD_SESSION_FORK: return await this.#sessionFork(frame.p)
       case METHOD_SESSION_COMMANDS: return await this.#sessionCommands(frame.p)
       case METHOD_SESSION_COMMAND: return await this.#sessionCommand(frame.p)
+      case METHOD_SQUADS_STATE: return await this.#squadsState()
+      case METHOD_SQUADS_LIST: return await this.#squadsProjection('squads')
+      case METHOD_SQUADS_RUNS: return await this.#squadsProjection('runs')
+      case METHOD_SQUADS_RUN_MEMBER: return await this.#squadsRunMember(frame.p)
+      case METHOD_SQUADS_RUN_SQUAD: return await this.#squadsRunSquad(frame.p)
       case METHOD_WORKSPACE_LIST: return this.#workspaceList()
       case METHOD_SESSION_RENAME: return await this.#sessionRename(frame.p)
       case METHOD_SESSION_PIN: return await this.#sessionSetWrite(METHOD_SESSION_PIN, 'pinSession', frame.p)
@@ -1625,6 +1650,118 @@ export class BridgeConnection {
       ...(atSeq === undefined ? {} : { atSeq }),
     })
     return call.ok ? { ok: true, r: call.value } : call
+  }
+
+  /**
+   * Answer `squads.state`: the host's squad domain as this deployment publishes
+   * it.
+   *
+   * The read is the `dsh-agents` plugin's own `{teams, runs, host, presets?}`
+   * document — reached over loopback, or read out of its ledger when loopback
+   * cannot answer — mapped onto the frozen body: a definition keeps its identity,
+   * its pins and its members, a run names the squad it belongs to, and both lose
+   * the bookkeeping fields this channel does not publish. A body this build cannot
+   * read is refused rather than repaired, and a host that serves no domain answers
+   * `squads-unavailable` instead of an empty board.
+   */
+  async #squadsState(): Promise<DispatchOutcome> {
+    const read = await this.#squadState()
+    return read.ok ? { ok: true, r: read.state } : read
+  }
+
+  /**
+   * Answer `squads.list` or `squads.runs`: one half of the same read.
+   *
+   * Both commands read the domain once, exactly as `squads.state` does, and
+   * publish the half they are named after. There is no second source: a squad
+   * listing and a run listing can never disagree about a definition a launch
+   * touched, because both are cut from one answer.
+   * @param half - the body key this command publishes.
+   */
+  async #squadsProjection(half: 'squads' | 'runs'): Promise<DispatchOutcome> {
+    const read = await this.#squadState()
+    if (!read.ok) return read
+    return { ok: true, r: { [half]: read.state[half] } }
+  }
+
+  /**
+   * Read the squad domain once.
+   *
+   * The transport answers the plugin's rows unread and this bridge maps them
+   * here, so the ledger fallback and the loopback route are the same answer as far
+   * as a client can tell.
+   */
+  async #squadState(): Promise<{ readonly ok: true; readonly state: SquadsState } | CallFailure> {
+    const transport = this.#options.squads
+    if (transport === undefined) {
+      return refusal(CODE_SQUADS_UNAVAILABLE, 'this host serves no dsh-agents squad domain')
+    }
+    try {
+      return { ok: true, state: squadsStateOf(await transport.state()) }
+    } catch (error) {
+      return this.#squadFailure(error)
+    }
+  }
+
+  /**
+   * Answer `squads.runMember`: launch one member session.
+   *
+   * Only the two names the command needs are read here. Which preset, permission,
+   * model and brief that session is composed from is the definition's own, and
+   * whether this host can launch at all is the transport's: an unknown squad or
+   * member, an unusable preset and a squad that pins no workspace all cross as the
+   * plugin's own code.
+   * @param payload - `{squadId, memberId, firstMessage?}`.
+   */
+  async #squadsRunMember(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const transport = this.#options.squads
+    if (transport === undefined) {
+      return refusal(CODE_SQUADS_UNAVAILABLE, 'this host serves no dsh-agents squad domain')
+    }
+    const request = parseSquadMemberRun(payload)
+    if (request === undefined) return refusal(CODE_INVALID_ARGS, 'squads.runMember requires squadId and memberId')
+    try {
+      return { ok: true, r: { run: squadRunOf(await transport.runMember(request)) } }
+    } catch (error) {
+      return this.#squadFailure(error)
+    }
+  }
+
+  /**
+   * Answer `squads.runSquad`: launch the Lead session of one whole squad.
+   *
+   * The goal travels as the plugin's own `goal` — it becomes part of the Lead's
+   * system-prompt context rather than its first user message — so nothing about
+   * what the squad must achieve is modelled here.
+   * @param payload - `{squadId, goal?}`.
+   */
+  async #squadsRunSquad(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
+    const transport = this.#options.squads
+    if (transport === undefined) {
+      return refusal(CODE_SQUADS_UNAVAILABLE, 'this host serves no dsh-agents squad domain')
+    }
+    const request = parseSquadRun(payload)
+    if (request === undefined) return refusal(CODE_INVALID_ARGS, 'squads.runSquad requires squadId')
+    try {
+      return { ok: true, r: { run: squadRunOf(await transport.runSquad(request)) } }
+    } catch (error) {
+      return this.#squadFailure(error)
+    }
+  }
+
+  /**
+   * Convert whatever the squad transport raised into a refusal that names a code.
+   *
+   * A refusal the transport built keeps its own code — that is how a domain
+   * refusal and this bridge's two capability codes stay distinguishable. Anything
+   * else is a host failure this channel could not attribute, and it is refused as
+   * an unreachable domain rather than as an internal error: no squad answer was
+   * read, which is exactly what `squads-unavailable` says.
+   */
+  #squadFailure(error: unknown): CallFailure {
+    if (isSquadRefusal(error)) return refusal(error.code, error.message)
+    this.#options.log(`squad domain read failed: ${failureText(error)}`)
+    return refusal(CODE_SQUADS_UNAVAILABLE, failureText(error))
   }
 
   /**

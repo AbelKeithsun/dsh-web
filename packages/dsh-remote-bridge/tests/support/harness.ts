@@ -19,6 +19,7 @@ import { PairingService } from '../../src/core/pairing.ts'
 import { QuestionClaims } from '../../src/core/questions.ts'
 import { SessionMeta, type SessionMetaFaces } from '../../src/core/session-meta.ts'
 import { SessionPermissions } from '../../src/core/session-permissions.ts'
+import type { SquadTransport } from '../../src/core/squads.ts'
 import type { BridgeGateway, GatewayInvokeRequest, GatewayPeer } from '../../src/core/wire.ts'
 
 /** One frame as it crossed the wire. */
@@ -276,6 +277,8 @@ export interface HarnessOptions {
   readonly extensions?: RemoteBridgeRegistry
   /** Clock the question deadline bookkeeping reads; the default is the wall clock. */
   readonly questionNow?: () => number
+  /** Squad domain source; the default models a host with no `dsh-agents` domain. */
+  readonly squads?: SquadTransport
 }
 
 /** Session metadata for a host whose session services are all present. */
@@ -355,6 +358,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
     jobs: jobsOf(options, message => { logs.push(message) }),
     ownerPeer,
+    ...(options.squads === undefined ? {} : { squads: options.squads }),
     now: () => Date.now(),
     clientTimeZone: () => 'Asia/Shanghai',
     log: (message: string) => { logs.push(message) },
@@ -458,6 +462,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
     jobs: jobsOf(options, message => { logs.push(message) }),
     ownerPeer,
+    ...(options.squads === undefined ? {} : { squads: options.squads }),
     now: () => Date.now(),
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },

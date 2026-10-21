@@ -48,6 +48,7 @@ import { WS_PATH } from './core/protocol.ts'
 import { SessionMeta, type SessionStoreFace, type SessionTitleFace, type WorkspacesFace } from './core/session-meta.ts'
 import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
 import { dshHome } from './host/dsh-home.ts'
+import { LoopbackSquads } from './host/squads.ts'
 import { mountOnce } from './mount-once.ts'
 import { makePairTokenRoute } from './host/routes.ts'
 import { isWebSocketUpgrade, presentedTokenOf, readSecWebSocketKey, refuseUpgrade, serveUpgrade } from './host/websocket.ts'
@@ -205,6 +206,22 @@ function applyImpl(ctx: Context): void {
   // The extension seam publishes no protocol vocabulary of its own: another
   // plugin registers the method names, payloads and topics it owns, and this
   // package only dispatches and fans out what it was handed.
+  // The squad domain of the `dsh-agents` plugin is read over this host's own
+  // loopback origin: that plugin serves its routes on the very web server this
+  // bridge already injects. Both the origin and the ledger directory are resolved
+  // per call — the listener may not have bound a port when this row mounts, and a
+  // DSH home is not a fact to capture once.
+  const squads = new LoopbackSquads({
+    origin: () => {
+      try {
+        return ctx.webServer.getOrigin()
+      } catch {
+        return undefined
+      }
+    },
+    ledgerDirectory: () => join(dshHome(), 'dsh-agents'),
+    log,
+  })
   const extensions = new RemoteBridgeRegistry()
   const hub = new BridgeHub({
     extensions,
@@ -217,6 +234,7 @@ function applyImpl(ctx: Context): void {
     sessionMeta,
     permissions,
     ownerPeer,
+    squads,
     now: () => Date.now(),
     clientTimeZone: localTimeZone,
     log,

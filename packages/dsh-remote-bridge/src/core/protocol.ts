@@ -35,6 +35,11 @@ export const METHOD_APPROVAL_RESOLVE = 'approval.resolve'
 export const METHOD_QUESTION_ANSWER = 'question.answer'
 export const METHOD_QUESTION_LIST = 'question.list'
 export const METHOD_JOBS_LIST = 'jobs.list'
+export const METHOD_SQUADS_STATE = 'squads.state'
+export const METHOD_SQUADS_LIST = 'squads.list'
+export const METHOD_SQUADS_RUNS = 'squads.runs'
+export const METHOD_SQUADS_RUN_MEMBER = 'squads.runMember'
+export const METHOD_SQUADS_RUN_SQUAD = 'squads.runSquad'
 
 /** Server-pushed topics of protocol v1. */
 export const TOPIC_SESSION_DELTA = 'session.delta'
@@ -170,6 +175,24 @@ export const CAP_JOBS = 'jobs.v1'
  * host no request.
  */
 export const CAP_AGENTS = 'agents.v1'
+
+/**
+ * Capability a client declares in `hello`'s `cap` array to read the host's
+ * agent squads and to drive them.
+ *
+ * Declaring it is what makes `squads.state`, `squads.list`, `squads.runs`,
+ * `squads.runMember` and `squads.runSquad` part of that client's protocol at
+ * all: a client that does not declare it — including every client written before
+ * this channel existed — is refused each as an unknown method, exactly as those
+ * frames were refused before. No command is called on a connection's behalf
+ * either, so a client that never asks sends the host no request.
+ *
+ * The channel is additive beside {@link CAP_AGENTS} rather than a replacement:
+ * a phone that predates the squad model keeps the preset roster and session
+ * creation it was written against, and a phone that reads this name reads the
+ * squad domain instead of deriving agents from anything else.
+ */
+export const CAP_SQUADS = 'squads.v1'
 
 /**
  * Capability a client declares in `hello`'s `cap` array to be answered with
@@ -363,6 +386,11 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_SESSION_ARCHIVE,
   METHOD_SESSION_UNARCHIVE,
   METHOD_WORKSPACE_LIST,
+  METHOD_SQUADS_STATE,
+  METHOD_SQUADS_LIST,
+  METHOD_SQUADS_RUNS,
+  METHOD_SQUADS_RUN_MEMBER,
+  METHOD_SQUADS_RUN_SQUAD,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
@@ -408,6 +436,24 @@ export const CODE_JOBS_UNAVAILABLE = 'jobs-unavailable'
  * that needs those endpoints fails.
  */
 export const CODE_COMMANDS_UNAVAILABLE = 'commands-unavailable'
+/**
+ * This host serves no squad domain this bridge can reach: no answer to the
+ * plugin's state route over loopback, no readable ledger beside it, or a body
+ * this build cannot read as one squad domain. The capability stays advertised —
+ * it is a fact about this bridge, not about what a particular host mounts — and
+ * only a call that needs the domain fails. A refusal the `dsh-agents` plugin
+ * itself raised crosses with the plugin's own code instead (`team-not-found`,
+ * `member-not-found`, `preset-unknown`, `workspace-required` and their
+ * neighbours).
+ */
+export const CODE_SQUADS_UNAVAILABLE = 'squads-unavailable'
+/**
+ * The definitions are readable but the two run commands cannot be served: this
+ * host answered no run route over loopback, and the read-only ledger fallback
+ * cannot launch anything. Failing closed is the point — a client is told the
+ * capability is not served here rather than shown a run that never started.
+ */
+export const CODE_SQUADS_RUN_UNAVAILABLE = 'squads-run-unavailable'
 export const CODE_SNAPSHOT_TOO_LARGE = 'snapshot-too-large'
 export const CODE_INTERNAL = 'internal'
 
@@ -416,6 +462,11 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 15 when the squads channel shipped: behind {@link CAP_SQUADS} a client may
+ * call {@link METHOD_SQUADS_STATE}, {@link METHOD_SQUADS_LIST},
+ * {@link METHOD_SQUADS_RUNS}, {@link METHOD_SQUADS_RUN_MEMBER} and
+ * {@link METHOD_SQUADS_RUN_SQUAD}, so it reads five new reply bodies off the wire
+ * and drives the squad domain instead of deriving its agents from anything else.
  * 14 when the session-admin channel shipped: behind {@link CAP_WORKSPACE} a
  * client may call {@link METHOD_WORKSPACE_LIST} and read the host's workspaces
  * with both registry-global session sets, and behind {@link CAP_SESSION_ADMIN}
@@ -475,7 +526,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 14
+export const MINOR = 15
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -502,6 +553,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_COMMANDS,
   CAP_WORKSPACE,
   CAP_SESSION_ADMIN,
+  CAP_SQUADS,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'
