@@ -112,6 +112,9 @@ export function GitHubSettingsSection(props: GitHubSettingsSectionProps) {
       t={t}
       titleKey="settings.title"
       descriptionKey="settings.description"
+      // One topic inside the board's own settings card, so it takes the same
+      // compact chrome its sibling topic cards use.
+      density="nested"
       // Collapsed on arrival like the board card's own sections: the settings
       // page opens as a topic list, and the integration's form is one topic.
       defaultOpen={false}
@@ -122,7 +125,8 @@ export function GitHubSettingsSection(props: GitHubSettingsSectionProps) {
       <BooleanField
         id="settings-task-board-github-enabled"
         label={t('settings.enabled')}
-        hint={t('settings.enabledHint')}
+        hint={t('settings.enabledHintBrief')}
+        hintTitle={t('settings.enabledHint')}
         onLabel={t('settings.on')}
         offLabel={t('settings.off')}
         inheritLabel={t('settings.inherit')}
@@ -137,7 +141,8 @@ export function GitHubSettingsSection(props: GitHubSettingsSectionProps) {
       <BooleanField
         id="settings-task-board-github-announce"
         label={t('settings.announce')}
-        hint={t('settings.announceHint')}
+        hint={t('settings.announceHintBrief')}
+        hintTitle={t('settings.announceHint')}
         onLabel={t('settings.on')}
         offLabel={t('settings.off')}
         inheritLabel={t('settings.inherit')}

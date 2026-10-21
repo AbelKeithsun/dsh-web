@@ -5,9 +5,19 @@
  * as siblings of the built-in Shell / Agent loop / Web search cards. */
 
 .card {
+  /* The card's local scale: every literal below reads one of these, and the
+     nested density overrides the same seven on the same element, so one rule
+     set serves both densities. */
+  --settings-card-radius: 12px;
+  --settings-card-header-pad: 16px;
+  --settings-card-header-gap: 13px;
+  --settings-card-title-size: 15px;
+  --settings-card-description-size: 13px;
+  --settings-card-body-inset: 16px;
+  --settings-card-motion: 0.18s;
   border: 1px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-bg-layer-3);
-  border-radius: 12px;
+  border-radius: var(--settings-card-radius);
   list-style: none;
   transition: border-color 0.16s, background 0.16s;
 }
@@ -19,6 +29,24 @@
 .cardOpen {
   background: var(--dsw-alias-bg-layer-2);
   border-color: var(--dsw-alias-label-dimmed);
+}
+
+/* Nested density: a topic card inside another card's body. It overrides the
+   local scale only, so the first-level card and this one stay one rule set. */
+.cardNested {
+  --settings-card-radius: 10px;
+  --settings-card-header-pad: 10px 12px;
+  --settings-card-header-gap: 10px;
+  --settings-card-title-size: 13px;
+  --settings-card-description-size: 12px;
+  --settings-card-body-inset: 12px;
+}
+
+/* One line: the header already carries the full sentence on its title. */
+.cardNested .description {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header {
@@ -34,10 +62,10 @@
   cursor: pointer;
   background: transparent;
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--settings-card-radius);
   align-items: center;
-  gap: 13px;
-  padding: 16px;
+  gap: var(--settings-card-header-gap);
+  padding: var(--settings-card-header-pad);
   display: flex;
 }
 
@@ -49,10 +77,10 @@
 .headerStatic {
   width: 100%;
   box-sizing: border-box;
-  border-radius: 12px;
+  border-radius: var(--settings-card-radius);
   align-items: center;
-  gap: 13px;
-  padding: 16px;
+  gap: var(--settings-card-header-gap);
+  padding: var(--settings-card-header-pad);
   display: flex;
 }
 
@@ -85,7 +113,7 @@
 
 .name {
   color: var(--dsw-alias-label-primary);
-  font-size: 15px;
+  font-size: var(--settings-card-title-size);
   font-weight: 600;
   line-height: 1.4;
 }
@@ -95,7 +123,7 @@
      print leave 12-13px hint text below readable contrast (orca-link #778399
      on cream measures ~3.4:1). */
   color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
+  font-size: var(--settings-card-description-size);
   line-height: 1.5;
 }
 
@@ -135,9 +163,36 @@
   transform: rotate(180deg);
 }
 
+/* Body disclosure. One transition pair drives both legs: the wrapper
+   animates 0fr -> 1fr and back, the body is its only item and shrinks into the
+   collapsed track. Only the moving states clip, so a settled card never cuts
+   off a field's popup. */
+.disclosure {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows var(--settings-card-motion) ease, opacity var(--settings-card-motion) ease;
+}
+
+.disclosure[data-state='collapsed'],
+.disclosure[data-state='entering'],
+.disclosure[data-state='closing'] {
+  overflow: hidden;
+}
+
+.disclosure[data-state='entering'],
+.disclosure[data-state='shown'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.disclosure > .body {
+  min-height: 0;
+}
+
 .body {
   border-top: 1px solid var(--dsw-alias-border-l2);
-  margin: 0 16px;
+  margin: 0 var(--settings-card-body-inset);
   padding-bottom: 8px;
 }
 
@@ -509,5 +564,11 @@
   .toggleTrack,
   .toggleThumb {
     transition: none;
+  }
+
+  /* Reduced motion drops the height travel but keeps the fade, so a closing
+     body still leaves through the leg its own state started. */
+  .disclosure {
+    transition-property: opacity;
   }
 }

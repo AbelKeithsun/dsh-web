@@ -175,12 +175,15 @@ describe('task-board settings: the forwarded-proxy trust switch', () => {
     act(() => { header(container, zh['settings.enabled']).click() })
 
     // Then the switch is a real control on that topic, resting on the inherit
-    // choice and carrying the copy that says when turning it on is justified
+    // choice and carrying one visible line on when turning it on is justified,
+    // while the full warning stays on its hover title
     const control = container.querySelector('#settings-task-board-trust-forwarded-proxy')
     expect(control?.textContent).toBe(zh['settings.inherit'])
     const label = container.querySelector<HTMLLabelElement>('label[for="settings-task-board-trust-forwarded-proxy"]')
     expect(label?.textContent).toBe(zh['settings.trustForwardedProxy'])
-    expect(container.textContent).toContain(zh['settings.trustForwardedProxyHint'])
+    expect(container.textContent).toContain(zh['settings.trustForwardedProxyHintBrief'])
+    expect([...container.querySelectorAll('p[title]')].map(node => node.getAttribute('title')))
+      .toContain(zh['settings.trustForwardedProxyHint'])
     expect(zh['settings.trustForwardedProxyHint']).toContain('127.0.0.1')
   })
 

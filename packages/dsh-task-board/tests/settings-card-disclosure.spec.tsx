@@ -6,119 +6,21 @@
  * contributes into, and every one of them starts collapsed.
  */
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { TaskBoardSettingsCard, type TaskBoardSettingsCardProps, type TaskBoardSettingsCardState } from '../src/client/TaskBoardSettingsCard.tsx'
 import { zh } from '../src/client/locales.ts'
+import {
+  PROVIDER_CARD_LABEL,
+  cardProps,
+  header,
+  headers,
+  render,
+  setupCardEnvironment,
+  teardownCardEnvironment,
+  titles,
+} from './settings-card-harness.tsx'
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-
-const roots: Root[] = []
-
-/**
- * The host event channel the card subscribes to while it is mounted. Neither
- * Node nor jsdom serves an EventSource, and the card only listens for power
- * frames here, so a seat that records its own close is enough.
- */
-class StubEventSource {
-  onmessage: ((message: MessageEvent<string>) => void) | null = null
-  closed = false
-  close(): void { this.closed = true }
-}
-
-const globalWithEventSource = globalThis as { EventSource?: unknown; fetch?: unknown }
-
-beforeEach(() => {
-  document.documentElement.lang = 'zh'
-  globalWithEventSource.EventSource = StubEventSource
-})
-
-afterEach(() => {
-  for (const root of roots.splice(0)) {
-    act(() => { root.unmount() })
-  }
-  document.body.replaceChildren()
-  delete globalWithEventSource.EventSource
-})
-
-/**
- * One complete, writable card snapshot with no staged edits.
- * @param runLaunchWidth - stored value of the run-launch width field.
- */
-function cardState(runLaunchWidth = ''): TaskBoardSettingsCardState {
-  const field = { text: '', overridden: false, invalid: false }
-  return {
-    available: true,
-    exposed: true,
-    writable: true,
-    dirty: false,
-    invalid: false,
-    saving: false,
-    failed: false,
-    enabled: { ...field, text: 'true' },
-    announceToAgent: field,
-    preventIdleSleep: field,
-    trustForwardedProxy: field,
-    maxSubtaskDepth: field,
-    sessionPollSeconds: field,
-    runLaunchWidth: { ...field, text: runLaunchWidth },
-    spendBudgetTokens: { ...field, text: '0' },
-    goalRunEnabled: { ...field, text: 'false' },
-    goalVerification: { ...field, text: 'true' },
-    goalVerificationModel: field,
-    goalVerificationReasoningEffort: field,
-    cardDefaultMode: field,
-    cardDefaultPermission: field,
-    cardDefaultModel: field,
-    cardDefaultReasoningEffort: field,
-  }
-}
-
-/** The label the stand-in provider card carries (the real one is a provider section). */
-const PROVIDER_CARD_LABEL = 'Provider section'
-
-/** Render-ready props for the card: a fixed snapshot, an inert form, and optionally the provider seat. */
-function cardProps(withProvider = false, runLaunchWidth = ''): TaskBoardSettingsCardProps {
-  const state = cardState(runLaunchWidth)
-  return {
-    t: (key: string) => (zh as Record<string, string>)[key] ?? key,
-    renderSlot: () => withProvider
-      ? (
-        <li data-testid="provider-seat">
-          <button type="button" aria-expanded="false">{PROVIDER_CARD_LABEL}</button>
-        </li>
-      )
-      : undefined,
-    dispatch: async () => false,
-    useTaskBoardSettingsCard: (select: (snapshot: TaskBoardSettingsCardState) => unknown) => select(state),
-    edit: () => {},
-    resetField: () => {},
-    save: () => {},
-    discard: () => {},
-  } as unknown as TaskBoardSettingsCardProps
-}
-
-/** Render the card into a fresh container and return the container. */
-function render(props: TaskBoardSettingsCardProps): HTMLElement {
-  const container = document.createElement('div')
-  document.body.appendChild(container)
-  const root = createRoot(container)
-  roots.push(root)
-  act(() => { root.render(<TaskBoardSettingsCard {...props} />) })
-  return container
-}
-
-/** The disclosure headers the card renders, in document order. */
-function headers(container: HTMLElement): HTMLButtonElement[] {
-  return Array.from(container.querySelectorAll('button[aria-expanded]'))
-}
-
-/** The disclosure header that starts with this copy line (a card's title leads its header text). */
-function header(container: HTMLElement, label: string): HTMLButtonElement {
-  const found = headers(container).find(button => button.textContent?.startsWith(label) === true)
-  if (found === undefined) throw new Error(`the "${label}" disclosure header did not render`)
-  return found
-}
+beforeEach(setupCardEnvironment)
+afterEach(teardownCardEnvironment)
 
 describe('task-board settings card disclosure', () => {
   it('operator opening the settings page sees one collapsed board card and no controls before expanding', () => {
@@ -184,10 +86,12 @@ describe('task-board settings card disclosure', () => {
     // When the operator opens the run-behavior topic
     act(() => { header(container, zh['settings.runBehaviorTitle']).click() })
 
-    // Then the global switch is there with its default (off) and its hint, and
+    // Then the global switch is there with its default (off) and its one-line
+    // hint, whose full explanation stays on that paragraph's hover title, and
     // the sibling topics are untouched
     expect(container.querySelector('#settings-task-board-goal-run')?.textContent).toBe(zh['settings.off'])
-    expect(container.textContent).toContain(zh['settings.goalRunGlobalHint'])
+    expect(container.textContent).toContain(zh['settings.goalRunGlobalHintBrief'])
+    expect(titles(container)).toContain(zh['settings.goalRunGlobalHint'])
     expect(header(container, zh['settings.enabled']).getAttribute('aria-expanded')).toBe('false')
     expect(header(container, zh['settings.goalVerificationTitle']).getAttribute('aria-expanded')).toBe('false')
   })
@@ -221,12 +125,14 @@ describe('task-board settings card disclosure', () => {
     act(() => { header(container, zh['settings.enabled']).click() })
 
     // Then the width is editable beside the depth limit, shows the stored value,
-    // and explains that waiting members still start (they only start in batches)
+    // and explains in one line that waiting members still start (they only
+    // start in batches), with the batch reasoning kept on its hover title
     const width = container.querySelector<HTMLInputElement>('#settings-task-board-run-launch-width')
     expect(width?.type).toBe('text')
     expect(width?.value).toBe('8')
     expect(container.textContent).toContain(zh['settings.runLaunchWidth'])
-    expect(container.textContent).toContain(zh['settings.runLaunchWidthHint'])
+    expect(container.textContent).toContain(zh['settings.runLaunchWidthHintBrief'])
+    expect(titles(container)).toContain(zh['settings.runLaunchWidthHint'])
     // ...and it sits with the runtime-behavior field beside it, whose own
     // rendered copy is what the operator reads there
     const pollLabel = container.querySelector<HTMLLabelElement>('label[for="settings-task-board-session-poll"]')

@@ -93,7 +93,7 @@ export function CardDefaultPresetField(props: CardDefaultPresetFieldProps) {
           )
           : null}
       </select>
-      <p className={props.invalid ? css.invalid : css.hint}>
+      <p className={props.invalid ? css.invalid : css.hint} title={props.hintTitle}>
         {props.invalid ? props.invalidLabel : props.hint}
       </p>
     </div>

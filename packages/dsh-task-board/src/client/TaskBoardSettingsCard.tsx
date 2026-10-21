@@ -488,6 +488,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
       <ul className={settingsCss.nestedCards}>
         <PluginSettingsCard
           t={t}
+          density="nested"
           titleKey="settings.enabled"
           descriptionKey="settings.enabledCardHint"
           defaultOpen={false}
@@ -499,7 +500,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <BooleanField
             id="settings-task-board-enabled"
             label={t('settings.enabled')}
-            hint={t('settings.enabledHint')}
+            hint={t('settings.enabledHintBrief')}
+            hintTitle={t('settings.enabledHint')}
             inheritLabel={t('settings.inherit')}
             onLabel={t('settings.on')}
             offLabel={t('settings.off')}
@@ -511,7 +513,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <BooleanField
             id="settings-task-board-announce"
             label={t('settings.announceToAgent')}
-            hint={t('settings.announceToAgentHint')}
+            hint={t('settings.announceToAgentHintBrief')}
+            hintTitle={t('settings.announceToAgentHint')}
             inheritLabel={t('settings.inherit')}
             onLabel={t('settings.on')}
             offLabel={t('settings.off')}
@@ -523,7 +526,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <BooleanField
             id="settings-task-board-prevent-idle-sleep"
             label={t('settings.preventIdleSleep')}
-            hint={t('settings.preventIdleSleepHint')}
+            hint={t('settings.preventIdleSleepHintBrief')}
+            hintTitle={t('settings.preventIdleSleepHint')}
             inheritLabel={t('settings.inherit')}
             onLabel={t('settings.on')}
             offLabel={t('settings.off')}
@@ -535,7 +539,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <BooleanField
             id="settings-task-board-trust-forwarded-proxy"
             label={t('settings.trustForwardedProxy')}
-            hint={t('settings.trustForwardedProxyHint')}
+            hint={t('settings.trustForwardedProxyHintBrief')}
+            hintTitle={t('settings.trustForwardedProxyHint')}
             inheritLabel={t('settings.inherit')}
             onLabel={t('settings.on')}
             offLabel={t('settings.off')}
@@ -547,7 +552,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <ValueField
             id="settings-task-board-session-poll"
             label={t('settings.sessionPollSeconds')}
-            hint={t('settings.sessionPollSecondsHint')}
+            hint={t('settings.sessionPollSecondsHintBrief')}
+            hintTitle={t('settings.sessionPollSecondsHint')}
             numeric
             {...fieldProps}
             {...state.sessionPollSeconds}
@@ -557,7 +563,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <ChoiceField
             id="settings-task-board-subtask-depth"
             label={t('settings.maxSubtaskDepth')}
-            hint={t('settings.maxSubtaskDepthHint')}
+            hint={t('settings.maxSubtaskDepthHintBrief')}
+            hintTitle={t('settings.maxSubtaskDepthHint')}
             inheritLabel={t('settings.inherit')}
             choices={SUBTASK_DEPTH_CHOICES.map(value => ({
               value,
@@ -571,7 +578,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <ValueField
             id="settings-task-board-run-launch-width"
             label={t('settings.runLaunchWidth')}
-            hint={t('settings.runLaunchWidthHint')}
+            hint={t('settings.runLaunchWidthHintBrief')}
+            hintTitle={t('settings.runLaunchWidthHint')}
             numeric
             {...fieldProps}
             {...state.runLaunchWidth}
@@ -581,7 +589,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <ValueField
             id="settings-task-board-spend-budget"
             label={t('settings.spendBudgetTokens')}
-            hint={t('settings.spendBudgetTokensHint')}
+            hint={t('settings.spendBudgetTokensHintBrief')}
+            hintTitle={t('settings.spendBudgetTokensHint')}
             numeric
             {...fieldProps}
             {...state.spendBudgetTokens}
@@ -592,6 +601,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
 
         <PluginSettingsCard
           t={t}
+          density="nested"
           titleKey="settings.runBehaviorTitle"
           descriptionKey="settings.runBehaviorCardHint"
           defaultOpen={false}
@@ -603,7 +613,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <BooleanField
             id="settings-task-board-goal-run"
             label={t('settings.goalRunGlobal')}
-            hint={t('settings.goalRunGlobalHint')}
+            hint={t('settings.goalRunGlobalHintBrief')}
+            hintTitle={t('settings.goalRunGlobalHint')}
             inheritLabel={t('settings.inherit')}
             onLabel={t('settings.on')}
             offLabel={t('settings.off')}
@@ -616,6 +627,7 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
 
         <PluginSettingsCard
           t={t}
+          density="nested"
           titleKey="settings.goalVerificationTitle"
           descriptionKey="settings.goalVerificationCardHint"
           defaultOpen={false}
@@ -627,7 +639,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <BooleanField
             id="settings-task-board-goal-verification"
           label={t('settings.goalVerification')}
-          hint={t('settings.goalVerificationHint')}
+          hint={t('settings.goalVerificationHintBrief')}
+          hintTitle={t('settings.goalVerificationHint')}
           inheritLabel={t('settings.inherit')}
           onLabel={t('settings.on')}
           offLabel={t('settings.off')}
@@ -639,7 +652,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <ChoiceField
             id="settings-task-board-goal-verification-model"
             label={t('settings.goalVerificationModel')}
-            hint={t('settings.goalVerificationModelHint')}
+            hint={t('settings.goalVerificationModelHintBrief')}
+            hintTitle={t('settings.goalVerificationModelHint')}
             inheritLabel={t('settings.inherit')}
             choices={modelChoices}
             {...fieldProps}
@@ -650,7 +664,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <ChoiceField
             id="settings-task-board-goal-verification-effort"
             label={t('settings.goalVerificationEffort')}
-            hint={t('settings.goalVerificationEffortHint')}
+            hint={t('settings.goalVerificationEffortHintBrief')}
+            hintTitle={t('settings.goalVerificationEffortHint')}
             inheritLabel={t('settings.inherit')}
             choices={effortChoices}
             {...fieldProps}
@@ -701,8 +716,10 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
             exactly as it did before this topic existed. */}
         <PluginSettingsCard
           t={t}
+          density="nested"
           titleKey="settings.cardDefaultsTitle"
-          descriptionKey="settings.cardDefaultsCardHint"
+          descriptionKey="settings.cardDefaultsCardBrief"
+          descriptionTitleKey="settings.cardDefaultsCardHint"
           defaultOpen={false}
           hideFooter
           state={nestedShell}
@@ -712,7 +729,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <CardDefaultPresetField
             id="settings-task-board-card-default-mode"
             label={t('new.agentPreset')}
-            hint={t('settings.cardDefaultModeHint')}
+            hint={t('settings.cardDefaultModeHintBrief')}
+            hintTitle={t('settings.cardDefaultModeHint')}
             presets={state.presets}
             {...fieldProps}
             {...state.cardDefaultMode}
@@ -722,7 +740,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <ChoiceField
             id="settings-task-board-card-default-permission"
             label={t('new.permission')}
-            hint={t('settings.cardDefaultPermissionHint')}
+            hint={t('settings.cardDefaultPermissionHintBrief')}
+            hintTitle={t('settings.cardDefaultPermissionHint')}
             inheritLabel={t('exec.permission.default')}
             choices={TASK_PERMISSIONS.map(id => ({ value: id, label: t(`exec.permission.${id}` as TaskBoardKey) }))}
             {...fieldProps}
@@ -733,7 +752,8 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
           <ChoiceField
             id="settings-task-board-card-default-model"
             label={t('new.model')}
-            hint={t('settings.cardDefaultModelHint')}
+            hint={t('settings.cardDefaultModelHintBrief')}
+            hintTitle={t('settings.cardDefaultModelHint')}
             inheritLabel={t('exec.model.default')}
             choices={modelChoiceRows(defaultModels)}
             {...fieldProps}
@@ -774,17 +794,19 @@ export function TaskBoardSettingsCard(props: TaskBoardSettingsCardProps) {
             seat draws nothing. */}
         {renderSlot('task-board.settings.section', { dispatch })}
       </ul>
-      {/* Live power facts and the battery caveat: small print under the topic
-          cards, separated from them, instead of two body-size paragraphs. */}
+      {/* Live power facts as label/value rows, then the battery caveat: quiet
+          small print that closes the card instead of a run-on sentence. */}
       <div className={settingsCss.power}>
-        <p className={settingsCss.powerLine}>
-          {t('settings.powerStatus', {
-            platform: power?.platform ?? t('settings.powerUnknown'),
-            phase: power?.phase ?? t('settings.powerUnknown'),
-            running: String(power?.runningSessions ?? 0),
-            schedules: String(power?.armedSchedules ?? 0),
-          })}
-        </p>
+        <dl className={settingsCss.powerFacts}>
+          <dt className={settingsCss.powerTerm}>{t('settings.powerPlatform')}</dt>
+          <dd className={settingsCss.powerValue}>{power?.platform ?? t('settings.powerUnknown')}</dd>
+          <dt className={settingsCss.powerTerm}>{t('settings.powerPhase')}</dt>
+          <dd className={settingsCss.powerValue}>{power?.phase ?? t('settings.powerUnknown')}</dd>
+          <dt className={settingsCss.powerTerm}>{t('settings.powerRunning')}</dt>
+          <dd className={settingsCss.powerValue}>{String(power?.runningSessions ?? 0)}</dd>
+          <dt className={settingsCss.powerTerm}>{t('settings.powerSchedules')}</dt>
+          <dd className={settingsCss.powerValue}>{String(power?.armedSchedules ?? 0)}</dd>
+        </dl>
         <p className={settingsCss.powerLine}>{t('settings.powerBoundary')}</p>
         {power?.lastError !== undefined && (
           <p className={settingsCss.powerError}>{t('settings.powerError', { error: power.lastError })}</p>

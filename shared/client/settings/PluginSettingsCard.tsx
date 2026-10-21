@@ -41,6 +41,14 @@ export interface PluginSettingsCardProps<TKey extends string = string> {
   /** Optional rich header description rendered instead of the plain t(descriptionKey) text (the plain text stays as the tooltip). */
   descriptionNode?: ReactNode
   /**
+   * Locale key of the full sentence behind a shortened description: when
+   * present, the header's native `title` takes this text while the visible
+   * line keeps `descriptionKey`/`descriptionNode`, so a compact card can
+   * compress the sentence without keeping a second visible copy of it.
+   * Defaults to the description key.
+   */
+  descriptionTitleKey?: TKey
+  /**
    * Optional leading mark identifying the plugin. A card without one keeps the
    * plain official header shape, so the chrome stays a readable sibling of the
    * built-in PluginCard wherever a family plugin lands in the official bundle
@@ -94,9 +102,26 @@ export interface PluginSettingsCardProps<TKey extends string = string> {
   renderChildrenWhenNotExposed?: boolean
   /** Hide the 'not exposed' warning banner when the settings namespace is not exposed. */
   hideNotExposedNotice?: boolean
+  /**
+   * Compact chrome for a topic card rendered inside another card's body: a
+   * smaller title, a tighter header and body inset, and a one-line description
+   * whose full text stays on the header's own title. Defaults to the
+   * first-level chrome, which is unchanged.
+   */
+  density?: 'nested'
   /** The plugin's controls. */
   children: ReactNode
 }
+
+/** Length of the body's disclosure motion; it matches `--settings-card-motion` on the card root. */
+const BODY_MOTION_MS = 180
+
+/**
+ * Lifecycle of one card body. `collapsed` is the mounted-but-closed frame the
+ * enter leg starts from, `entering` and `closing` are the two moving legs, and
+ * `shown` is the settled open body, which releases its clipping box.
+ */
+type BodyPhase = 'hidden' | 'collapsed' | 'entering' | 'shown' | 'closing'
 
 /**
  * Render one plugin settings card.
@@ -106,12 +131,47 @@ export interface PluginSettingsCardProps<TKey extends string = string> {
 export function PluginSettingsCard<TKey extends string = string>(props: PluginSettingsCardProps<TKey>) {
   const [open, setOpen] = useState(props.defaultOpen ?? true)
   const { state, alwaysOpen } = props
+  const expanded = alwaysOpen === true || open
+  const [bodyPhase, setBodyPhase] = useState<BodyPhase>(expanded ? 'shown' : 'hidden')
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  // Enter and leave run the same pair: a body that should open is mounted
+  // closed for one frame so its transition has a state to leave, and a closing
+  // one stays mounted until its leg has run.
+  useLayoutEffect(() => {
+    if (expanded) {
+      if (bodyPhase === 'hidden') setBodyPhase('collapsed')
+      else if (bodyPhase === 'collapsed') {
+        const node = bodyRef.current
+        if (node !== null) void node.offsetHeight
+        setBodyPhase('entering')
+      } else if (bodyPhase === 'closing') setBodyPhase('entering')
+      return
+    }
+    if (bodyPhase === 'collapsed') setBodyPhase('hidden')
+    else if (bodyPhase === 'entering' || bodyPhase === 'shown') setBodyPhase('closing')
+  }, [expanded, bodyPhase])
+  useEffect(() => {
+    if (bodyPhase !== 'entering' && bodyPhase !== 'closing') return
+    const timer = setTimeout(() => {
+      setBodyPhase(bodyPhase === 'entering' ? 'shown' : 'hidden')
+    }, BODY_MOTION_MS)
+    return () => { clearTimeout(timer) }
+  }, [bodyPhase])
   if (!state.available) return null
   const title = props.t(props.titleKey)
   const description = props.t(props.descriptionKey)
+  const descriptionTitle = props.descriptionTitleKey === undefined ? description : props.t(props.descriptionTitleKey)
   const blocked = !state.dirty || state.invalid || state.saving
-  const expanded = alwaysOpen === true || open
-  const cardClass = expanded ? `${css.cardOpen} ${css.card}` : css.card
+  const baseClass = expanded ? `${css.cardOpen} ${css.card}` : css.card
+  const cardClass = props.density === 'nested' ? `${baseClass} ${css.cardNested}` : baseClass
+  /** The body region both legs share; a hidden phase renders nothing at all. */
+  const bodyRegion = (content: ReactNode) => bodyPhase === 'hidden'
+    ? null
+    : (
+      <div className={css.disclosure} data-state={bodyPhase} ref={bodyRef}>
+        <div className={css.body}>{content}</div>
+      </div>
+    )
   // With alwaysOpen the nav entry already provides the selection, so the
   // header is a static title row instead of a disclosure button.
   const header = alwaysOpen === true
@@ -120,7 +180,7 @@ export function PluginSettingsCard<TKey extends string = string>(props: PluginSe
         {props.icon !== undefined ? <span className={css.mark} aria-hidden="true">{props.icon}</span> : null}
         <span className={css.headText}>
           <span className={css.name} id={props.titleId} title={title}>{title}</span>
-          <span className={css.description} title={description}>{props.descriptionNode ?? description}</span>
+          <span className={css.description} title={descriptionTitle}>{props.descriptionNode ?? description}</span>
         </span>
         {props.headerAction !== undefined ? <span className={css.headerAction}>{props.headerAction}</span> : null}
         {state.dirty ? <span className={css.pending} title={props.t('settings.unsaved')}>{props.t('settings.unsaved')}</span> : null}
@@ -137,7 +197,7 @@ export function PluginSettingsCard<TKey extends string = string>(props: PluginSe
         {props.icon !== undefined ? <span className={css.mark} aria-hidden="true">{props.icon}</span> : null}
         <span className={css.headText}>
           <span className={css.name} id={props.titleId} title={title}>{title}</span>
-          <span className={css.description} title={description}>{props.descriptionNode ?? description}</span>
+          <span className={css.description} title={descriptionTitle}>{props.descriptionNode ?? description}</span>
         </span>
         {props.headerAction !== undefined ? <span className={css.headerAction}>{props.headerAction}</span> : null}
         {state.dirty ? <span className={css.pending} title={props.t('settings.unsaved')}>{props.t('settings.unsaved')}</span> : null}
@@ -165,25 +225,19 @@ export function PluginSettingsCard<TKey extends string = string>(props: PluginSe
     return (
       <li className={cardClass}>
         {header}
-        {expanded
-          ? (
-            <div className={css.body}>
-              {showNotice ? <p className={css.notExposed} role="status">{props.t('settings.notExposed')}</p> : null}
-            </div>
-          )
-          : null}
+        {bodyRegion(showNotice ? <p className={css.notExposed} role="status">{props.t('settings.notExposed')}</p> : null)}
       </li>
     )
   }
   // A header-only card has no body region at all: the divider would otherwise
   // sit above an empty box.
-  const bodyVisible = expanded && props.headerOnly !== true
+  const bodyVisible = props.headerOnly !== true
   return (
     <li className={cardClass}>
       {header}
       {bodyVisible
-        ? (
-          <div className={css.body}>
+        ? bodyRegion(
+          <>
             {!state.writable ? <p className={css.readOnly} role="status">{props.t('settings.readOnly')}</p> : null}
             {props.children}
             {props.hideFooter === true
@@ -215,7 +269,7 @@ export function PluginSettingsCard<TKey extends string = string>(props: PluginSe
               </button>
             </div>
               )}
-          </div>
+          </>,
         )
         : null}
     </li>
@@ -230,6 +284,12 @@ export interface FieldProps {
   label: string
   /** One-line explanation rendered under the control. */
   hint: string
+  /**
+   * Full sentence behind the visible hint, exposed as the paragraph's native
+   * `title` so a card can shorten the line without losing the text. Omitted:
+   * the paragraph carries no title attribute at all.
+   */
+  hintTitle?: string
   /** Draft text this control renders. */
   text: string
   /** True when saving would leave a user-layer entry for this field. */
@@ -288,7 +348,7 @@ export function ValueField(props: FieldProps & {
         disabled={props.disabled}
         onChange={(event) => { props.onEdit(event.target.value) }}
       />
-      <p className={props.invalid ? css.invalid : css.hint}>
+      <p className={props.invalid ? css.invalid : css.hint} title={props.hintTitle}>
         {props.invalid ? props.invalidLabel : props.hint}
       </p>
     </div>
@@ -540,7 +600,7 @@ export function BooleanField(props: FieldProps & {
         invalid={props.invalid}
         onEdit={props.onEdit}
       />
-      <p className={css.hint}>{props.hint}</p>
+      <p className={css.hint} title={props.hintTitle}>{props.hint}</p>
     </div>
   )
 }
@@ -580,7 +640,7 @@ export function ChoiceField(props: FieldProps & {
         invalid={props.invalid}
         onEdit={props.onEdit}
       />
-      <p className={props.invalid ? css.invalid : css.hint}>
+      <p className={props.invalid ? css.invalid : css.hint} title={props.hintTitle}>
         {props.invalid ? props.invalidLabel : props.hint}
       </p>
     </div>
