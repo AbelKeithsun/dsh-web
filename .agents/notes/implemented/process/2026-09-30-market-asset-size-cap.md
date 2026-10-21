@@ -37,6 +37,22 @@ README/README.zh/skin.json numbers carried along), the round re-landed the pin a
 `493f81c7` and the lane went green on commit `122b3b46` (run 36718315143).
 Nothing under `market/dist` exceeds 26,214,399 bytes.
 
+### The gate shipped on 2026-10-21
+
+The 2026-10-21 intake round landed dsh-skins#81 (diy-journal), a skin whose source
+tree is 102,877,376 bytes, so its archive would be 98.1 MiB: four times the
+ceiling, and too large for any re-bake to fix by re-encoding. Nothing downstream
+consumes that archive — the installer builds its download plan from the manifest
+`files` list, and no source under `market/` references `.zip` — so a skin can
+lose its archive without losing its install. `scripts/lib/market-zip.cjs` now
+owns the ceiling as `MAX_SERVED_ASSET_BYTES` and hands out archives only through
+`zipSkinArchive()`, which returns null above it;
+[market-build](../../../../scripts/market-build) then skips that skin's zip,
+removes a stale one, and logs `ships without a zip`. `--check` additionally
+fails when any file already committed under `market/dist` exceeds the ceiling,
+which the zip comparison cannot catch on its own: without the vendored shell it
+skips every zip path.
+
 ## Alternatives considered
 
 - **Restore the 16,549,139-byte bake the same pull request had produced before
@@ -50,7 +66,9 @@ Nothing under `market/dist` exceeds 26,214,399 bytes.
 - **Add a byte-size cap to market-build and let it skip an oversized skin.**
   Rejected for this round. Silently dropping a merged catalog item is a product
   decision, and the guard belongs in a change of its own with its own tests
-  rather than in the middle of a landing repair.
+  rather than in the middle of a landing repair. That separate change arrived on
+  2026-10-21 for a skin no re-bake can fit under the ceiling; the reasons for
+  keeping it out of a landing repair still hold.
 
 ## Consequences
 
@@ -61,8 +79,11 @@ Nothing under `market/dist` exceeds 26,214,399 bytes.
   carrying large media has to clear the lane's per-asset ceiling as part of the
   merge gate rather than after it. The size of the shipped zip, not the size of
   the source file, is what the ceiling applies to.
-- `market-build` still has no byte-size gate; the next round should consider
-  adding one so this class of failure surfaces before the pin moves.
+- `market-build` carries the byte-size gate now (2026-10-21). A skin above the
+  ceiling ships without its archive instead of failing the deploy, and
+  `market:check` refuses a committed tree that carries an oversized file.
+  diy-journal is the first catalog skin without a one-archive download; the
+  shipped tree still serves every file it declares.
 - [Workshop deploys from dev pushes](2026-08-25-workshop-deploys-from-dev.md)
   owns the lane's triggers and gates; this note records the constraint the lane
   enforces from the platform side.

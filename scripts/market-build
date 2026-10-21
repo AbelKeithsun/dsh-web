@@ -44,7 +44,7 @@ const path = require('node:path')
 const { createRequire } = require('node:module')
 const { pathToFileURL } = require('node:url')
 const crypto = require('node:crypto')
-const { zipStore } = require('./lib/market-zip.cjs')
+const { zipStore, zipSkinArchive, MAX_SERVED_ASSET_BYTES } = require('./lib/market-zip.cjs')
 
 const ROOT = path.resolve(__dirname, '..')
 /** The lockfile naming which submodule carries each market input. */
@@ -580,8 +580,16 @@ function emit(outDir, files, binary, skins, pets, plugins, presets, picks, trans
       data: fs.readFileSync(path.join(dir, rel)),
     }))
     const zipDest = path.join(outDir, 'assets', 'skins', name + '.zip')
+    const archive = zipSkinArchive(entries)
+    if (!archive) {
+      // Serving this archive would break the whole deploy, not just this skin:
+      // the Workers upload rejects any single asset above the cap.
+      fs.rmSync(zipDest, { force: true })
+      console.log('market-build: ' + name + ' ships without a zip (over the ' + MAX_SERVED_ASSET_BYTES / 1024 / 1024 + ' MiB served-asset cap)')
+      continue
+    }
     fs.mkdirSync(path.dirname(zipDest), { recursive: true })
-    fs.writeFileSync(zipDest, zipStore(entries))
+    fs.writeFileSync(zipDest, archive)
   }
 
   // Try-on CSS uses the exact Skin Center safety transform. In particular it
@@ -818,6 +826,14 @@ async function main() {
     fs.rmSync(tmp, { recursive: true, force: true })
     if (diffs.length) {
       fail(`market/dist stale — run scripts/market-build and commit: ${diffs.join(', ')}`)
+    }
+    // The zip comparison above is skipped without the vendored shell, so the cap
+    // is enforced against the whole committed tree instead: one oversized file
+    // makes the Workers upload reject the deploy for every asset it carries.
+    const oversized = walkFiles(DIST_DIR)
+      .filter((rel) => fs.statSync(path.join(DIST_DIR, rel)).size > MAX_SERVED_ASSET_BYTES)
+    if (oversized.length) {
+      fail(`market/dist carries files above the ${MAX_SERVED_ASSET_BYTES / 1024 / 1024} MiB served-asset cap that Workers rejects — rebuild and commit: ${oversized.join(', ')}`)
     }
     console.log('market-build: dist up to date (' + distFiles.length + ' files)')
     return

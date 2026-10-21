@@ -10,7 +10,7 @@ import { crc32 } from 'node:zlib'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 
-import { zipStore } from './lib/market-zip.cjs'
+import { zipStore, zipSkinArchive, MAX_SERVED_ASSET_BYTES } from './lib/market-zip.cjs'
 
 // --- Minimal ZIP parser for structural verification ---
 
@@ -213,6 +213,27 @@ test('single empty file ZIP is valid', () => {
   const cde = parseCDE(zip, eocd.cdOffset)
   assert.equal(cde.compressedSize, 0)
   assert.equal(cde.uncompressedSize, 0)
+})
+
+test('a skin archive under the served-asset cap is produced', () => {
+  const entries = [
+    { name: 'demo/skin.json', data: Buffer.from('{"id":"demo"}') },
+    { name: 'demo/preview/light.jpg', data: Buffer.alloc(64, 7) },
+  ]
+  const archive = zipSkinArchive(entries)
+  assert.ok(Buffer.isBuffer(archive), 'archive is produced when it fits')
+  const eocd = parseEOCD(archive)
+  assert.equal(eocd.totalRecords, 2)
+})
+
+test('a skin archive above the served-asset cap is not produced', () => {
+  const entries = [{ name: 'demo/assets/heavy.bin', data: Buffer.alloc(4096, 1) }]
+  assert.equal(zipSkinArchive(entries, 2048), null, 'over-cap archive is skipped instead of breaking the deploy')
+  assert.ok(Buffer.isBuffer(zipSkinArchive(entries, 8192)), 'the same entries fit under a larger cap')
+})
+
+test('the served-asset cap is the 25 MiB Workers per-file limit', () => {
+  assert.equal(MAX_SERVED_ASSET_BYTES, 25 * 1024 * 1024)
 })
 
 test('large file roundtrip (64 KB)', () => {

@@ -80,4 +80,24 @@ function zipStore(files) {
   return Buffer.concat([...chunks, ...central, eocd])
 }
 
-module.exports = { zipStore }
+/**
+ * Largest single file the market can serve: Cloudflare Workers static assets
+ * reject any asset above 25 MiB, and every skin archive rides that same tree.
+ * rainy-night was re-baked to 16.97 MB and shuimo-danqing was kept at 21.03 MiB
+ * to stay under it.
+ */
+const MAX_SERVED_ASSET_BYTES = 25 * 1024 * 1024
+
+/**
+ * Store-method archive for one skin, or null when the archive would exceed the
+ * served-asset cap. Null is not a failure: the installer reads the manifest file
+ * list and downloads the skin file by file, and every one of those files stays
+ * under the per-file cap, so the skin still installs — it just ships without a
+ * one-archive download.
+ */
+function zipSkinArchive(entries, maxBytes = MAX_SERVED_ASSET_BYTES) {
+  const bytes = zipStore(entries)
+  return bytes.length > maxBytes ? null : bytes
+}
+
+module.exports = { zipStore, zipSkinArchive, MAX_SERVED_ASSET_BYTES }
