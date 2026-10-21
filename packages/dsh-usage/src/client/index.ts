@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { createUsageStore, type UsageStoreInstance } from './usage-store.ts'
 import { UsageSectionCard, type UsageSectionFace, type UsageSettings } from './UsageSectionCard.tsx'
-import { mountUsageFootCard, openUsageSettings } from './foot-card-mount.tsx'
+import { mountUsageFootCard, openUsageSettings, settingsShellStore } from './foot-card-mount.tsx'
 import { NS, en, zh, t } from './locales.ts'
 import { createServedEntryForm } from './settings-entry-form.ts'
 import type { UsageDayResponse, UsageDayView, UsageOverviewView } from '../core/types.ts'
@@ -67,6 +67,9 @@ const USAGE_ENTRY_IDS: readonly string[] = [AGGREGATE_ENTRY_ID, 'usage', USAGE_S
 
 /** First-level nav position: directly below the Workshop section (order 150). */
 const SECTION_ORDER = 151
+
+/** The section's nav row id — what the shell's store selects when the card opens. */
+const USAGE_SECTION_ID = 'dsh-usage'
 
 /** Required services. */
 export const inject = ['slots', 'locale', 'connection', 'configForms', 'remote']
@@ -174,7 +177,13 @@ export function apply(ctx: ClientContext): void {
     store,
     poll,
     settings: settingsForm,
-    onOpen: () => { openUsageSettings(() => t('usage.title')) },
+    onOpen: () => {
+      openUsageSettings({
+        id: USAGE_SECTION_ID,
+        label: () => t('usage.title'),
+        store: settingsShellStore(ctx.slots),
+      })
+    },
     locale: ctx.locale,
   })
   ctx.effect(() => () => {
@@ -189,7 +198,7 @@ export function apply(ctx: ClientContext): void {
     try {
       const unregister = ctx.slots.register({
         name: 'settings.section',
-        id: 'dsh-usage',
+        id: USAGE_SECTION_ID,
         order: SECTION_ORDER,
         label: () => ctx.locale.bind(NS)('usage.title'),
         locale: NS,
