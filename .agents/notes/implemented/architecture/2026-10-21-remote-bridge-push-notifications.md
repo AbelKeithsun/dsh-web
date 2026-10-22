@@ -18,6 +18,7 @@ The obvious-looking fix is to let the notification carry the fact, so a phone ne
 - Notification work never touches the frame path. `notify` returns before anything is sent, starts delivery on its own microtask, swallows and logs every failure, and the APNs client resolves `{ok:false, status, reason}` instead of rejecting. A broken APNs connection cannot delay, reorder or suppress a frame that a connected phone is waiting for.
 - `src/host/apns.ts` is `node:http2` plus `node:crypto`: an ES256 provider token (`{alg,kid}` over `{iss,iat}`, raw r||s), `apns-topic` from the registration's bundle, `apns-push-type: alert`, cached for 45 minutes and abandoned after a 10 s timeout. No dependency was added.
 - The capability gates the write only. Whether a key is configured decides whether anything is ever sent, and the wire cannot express that difference; the protocol says so explicitly rather than leaving a client to infer it from silence.
+- The stream that makes a `turn/end` reach this channel while no client is attached is [the standing watchers note](2026-10-22-remote-bridge-standing-watchers.md)'s decision; this channel owns what may be delivered once it does.
 
 ## The payload is a lock-screen budget
 

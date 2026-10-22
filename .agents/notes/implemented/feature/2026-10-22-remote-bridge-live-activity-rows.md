@@ -19,6 +19,7 @@ The obvious-looking fix — a key that lists session ids and lets the phone read
 - `name` is the host's own title after `normalizeActivityRowName`, the one place this rule exists, and it applies the same test the App's `SessionActivityDisplayName` applies: a trailing bracket group whose body is a path or nothing comes off, brackets included, until the tail is no longer one; `Ship (main)` is part of the name and stays. A tail group the host never closed is cut when its body holds a path (`Deck (/Users/zcl/code/x` would otherwise put half a path on the glass) and left alone when it does not (`Fix it (beta`). What is left is whitespace-collapsed, trimmed of the separators and dangling brackets its tail may hang on, and cut to the row name budget.
 - A session the host never titled produces no row. §30.2 makes all three keys non-empty and §30.4 drops a nameless row on the phone, so the bridge leaves it out and the card falls back to the single row the phone synthesizes from the single-session keys. The key itself still goes out, empty.
 - The §29.4 dedupe key now includes the rows, so a renamed, reordered or dropped row is something new to say, while appending a path to a title is not: the normalized name did not change.
+- The stream that produces the `turn/end` this card ends on while no client is attached is [the standing watchers note](../architecture/2026-10-22-remote-bridge-standing-watchers.md)'s decision.
 
 ## Testing
 

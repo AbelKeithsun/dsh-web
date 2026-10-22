@@ -18,6 +18,7 @@ Status: implemented
 - 推送的工作从不碰帧路径。`notify` 在任何发送之前就返回，投递在自己的 microtask 上开始，吞掉并记录每一次失败，APNs 客户端本身也是 resolve `{ok:false, status, reason}` 而不是 reject。一条坏掉的 APNs 连接无法延迟、打乱或吞掉在线手机正在等的那一帧。
 - `src/host/apns.ts` 只有 `node:http2` 与 `node:crypto`：ES256 提供方令牌（`{alg,kid}` 对 `{iss,iat}`，raw r||s 签名）、`apns-topic` 取登记里的 bundle、`apns-push-type: alert`，令牌缓存 45 分钟、单次投递 10 秒超时即放弃。没有新增任何依赖。
 - 能力名只门控这次写。究竟有没有配密钥决定是否会真的发出，而这个差别在线路上表达不出来；协议把这一点写明，而不是留给客户端从沉默里去猜。
+- 让 `turn/end` 在没有任何客户端连着时也能到达本通道的那条流，是[常驻观察者记录](2026-10-22-remote-bridge-standing-watchers.md)的决定；本通道拥有的是它到达之后可以投递什么。
 
 ## 载荷是一份锁屏预算
 
