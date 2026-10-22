@@ -12,6 +12,7 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ConfigForm } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { BooleanField, PluginSettingsCard } from './PluginSettingsCard.tsx'
+import { SquadMark } from './SquadMark.tsx'
 import css from './settings-card.module.css'
 import { CardForm, booleanField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 
@@ -92,6 +93,7 @@ export function AgentsSettingsCard(props: AgentsSettingsCardProps) {
       t={t}
       titleKey="settings.title"
       descriptionKey="settings.description"
+      icon={<SquadMark />}
       defaultOpen={false}
       state={state}
       renderChildrenWhenNotExposed

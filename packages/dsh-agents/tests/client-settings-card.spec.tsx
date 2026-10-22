@@ -70,6 +70,25 @@ function renderCard(state: AgentsSettingsCardState) {
   return { edit, resetField, view }
 }
 
+/** The decorative mark the card header leads with, in the rendered card. */
+function cardMark(container: ParentNode): Element {
+  return must(container, 'li > button[aria-expanded] > span[aria-hidden="true"]')
+}
+
+/** The endpoints of every absolute M/L segment of one edge path. */
+function parseLinks(d: string): Array<[[number, number], [number, number]]> {
+  const segment = /M\s*([\d.]+)\s+([\d.]+)\s+L\s*([\d.]+)\s+([\d.]+)/g
+  return Array.from(d.matchAll(segment)).map(match => {
+    const [x1, y1, x2, y2] = match.slice(1, 5).map(Number) as [number, number, number, number]
+    return [[x1, y1], [x2, y2]]
+  })
+}
+
+/** Whether a point sits on (or inside) one node's disc, within a half-pixel of slack. */
+function onFace(node: { x: number; y: number; r: number }, point: [number, number]): boolean {
+  return Math.hypot(point[0] - node.x, point[1] - node.y) <= node.r + 0.5
+}
+
 /** Open one field's popup and return the option elements it renders. */
 function openOptions(id: string): HTMLElement[] {
   const trigger = document.getElementById(id)
@@ -147,6 +166,52 @@ describe('AgentsSettingsCard', () => {
     expect(optionLabels(ANNOUNCE_FIELD_ID)).toEqual(['settings.inherit', 'settings.on', 'settings.off'])
     expect(document.getElementById('settings-agents-enabled'), 'editable master switch').toBeNull()
     expect(view.container.textContent).toContain('settings.enabledNote')
+  })
+
+it('operator sees the card lead with the squad mark beside the family cards', () => {
+    // Given the card rendered with a fixed snapshot, When the operator reads its
+    // header, Then the plugin's own 18px mark leads the title, every shape takes
+    // the surrounding text color, and the mark stays out of the accessibility
+    // tree so the card is announced by its title alone.
+    const { view } = renderCard(baseState())
+    const mark = cardMark(view.container)
+    const glyph = mark.firstElementChild
+    expect(glyph?.tagName.toLowerCase(), 'header mark').toBe('svg')
+    expect(glyph?.getAttribute('viewBox'), 'mark canvas').toBe('0 0 18 18')
+    expect(glyph?.getAttribute('fill'), 'mark canvas').toBe('none')
+    const painted = Array.from(glyph?.querySelectorAll('circle, path') ?? [])
+      .flatMap(shape => [shape.getAttribute('fill'), shape.getAttribute('stroke')])
+      .filter(color => color !== null)
+    expect(painted.length, 'painted shapes').toBeGreaterThan(0)
+    expect(painted.every(color => color === 'currentColor'), 'mark shape colors').toBe(true)
+    expect(mark.nextElementSibling?.textContent).toContain('settings.title')
+  })
+
+  it('operator gets a squad mark whose three nodes stay linked inside the tile', () => {
+    // Given the card's mark as rendered, When the operator reads its geometry,
+    // Then it draws exactly three member nodes, every edge ends on a node face
+    // so the nodes read as one connected squad instead of loose dots, and no
+    // shape is clipped by the 18x18 tile.
+    const glyph = cardMark(renderCard(baseState()).view.container).firstElementChild!
+    const nodes = Array.from(glyph.querySelectorAll('circle')).map(node => ({
+      x: Number(node.getAttribute('cx')),
+      y: Number(node.getAttribute('cy')),
+      r: Number(node.getAttribute('r')),
+    }))
+    expect(nodes, 'member nodes').toHaveLength(3)
+    const links = Array.from(glyph.querySelectorAll('path'))
+      .flatMap(edge => parseLinks(edge.getAttribute('d') ?? ''))
+    expect(links, 'node links').toHaveLength(3)
+    for (const [from, to] of links) {
+      expect(nodes.some(node => onFace(node, from)), 'link start on a node face').toBe(true)
+      expect(nodes.some(node => onFace(node, to)), 'link end on a node face').toBe(true)
+    }
+    const xs = nodes.flatMap(node => [node.x - node.r, node.x + node.r])
+    const ys = nodes.flatMap(node => [node.y - node.r, node.y + node.r])
+    expect(Math.min(...xs), 'mark left edge').toBeGreaterThan(0)
+    expect(Math.max(...xs), 'mark right edge').toBeLessThan(18)
+    expect(Math.min(...ys), 'mark top edge').toBeGreaterThan(0)
+    expect(Math.max(...ys), 'mark bottom edge').toBeLessThan(18)
   })
 
   it('operator turns the announcement on from the card', () => {
