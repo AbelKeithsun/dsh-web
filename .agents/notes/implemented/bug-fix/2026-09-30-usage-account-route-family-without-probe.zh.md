@@ -40,6 +40,6 @@ DEEPSEEK 适配器声明 `familyOnlyIds: ['deepseek-account']`，`isDeepSeekProv
 
 - `packages/dsh-usage/tests/adapters.spec.ts`：账号通道归属家族，但没有任何适配器为探测解析它；family-only id 不与探测 id 冲突、也不与其他 family-only id 冲突；两条 key 路由保持可探测行为。
 - `packages/dsh-usage/tests/usage-service.spec.ts`：按报告环境端到端——在在线账号通道上花费的会话不发任何请求，其行不带余额，其调用被计价且消费非零；两条通道同时在线时概览保留两行，key 路由照常探测，账号通道仍不被探测。
-- `packages/dsh-usage/tests/voucher.spec.ts`：银行在 key 路由旁也从账号通道铸币，且仍然忽略无关提供方。
+- `packages/dsh-usage/tests/voucher.spec.ts`：银行在 key 路由旁也从账号通道铸币；其余 provider 如今同样铸造，只有消费估算仍留在有价家族（口径见 [全 provider 铸造笔记](../feature/2026-10-22-usage-bank-mints-every-provider.zh.md)）。
 - 服务层测试正是被否决方案的护栏：把 `deepseek-account` 移进 `ids` 会让它们失败，因此「顺手把 id 加进去」这条误归因路径无法被后来的编辑重新引入。
 - `pnpm --filter @linxin666/dsh-usage test`：11 个文件，151 个测试；`pnpm typecheck` 通过。

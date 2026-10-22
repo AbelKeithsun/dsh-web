@@ -160,10 +160,10 @@ Monitor token consumption, provider balances, and subscription quotas under "Set
 
 - **Usage Breakdown**: Track daily input, output, and cache token metrics segmented by provider and model, alongside 30-day expenditure trends; compatible providers display real-time balances, and DeepSeek official routes estimate off-peak pricing and billing details.
 - **Subscription Tracking**: Monitor percentage allowances and reset schedules for personal plans including Kimi, GLM, MiniMax, OpenCode Go, and Codex / ChatGPT.
-- **Token Bank**: Automatically mint 1 Whale Yuan for every token processed via DeepSeek official routes, tracked as collectible Whale Vouchers with sharing capabilities.
+- **Token Bank**: Mint 1 Whale Yuan for every 1,000,000 tokens across every provider, tracked as collectible Whale Vouchers with sharing capabilities.
 - **Pet Integration**: With the desktop pet plugin installed, floating desktop companions provide conversational bubble notifications displaying current quota balances and daily consumption.
 
-Tracking starts upon initial plugin activation without backfilling historical sessions; vouchers cover DeepSeek official usage within configured ledger retention windows. See [dsh-usage README](packages/dsh-usage/README.md) for supported providers and limitations.
+Tracking starts upon initial plugin activation without backfilling historical sessions; vouchers cover every provider's tokens within configured ledger retention windows (the spend line still comes only from the observed DeepSeek official balance). See [dsh-usage README](packages/dsh-usage/README.md) for supported providers and limitations.
 
 ![DeepSeek Token Usage Tracker & Token Bank — API expenditure tracking and bill estimation](docs/screenshots/35-usage-token-bank.webp)
 

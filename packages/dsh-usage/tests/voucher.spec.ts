@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { EXTRA_MINT_ROUTE_IDS, faceValue, formatDay, formatDenomination, mintsWhaleYuan, voucherData, voucherSerial, TOKENS_PER_WHALE_YUAN } from '../src/client/voucher.ts'
+import { faceValue, formatDay, formatDenomination, voucherData, voucherSerial, TOKENS_PER_WHALE_YUAN } from '../src/client/voucher.ts'
 import { adapterFor } from '../src/core/adapters.ts'
 import { emptyTotals, type UsageProviderSummary, type UsageWindowSummary } from '../src/core/types.ts'
 
 /**
- * The voucher's pure face: mint family (DeepSeek official + MiMo) summation
- * over a usage window, the 1,000,000:1 whale-yuan exchange, the banknote
- * denomination formatting, the deterministic serial, and the observed-since
- * day. The canvas draw itself is composition, verified visually.
+ * The voucher's pure face: every-provider summation over a usage window with
+ * the spend estimate still locked to the priced family, the 1,000,000:1
+ * whale-yuan exchange, the banknote denomination formatting, the deterministic
+ * serial, and the observed-since day. The canvas draw itself is composition,
+ * verified visually.
  */
 
 function row(provider: string, inputTokens: number, calls = 1, cost = 0): UsageProviderSummary {
@@ -19,87 +20,89 @@ function windowOf(providers: UsageProviderSummary[]): UsageWindowSummary {
 }
 
 describe('voucherData', () => {
-  it('returns undefined without a window (older host) or without mint-family usage', () => {
+  it('user gets no note for an absent window or a ledger without usage', () => {
+    // Given no window at all, an empty window, and a window whose only row is zero
+    // When the bank asks for the facts to stamp
+    // Then nothing mints, because a zero-token note would be a zero-denomination note
     expect(voucherData(undefined)).toBeUndefined()
-    expect(voucherData(windowOf([row('kimi-coding', 100)]))).toBeUndefined()
     expect(voucherData(windowOf([]))).toBeUndefined()
+    expect(voucherData(windowOf([row('kimi-coding', 0)]))).toBeUndefined()
   })
 
-  it('sums the whole official family across route aliases and ignores other providers', () => {
+  it('user sees the whole official family fold into one note across its route aliases', () => {
+    // Given the catalog alias and the live route of the priced family
+    // When the bank mints
+    // Then both rows sum into one face value, one call count and one spend estimate
     const data = voucherData(windowOf([
       row('deepseek', 100_000, 3, 1.25),
       row('deepseek-official', 50_000, 2, 0.75),
-      row('kimi-coding', 999_999, 40, 0),
     ]))
     expect(data).toMatchObject({ tokens: 150_000, calls: 5, cost: 2, from: '2025-12-01', to: '2026-01-01' })
   })
 
+  // Minting used to be the official family plus a hardcoded 'mimo' route id, so
+  // a profile whose usage sat on subscription routes saw an empty bank.
+  it('user minting from a subscription-only profile gets a note from its own tokens', () => {
+    // Given a window whose only usage sits on coding-subscription routes
+    // When the bank mints
+    // Then the tokens and calls of every provider sum into the face value
+    const data = voucherData(windowOf([
+      row('kimi-coding', 4_000_000, 30),
+      row('zai-coding', 2_000_000, 12),
+      row('minimax', 1_000_000, 5),
+    ]))
+    // And none of the unpriced rows adds anything to the spend estimate
+    expect(data).toMatchObject({ tokens: 7_000_000, calls: 47, cost: 0 })
+  })
+
+  it('user sees a non-official provider contribute tokens and calls but never spend', () => {
+    // Given the official family row beside relay and subscription rows that
+    // each carry a non-zero cost, which a priced host would never stamp on them
+    const data = voucherData(windowOf([
+      row('deepseek-official', 500_000, 1, 0.1),
+      row('mimo', 3_000_000, 9, 9.99),
+      row('kimi-coding', 500_000, 3, 4.44),
+    ]))
+    // When the bank mints
+    // Then tokens and calls merge across every provider while cost stays the priced family's
+    expect(data).toMatchObject({ tokens: 4_000_000, calls: 13, cost: 0.1 })
+  })
+
   // #1772: the account route minted nowhere, so a user signed in to a DeepSeek
   // account saw a permanently empty bank while spending against it.
-  it('user on the signed-in account route sees their tokens mint alongside the key routes', () => {
-    // Given a usage window holding the account route, an official key route,
-    // and an unrelated provider
+  it('user on the signed-in account route sees their tokens mint alongside the key route', () => {
+    // Given a usage window holding the account route and an official key route
     const data = voucherData(windowOf([
       row('deepseek-account', 12_000_000, 40, 3.5),
       row('deepseek-official', 50_000, 2, 0.75),
-      row('kimi-coding', 999_999, 40, 0),
     ]))
-    // When the bank mints from the family
-    // Then the account route counts toward the face value, spend and calls,
-    // and the unrelated provider still never mints
+    // When the bank mints
+    // Then the account route counts toward the face value, spend and calls
     expect(data).toMatchObject({ tokens: 12_050_000, calls: 42, cost: 4.25 })
   })
 
-  // #1831: the MiMo gateway route minted nowhere, so a profile whose default
-  // route is MiMo (its largest provider in the ledger) saw an empty bank.
-  it('user on the MiMo gateway route sees their tokens mint beside the official family', () => {
-    // Given a usage window holding the MiMo route, one official route, and an
-    // unrelated provider; the MiMo row also carries a non-zero cost, which a
-    // priced host would never stamp on it (MiMo has no price book) and which
-    // the bank must therefore still refuse to fold into the spend estimate
-    const data = voucherData(windowOf([
-      row('mimo', 8_000_000, 24, 9.99),
-      row('deepseek-official', 50_000, 2, 0.75),
-      row('kimi-coding', 999_999, 40, 0),
-    ]))
-    // When the bank mints from the mint family
-    // Then MiMo tokens and calls count toward the face value, the spend line
-    // stays the priced family's, and the unrelated provider still never mints
-    expect(data).toMatchObject({ tokens: 8_050_000, calls: 26, cost: 0.75 })
-  })
-
-  it('counts cache tokens as minted whale yuan', () => {
+  it('user sees cache tokens count as minted whale yuan', () => {
+    // Given a row whose tokens sit entirely in the cache buckets
     const data = voucherData(windowOf([{
       provider: 'deepseek',
       totals: { ...emptyTotals(), inputTokens: 10, outputTokens: 20, cacheReadTokens: 30, cacheWriteTokens: 40, calls: 1 },
       models: [],
     }]))
+    // When the bank mints
+    // Then every bucket joins the face value
     expect(data?.tokens).toBe(100)
   })
 })
 
-describe('mintsWhaleYuan', () => {
-  // #1772 split: the mint predicate widens the bank only; every credential and
-  // probe decision keeps reading adapterFor(), which must stay blind to the
-  // whitelist so the two can never widen together.
-  it('user sees the MiMo route mint beside the official family and no unrelated route mint', () => {
-    // Given the mint route whitelist
-    // When the mint predicate is asked about each provider route
-    // Then the whitelist routes and the whole official family mint, and no other route does
-    expect(EXTRA_MINT_ROUTE_IDS).toEqual(['mimo'])
-    expect(mintsWhaleYuan('mimo')).toBe(true)
-    expect(mintsWhaleYuan('deepseek')).toBe(true)
-    expect(mintsWhaleYuan('deepseek-official')).toBe(true)
-    expect(mintsWhaleYuan('deepseek-account')).toBe(true)
-    expect(mintsWhaleYuan('kimi-coding')).toBe(false)
-    expect(mintsWhaleYuan('unknown-provider')).toBe(false)
-  })
-
-  it('user keeps a whitelisted mint route out of the credential and balance-probe paths', () => {
-    // Given every route id on the mint whitelist
-    // When the adapter table is asked which of them it can probe
-    // Then no adapter claims any of them, so minting reaches no credential or balance endpoint
-    for (const id of EXTRA_MINT_ROUTE_IDS) expect(adapterFor(id), id).toBeUndefined()
+// #1772 split: minting widens the bank only, so every credential and probe
+// decision keeps reading adapterFor(), which stays blind to the ledger.
+describe('minting is an accounting decision, not a probe decision', () => {
+  it('user mints a gateway route without granting it a credential or balance probe', () => {
+    // Given the relay route whose ledger rows now mint
+    // When the adapter table is asked what it can probe
+    // Then no adapter claims the route, so minting reaches no credential or balance endpoint
+    expect(adapterFor('mimo')).toBeUndefined()
+    expect(voucherData(windowOf([row('mimo', 1_000_000, 2)]))?.tokens).toBe(1_000_000)
   })
 })
 

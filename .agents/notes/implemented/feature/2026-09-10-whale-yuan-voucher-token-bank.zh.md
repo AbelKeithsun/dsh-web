@@ -12,13 +12,13 @@ Status: implemented
 
 ### 数据路径
 
-overview 文档新增可选的 `usage.all` 窗口：整个保留台账（`retainDays` 内的每一天，含今日）按 provider 聚合，复用趋势图同一个 `summarizeDays` 折叠。该字段在 wire 类型上可选，旧宿主文档只让页签退回 30 天 `range` 窗口，不会坏。卡片把 DeepSeek 官方家族行求和（`deepseek` 目录别名与运行时路由 `deepseek-official`，与消费估算同一家族判定）；其他 provider 永不铸造。家族 token 为零时渲染空状态，而不是一张零面额钞票。
+overview 文档新增可选的 `usage.all` 窗口：整个保留台账（`retainDays` 内的每一天，含今日）按 provider 聚合，复用趋势图同一个 `summarizeDays` 折叠。该字段在 wire 类型上可选，旧宿主文档只让页签退回 30 天 `range` 窗口，不会坏。卡片把台账内所有 provider 的行求和，DeepSeek 官方家族、订阅路由与中转路由一并计入 token 与调用次数（口径见 [全 provider 铸造](2026-10-22-usage-bank-mints-every-provider.zh.md)），消费估算仍只取官方家族行。台账 token 为零时渲染空状态，而不是一张零面额钞票。
 
 第二个可选字段 `usage.observedSpend` 承载该家族的真实人民币花费：宿主跨轮询周期观测官方余额序列（`/user/balance` 的 CNY 行），把每一次下降累计为消费，上涨是充值、永不计费。观测是家族级的（路由别名可能指向同一账户，观测跟随当轮最大的余额），随 provider-snapshots 文件持久化、加载时严格复苏；只有在第一次观测到下降后字段才出现，此前卡片展示折叠时刻估算。
 
 ### 票面绘制
 
-钞票图（`assets/jingyuan-note.jpg`，1400x714，以生成的 base64 data URL 模块内联进 bundle）画上 canvas 后，绘制逻辑在「鲸元券」大字下方的空白带印三行与语言无关的文字：面额——按 1000 tokens 兑 1 鲸元的防膨胀汇率折算的铸造鲸元数，最小面额 1（完整数字加千分位，自动缩小到避开右侧红印）、`whale yuan` 小字，以及印泥红的序列号行 `NO.<面额 mod 1e9 补零> <from> - <to>`。canvas 上没有中文也没有词典：分享出去的图不需要翻译，i18n 审计也不进入导出路径。全部几何按钞票图尺寸等比计算，换一张分辨率重生成资产后自动回流。
+钞票图（`assets/jingyuan-note.jpg`，1400x714，以生成的 base64 data URL 模块内联进 bundle）画上 canvas 后，绘制逻辑在「鲸元券」大字下方的空白带印三行与语言无关的文字：面额——按 1,000,000 tokens 兑 1 鲸元的防膨胀汇率折算的铸造鲸元数，最小面额 1（完整数字加千分位，自动缩小到避开右侧红印）、`whale yuan` 小字，以及印泥红的序列号行 `NO.<面额 mod 1e9 补零> <from> - <to>`。canvas 上没有中文也没有词典：分享出去的图不需要翻译，i18n 审计也不进入导出路径。全部几何按钞票图尺寸等比计算，换一张分辨率重生成资产后自动回流。
 
 ### 分享
 
@@ -41,7 +41,7 @@ overview 文档新增可选的 `usage.all` 窗口：整个保留台账（`retain
 
 ## Testing
 
-- `tests/voucher.spec.ts`：家族求和（别名合并、其他 provider 忽略、缓存 token 计入）、1000:1 折算与最小面额、面额格式化、确定性序列号、观测起始日格式化。
+- `tests/voucher.spec.ts`：全 provider 求和（官方别名合并、非官方行计入 token 与调用、消费只取官方家族、缓存 token 计入）、1,000,000:1 折算与最小面额、面额格式化、确定性序列号、观测起始日格式化。
 - `tests/section-card.spec.tsx`：Token 银行空状态、来自 `usage.all` 的铸造行、旧宿主无聚合时的 `range` 回落、实测优先于估算的消费行；`navigator.canShare` 缺失时分享按钮不出现。
 - `tests/usage-service.spec.ts`：全台账聚合越过 30 条趋势窗口上限；花费观测累计余额下降、跳过充值、并从持久化 snapshots 文件复苏。
 - 票面构图经视觉验证（真实绘制路径的无头 Chrome 截图，含小额与数亿 token 极端值）；canvas 像素不做单测。

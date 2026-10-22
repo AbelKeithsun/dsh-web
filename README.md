@@ -160,10 +160,10 @@ dsh-web 通过官方 profile 机制挂载到 `dsh web`，零修改侵入官方�
 
 - **用量明细**：查看每日输入、输出与缓存用量，按不同供应商与模型细分展示，并提供最近 30 天消费趋势；支持的供应商提供账户余额查询，针对 DeepSeek 官方路由还提供峰谷分时计费与账单估算。
 - **个人套餐追踪**：实时展示 Kimi、GLM、MiniMax、OpenCode Go、Codex / ChatGPT 等平台编程套餐的使用比例与重置周期。
-- **Token 银行**：DeepSeek 官方通道每消耗 1 token 自动积累 1 鲸元，以“鲸元券”形式展示台账周期内的累计调用指标，支持保存票券卡片与系统级分享。
+- **Token 银行**：所有 provider 每消耗 100 万 tokens 铸造 1 鲸元，以“鲸元券”形式展示台账周期内的累计 token 与调用指标，支持保存票券卡片与系统级分享。
 - **桌面宠物联动**：安装宠物插件后，可通过桌面悬浮挂件的气泡提示直接查看当前会话供应商的额度、余额或今日消耗。
 
-统计自插件首次启用起计，不回填历史数据；鲸元券仅统计台账窗口内的 DeepSeek 官方消耗。支持的供应商列表与配置细节见 [dsh-usage README](packages/dsh-usage/README.zh.md)。
+统计自插件首次启用起计，不回填历史数据；鲸元券统计台账窗口内所有 provider 的 tokens（消费行仍只来自 DeepSeek 官方余额观测）。支持的供应商列表与配置细节见 [dsh-usage README](packages/dsh-usage/README.zh.md)。
 
 ![DeepSeek Token 用量统计与 Token 银行 — API 消耗追踪与账单估算](docs/screenshots/35-usage-token-bank.webp)
 

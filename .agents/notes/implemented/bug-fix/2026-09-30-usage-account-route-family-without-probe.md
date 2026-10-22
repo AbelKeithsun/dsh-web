@@ -40,6 +40,6 @@ The split is a standing rule for the table, not a one-off: **a route that authen
 
 - `packages/dsh-usage/tests/adapters.spec.ts`: the account route is in the family but resolved by no adapter for probing; no family-only id collides with a probed id or another family-only id; the two key routes keep their probed behavior.
 - `packages/dsh-usage/tests/usage-service.spec.ts`: end to end from the reported environment — a session spending on the live account route issues no request, its row carries no balance, and its calls are priced with a non-zero cost; with both channels live the overview keeps two rows, the key route still probes, and the account route stays unprobed.
-- `packages/dsh-usage/tests/voucher.spec.ts`: the bank mints from the account route alongside the key routes and still ignores unrelated providers.
+- `packages/dsh-usage/tests/voucher.spec.ts`: the bank mints from the account route alongside the key routes, while every other provider now mints too and only the spend estimate stays on the priced family (the [every-provider minting note](../feature/2026-10-22-usage-bank-mints-every-provider.md)).
 - The service tests are the guard against the rejected alternative: moving `deepseek-account` into `ids` fails them, so the mis-attribution path cannot be reintroduced by a future edit that "just adds the id".
 - `pnpm --filter @linxin666/dsh-usage test`: 11 files, 151 tests. `pnpm typecheck` passes.

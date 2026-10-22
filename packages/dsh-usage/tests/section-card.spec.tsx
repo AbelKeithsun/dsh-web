@@ -157,18 +157,19 @@ describe('UsageSectionCard configured-provider filter', () => {
 })
 
 describe('Token 银行 tab', () => {
-  it('user sees the empty state when the mint family has no usage', () => {
-    // Given an overview whose mint family (DeepSeek official + MiMo) has no usage
+  it('user sees the empty state when the ledger holds no usage', () => {
+    // Given an overview whose ledger holds no usage at all
     render(<UsageSectionCard {...cardProps(overview([]))} />)
     // When the user opens the Token 银行 tab
     fireEvent.click(screen.getByRole('tab', { name: 'Token 银行' }))
-    // Then the bank reports the missing mint-family usage and offers no save button
-    expect(screen.getByText('暂无 DeepSeek 官方 / MiMo 用量数据（统计自插件启用起）').textContent).toBe('暂无 DeepSeek 官方 / MiMo 用量数据（统计自插件启用起）')
+    // Then the bank reports the missing usage and offers no save button
+    expect(screen.getByText('暂无用量数据').textContent).toBe('暂无用量数据')
     expect(screen.queryByRole('button', { name: '保存图片' })).toBeNull()
   })
 
   it('user gets the voucher minted from the whole-ledger rows with save offered and no share without canShare', () => {
-    // Given a whole-ledger aggregate of 1,234,567 tokens across the official family
+    // Given a whole-ledger aggregate of 1,234,567 tokens on one official row and
+    // 999,999 tokens on a coding-subscription row, which now mints too
     const snapshot = overview([])
     snapshot.usage.all = {
       from: '2025-12-01',
@@ -182,23 +183,24 @@ describe('Token 银行 tab', () => {
     render(<UsageSectionCard {...cardProps(snapshot)} />)
     // When the user opens the Token 银行 tab
     fireEvent.click(screen.getByRole('tab', { name: 'Token 银行' }))
-    // Then the voucher mints 1 whale yuan at the 1,000,000:1 exchange rate and reports the folded ledger
-    expect(screen.getByText('累计铸造 1 鲸元（1.23M tokens）').textContent).toBe('累计铸造 1 鲸元（1.23M tokens）')
+    // Then the voucher mints 2 whale yuan from both providers at the 1,000,000:1
+    // exchange rate and reports the merged calls beside the priced spend
+    expect(screen.getByText('累计铸造 2 鲸元（2.23M tokens）').textContent).toBe('累计铸造 2 鲸元（2.23M tokens）')
     expect(screen.getByText('消费估算：约 ¥3.50').textContent).toBe('消费估算：约 ¥3.50')
-    expect(screen.getByText('12 次调用').textContent).toBe('12 次调用')
+    expect(screen.getByText('17 次调用').textContent).toBe('17 次调用')
     expect(screen.getByText('统计窗口 2025-12-01 ~ 2026-01-01').textContent).toBe('统计窗口 2025-12-01 ~ 2026-01-01')
     // And save is offered while share stays hidden without navigator.canShare
     expect(screen.getByRole('button', { name: '保存图片' }).textContent).toBe('保存图片')
     expect(screen.queryByRole('button', { name: '分享' })).toBeNull()
   })
 
-  // #1831: a profile whose default route is the MiMo gateway saw an empty bank
-  // even though MiMo was the largest provider in its own ledger.
-  it('user gets the MiMo route minted beside the official family while the spend line stays the official estimate', () => {
-    // Given a whole-ledger aggregate holding the MiMo route and one official
-    // route; the MiMo row also carries a non-zero cost, which a host with no
-    // MiMo price book never stamps and the bank must still refuse to fold into
-    // the spend line
+  // Every provider mints, so a profile whose largest route is a relay gateway
+  // (the #1831 MiMo report) mints from it; the spend line still excludes it.
+  it('user gets a non-official route minted beside the official family while the spend line stays the official estimate', () => {
+    // Given a whole-ledger aggregate holding a relay route and one official
+    // route; the relay row also carries a non-zero cost, which a host with no
+    // price book for it never stamps and the bank must still refuse to fold
+    // into the spend line
     const snapshot = overview([])
     snapshot.usage.all = {
       from: '2026-01-01',
@@ -212,7 +214,7 @@ describe('Token 银行 tab', () => {
     render(<UsageSectionCard {...cardProps(snapshot)} />)
     // When the user opens the Token 银行 tab
     fireEvent.click(screen.getByRole('tab', { name: 'Token 银行' }))
-    // Then the MiMo tokens and calls mint with the official ones
+    // Then its tokens and calls mint with the official ones
     expect(screen.getByText('累计铸造 4 鲸元（3.5M tokens）').textContent).toBe('累计铸造 4 鲸元（3.5M tokens）')
     expect(screen.getByText('10 次调用').textContent).toBe('10 次调用')
     // And the spend line stays the official family's fold-time estimate

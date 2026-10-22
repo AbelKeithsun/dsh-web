@@ -1,7 +1,7 @@
 /**
  * The usage statistics settings section: three tabs (用量: today's usage,
  * balances, trend; 个人套餐: per-provider plan quota windows; Token 银行:
- * the whale-yuan voucher minted from the DeepSeek official family's usage)
+ * the whale-yuan voucher minted from every provider's ledger usage)
  * plus a compact settings row. Data comes from the host's loopback-fenced
  * /api/dsh-usage/overview document; polling runs only while the section is
  * mounted and the tab is visible.
@@ -541,14 +541,14 @@ function totalOf(totals: UsageTokenTotals): number {
 }
 
 /**
- * The Token 银行 card: the mint family's (DeepSeek official + MiMo)
- * retained-ledger usage minted onto the whale-yuan note at 1,000,000 tokens
- * per whale yuan. The window is the whole retained ledger by default (the
- * host's aggregate, falling back to the 30-day trend when an older host serves
- * no `all`) or the single day the user picked; the spend line prefers the
- * official balance watch (whole window only) and falls back to the fold-time
- * estimate, which only the priced family feeds; the artwork draw failure
- * degrades to an error line and never takes the section down.
+ * The Token 银行 card: every provider's retained-ledger usage minted onto the
+ * whale-yuan note at 1,000,000 tokens per whale yuan. The window is the whole
+ * retained ledger by default (the host's aggregate, falling back to the 30-day
+ * trend when an older host serves no `all`) or the single day the user picked;
+ * the spend line prefers the official balance watch (whole window only) and
+ * falls back to the fold-time estimate, which only the priced family feeds;
+ * the artwork draw failure degrades to an error line and never takes the
+ * section down.
  */
 function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: ObservedSpendView; loading?: boolean; error?: string }): ReactNode {
   const { window: ledger, observedSpend, loading, error } = props
