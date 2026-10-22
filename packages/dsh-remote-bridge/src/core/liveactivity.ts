@@ -80,20 +80,34 @@ export const LIVE_ACTIVITY_ROW_NAME_MAX = 48
 export const LIVE_ACTIVITY_TRACKED = 64
 
 /**
- * The one line a card shows in each state.
+ * The one line a card shows per phase, in the App's own words.
  *
- * Fixed strings, for the reason the alert channel's bodies are fixed: a line
- * built out of host text is session content on a lock screen. These are the same
- * words the alert channel uses for the same events, so one turn the user saw as
- * a notification is the same turn the card names.
+ * Fixed English strings, one per phase, and the same table the App renders
+ * (§29.7, §30.2): the words on the glass are the client's, so a bridge that sent
+ * its own would put a second language on the same card. Fixed for the second
+ * reason the alert channel's bodies are fixed too — a line built out of host text
+ * is session content on a lock screen. `core/push.ts` keeps its own localized
+ * bodies: a notification is read in the user's language, a card is the App's, and
+ * both are the same event said for two different surfaces.
  */
 export const ACTIVITY_STATUS_LINE = {
-  running: '正在执行',
-  question: '有待回答的问题',
-  approval: '有待确认的审批',
-  failed: '回合异常结束',
-  ended: '回合结束',
+  running: 'Running',
+  waitingForAnswer: 'Waiting for your answer',
+  failed: 'Stopped',
+  ended: 'Turn finished',
 } as const
+
+/**
+ * The fixed line one phase shows.
+ *
+ * The one accessor the single-session field and a row both go through, so a
+ * phase cannot be named two ways on one card.
+ * @param phase - the phase whose line is wanted.
+ * @returns the App's own English phrase for it.
+ */
+export function statusLineOf(phase: SessionActivityPhase): string {
+  return ACTIVITY_STATUS_LINE[phase]
+}
 
 /**
  * How iOS ranks one card against another.
@@ -114,6 +128,10 @@ const RELEVANCE_SCORE: Readonly<Record<SessionActivityPhase, number>> = {
  * Exactly three keys, all non-empty: the host's own name for the session, the
  * same status phrase that session's own card would carry, and its phase. There
  * is no id, no url and no count — a row is a line on a card, not a record.
+ *
+ * A row only ever carries one of the two live phases: a failed or ended turn is
+ * the card's own `phase`, and repeating it as a row would say one thing twice
+ * on a card that is already on its way out.
  */
 export interface ActivityRow {
   readonly name: string
@@ -365,7 +383,7 @@ export class LiveActivityNotifier {
         this.#emit(sessionId, {
           event: 'update',
           phase: 'running',
-          statusLine: ACTIVITY_STATUS_LINE.running,
+          statusLine: statusLineOf('running'),
           runningCount,
         })
       }
@@ -395,7 +413,7 @@ export class LiveActivityNotifier {
       this.#emit(sessionId, {
         event: 'end',
         phase: completed ? 'ended' : 'failed',
-        statusLine: completed ? ACTIVITY_STATUS_LINE.ended : ACTIVITY_STATUS_LINE.failed,
+        statusLine: statusLineOf(completed ? 'ended' : 'failed'),
         runningCount: this.#running.size,
         ...(this.#known.has(sessionId) && !this.#listed.has(sessionId) ? { dismiss: true } : {}),
       })
@@ -419,8 +437,10 @@ export class LiveActivityNotifier {
     try {
       const header = question.header === '' ? undefined : question.header
       const labels = question.optionLabels?.filter(label => label !== '').slice(0, LIVE_ACTIVITY_OPTION_LIMIT)
+      // One waiting phrase serves a question and an approval: the App's table has
+      // one, and a bridge-only second line would be a word it never renders.
       const waiting: Waiting = {
-        statusLine: ACTIVITY_STATUS_LINE.question,
+        statusLine: statusLineOf('waitingForAnswer'),
         ...(header === undefined ? {} : { questionHeader: header }),
         ...(labels === undefined || labels.length === 0 ? {} : { optionLabels: labels }),
       }
@@ -442,7 +462,7 @@ export class LiveActivityNotifier {
   noteApproval(sessionId: string): void {
     if (!this.enabled) return
     try {
-      const waiting: Waiting = { statusLine: ACTIVITY_STATUS_LINE.approval }
+      const waiting: Waiting = { statusLine: statusLineOf('waitingForAnswer') }
       this.#waiting.set(sessionId, waiting)
       this.#emit(sessionId, { event: 'update', phase: 'waitingForAnswer', runningCount: this.#running.size, ...waiting })
     } catch (error) {
@@ -469,7 +489,7 @@ export class LiveActivityNotifier {
       this.#emit(sessionId, {
         event: 'update',
         phase: 'running',
-        statusLine: ACTIVITY_STATUS_LINE.running,
+        statusLine: statusLineOf('running'),
         runningCount: this.#running.size,
       })
     } catch (error) {
@@ -515,28 +535,21 @@ export class LiveActivityNotifier {
    * them. Which sessions run is read from the same set the single-session state
    * is built from, so a card and its rows can never disagree about that.
    *
-   * A card's own session is named once more at the end when it is the reason for
-   * this delivery and is neither waiting nor running any more — an ended or
-   * failed turn is exactly the state no earlier rule reaches.
-   * @param sessionId - the session this delivery is about.
-   * @param state - that session's own phase and status line.
+   * Only the two live phases ever appear on a row. An ended or failed turn is the
+   * card's own `phase` and its own line, said once: adding it here as well would
+   * repeat the same sentence and make a card that is already leaving taller.
    * @returns at most {@link LIVE_ACTIVITY_ROW_LIMIT} rows, most urgent first.
    */
-  #rowsFor(sessionId: string, state: { readonly phase: SessionActivityPhase; readonly statusLine: string }): readonly ActivityRow[] {
+  #rowsFor(): readonly ActivityRow[] {
     const rows: ActivityRow[] = []
-    const room = (): boolean => rows.length < LIVE_ACTIVITY_ROW_LIMIT
     for (const [id, waiting] of this.#waiting) {
-      if (!room()) return rows
+      if (rows.length >= LIVE_ACTIVITY_ROW_LIMIT) return rows
       this.#appendRow(rows, id, waiting.statusLine, 'waitingForAnswer')
     }
     for (const id of this.#runningByRecency()) {
-      if (!room()) return rows
+      if (rows.length >= LIVE_ACTIVITY_ROW_LIMIT) return rows
       if (this.#waiting.has(id)) continue
-      this.#appendRow(rows, id, ACTIVITY_STATUS_LINE.running, 'running')
-    }
-    const terminal = state.phase === 'failed' || state.phase === 'ended'
-    if (terminal && room() && !this.#waiting.has(sessionId) && !this.#running.has(sessionId)) {
-      this.#appendRow(rows, sessionId, state.statusLine, state.phase)
+      this.#appendRow(rows, id, statusLineOf('running'), 'running')
     }
     return rows
   }
@@ -589,7 +602,7 @@ export class LiveActivityNotifier {
     // Every delivery carries the rows, even an `end`: the list is what the card
     // says about the bridge, and a key that appears and disappears would make a
     // client choose between two pictures of the same moment (§30.2).
-    const notification = buildLiveActivityNotification({ ...state, rows: this.#rowsFor(sessionId, state), now })
+    const notification = buildLiveActivityNotification({ ...state, rows: this.#rowsFor(), now })
     const content = contentKeyOf(notification.aps['content-state'])
     for (const target of targets) {
       if (!this.#admits(target.activityId, content, state.event, now)) continue
@@ -671,66 +684,150 @@ export function contentKeyOf(state: SessionActivityState): string {
   ])
 }
 
-/** The separator punctuation a row name may not end on (§30.2). */
-const TRAILING_SEPARATOR = /[\s·\-–—.,，、;；:：!！?？…~～]+$/u
+/** The separators a row name may not end on, and which are never part of its tail (§30.2). */
+const TRAILING_SEPARATOR = /[\s·\-/\\]+$/u
 
 /**
- * A trailing bracket group, the shape a host title ends on when it names the
- * directory the session runs in: `... (/Users/zcl/code/x)`.
+ * A bracket group at the very tail — a host title's `... (/Users/zcl/code/x)` suffix.
  *
  * Anchored at the end and its body may hold no bracket of its own, so a match is
  * always one whole group at the very tail rather than the front half of one.
  */
 const TRAILING_GROUP = /[(（][^()（）]*[)）]$/u
 
-/** What may still hang on a tail once the group came off: a bracket or a path separator. */
-const TRAILING_RESIDUE = /[()（）/\\]+$/u
+/** Either path separator, however the host wrote it. */
+const PATH_SEPARATOR = /[/\\]/u
+
+/** Any closing bracket, ASCII or full-width. */
+const CLOSING_BRACKET = /[)）]/u
+
+/**
+ * Whether one trailing bracket group names a path.
+ *
+ * The test §30.2 and the App's own `SessionActivityDisplayName` share: the group
+ * is a path when its body holds a separator or holds nothing at all. `Ship (main)`
+ * is part of the name and stays — one card may not show two versions of one name.
+ * @param group - the whole group, brackets included.
+ * @returns whether the group is the path suffix rather than part of the name.
+ */
+function isPathGroup(group: string): boolean {
+  const body = group.slice(1, -1).trim()
+  return body === '' || PATH_SEPARATOR.test(body)
+}
+
+/**
+ * The text with every trailing path group taken off, brackets included.
+ * @param text - one name candidate.
+ * @returns the same text without a path group hanging on its tail.
+ */
+function stripTrailingPathGroups(text: string): string {
+  let next = text
+  for (;;) {
+    const group = TRAILING_GROUP.exec(next)
+    if (group === null || !isPathGroup(group[0])) return next
+    next = next.slice(0, group.index).trim()
+  }
+}
+
+/**
+ * The text without a tail group the host never closed, when that group names a path.
+ *
+ * A title cut off before its closing bracket — `Deck (/Users/zcl/code/x` — has no
+ * group at the tail to strip, and leaving it would put half a path on a lock
+ * screen (§29.5). An unclosed group that holds no separator is the name, so
+ * `Fix it (beta` keeps its tail.
+ * @param text - one name candidate.
+ * @returns the same text without a trailing unclosed path group.
+ */
+function cutUnclosedPathTail(text: string): string {
+  const opened = Math.max(text.lastIndexOf('('), text.lastIndexOf('（'))
+  if (opened < 0) return text
+  const body = text.slice(opened + 1)
+  if (CLOSING_BRACKET.test(body)) return text
+  if (!PATH_SEPARATOR.test(body)) return text
+  return text.slice(0, opened).trim()
+}
+
+/** @returns how many brackets the text leaves open. */
+function bracketDepth(text: string): number {
+  let depth = 0
+  for (const character of text) {
+    if (character === '(' || character === '（') depth += 1
+    else if (character === ')' || character === '）') depth -= 1
+  }
+  return depth
+}
+
+/**
+ * The text without a bracket left dangling on its tail.
+ *
+ * A closing bracket that still closes a group — `Ship (main)` — is part of the
+ * name and stays. What may not end a name (§30.2) is the closing bracket of a
+ * group that went away with a path, and a lone opening bracket.
+ * @param text - one name candidate.
+ * @returns the same text with no dangling bracket on its end.
+ */
+function trimDanglingBracket(text: string): string {
+  let next = text
+  for (;;) {
+    const last = next.slice(-1)
+    if (last === '(' || last === '（') {
+      next = next.slice(0, -1).trim()
+      continue
+    }
+    if ((last === ')' || last === '）') && bracketDepth(next) < 0) {
+      next = next.slice(0, -1).trim()
+      continue
+    }
+    return next
+  }
+}
 
 /**
  * One pass of the tail cleanup, in the order that keeps a group whole.
  *
- * The separator comes off first, because it is what hides the group at the tail
- * (`Name - (/path)`); only then does the group come off, brackets included; only
- * then a bracket or a path separator left over on its own. Peeling a bracket
- * before its group is reached is how `Name (/path) -` turns into a name still
- * holding half a path.
- * @param text - one already whitespace-collapsed tail.
- * @returns the same text with nothing hanging on its end.
+ * The separators come off first, because they are what hides the group at the
+ * tail (`Name - (/path)`); only then the path groups; only then a bracket left on
+ * its own. Peeling a bracket before its group is reached is how `Name (/path) -`
+ * turns into a name still holding half a path.
+ * @param text - one name candidate.
+ * @returns the same text with no path group, separator or dangling bracket on its tail.
  */
-function trimRowNameTail(text: string): string {
-  let next = text.replace(TRAILING_SEPARATOR, '').trim()
-  while (TRAILING_GROUP.test(next)) next = next.replace(TRAILING_GROUP, '').trim()
-  return next.replace(TRAILING_RESIDUE, '').trim()
+function cleanRowNameTail(text: string): string {
+  let next = text
+  for (let round = 0; round < 8; round += 1) {
+    const before = next
+    next = stripTrailingPathGroups(cutUnclosedPathTail(next.replace(/\s+/gu, ' ').trim()))
+    next = next.replace(TRAILING_SEPARATOR, '').trim()
+    next = trimDanglingBracket(next)
+    if (next === before) break
+  }
+  return next
 }
 
 /**
  * The host's own title, as one row may carry it (§30.2).
  *
- * A roster title is usually the session's first message, and those end on the
- * absolute path the session was started in — `你是本仓 (/Users/zcl/code/x)`. §29.5
- * keeps paths off a lock screen, so a trailing bracket group comes off, and so
- * does whatever removing it exposed: the separator before it (`名字 - (/path)`)
- * or the bracket of the group before it (`A (b) (/path)`). Every trailing group
- * goes, whatever its body — a name may not end on a bracket either way, and a
- * group that is not a path is a display suffix rather than the name itself. What
- * is left is whitespace-collapsed, trimmed, cut back to the punctuation its tail
- * hangs on, and cut to {@link LIVE_ACTIVITY_ROW_NAME_MAX}.
+ * The same rule the App applies to a card's own name
+ * (`SessionActivityDisplayName`), so one card cannot show two versions of one
+ * name. A roster title is usually the session's first message, and those end on
+ * the absolute path the session ran in — `你是本仓 (/Users/zcl/code/x)` — while
+ * §29.5 keeps paths off a lock screen. A trailing group whose body is a path or
+ * nothing therefore comes off, brackets included, and whatever it exposed is
+ * cleaned up after it (the separator in front of it, the bracket of the group
+ * before it). A group that is part of the name, `Ship (main)`, stays. What is
+ * left is whitespace-collapsed, trimmed of the separators and dangling brackets
+ * its tail may hang on, and cut to {@link LIVE_ACTIVITY_ROW_NAME_MAX}.
  *
- * The rule lives here and nowhere else, so there is one answer to "which words of
- * a host title may reach a lock screen".
+ * The rule lives here and nowhere else in this bridge, so there is one answer to
+ * "which words of a host title may reach a lock screen".
  * @param title - the title the roster carried for that session, possibly empty.
  * @returns a name a row can carry, and an empty string when the title held nothing else.
  */
 export function normalizeActivityRowName(title: string): string {
-  let text = title
-  for (let round = 0; round < 4; round += 1) {
-    const before = text
-    text = trimRowNameTail(text.replace(/\s+/gu, ' ').trim())
-    if (text === before) break
-  }
-  const points = Array.from(text)
-  if (points.length <= LIVE_ACTIVITY_ROW_NAME_MAX) return text
-  // A cut can land on a character a name may not end on, so the tail is cleaned
-  // once more after it.
-  return trimRowNameTail(points.slice(0, LIVE_ACTIVITY_ROW_NAME_MAX).join(''))
+  const cleaned = cleanRowNameTail(title)
+  const points = Array.from(cleaned)
+  if (points.length <= LIVE_ACTIVITY_ROW_NAME_MAX) return cleaned
+  // A cut can land inside a group or on a separator, so the tail is cleaned again.
+  return cleanRowNameTail(points.slice(0, LIVE_ACTIVITY_ROW_NAME_MAX).join(''))
 }
