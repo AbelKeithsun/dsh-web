@@ -294,6 +294,6 @@ describe('M2 protocol additions stay backwards compatible', () => {
     expect(parseTeamDraft({ name: 'Research squad', leadPreset: 'xundong' })).toEqual({ name: 'Research squad', leadPreset: 'xundong' })
     expect(parseTeamDraft({ name: 'Research squad', leadPreset: 7 })).toBeUndefined()
     expect(DSH_AGENTS_ROUTE_PATHS).toContain('/dsh-agents/api/squad/run')
-    expect(DSH_AGENTS_ROUTE_PATHS).toHaveLength(7)
+    expect(DSH_AGENTS_ROUTE_PATHS).toHaveLength(8)
   })
 })

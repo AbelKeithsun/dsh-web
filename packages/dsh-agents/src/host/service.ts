@@ -23,11 +23,13 @@ import { applyMemberDraft, applyTeamDraft, createMember, createTeam, findMember,
 import { parseModelPin } from '../core/model-pin.ts'
 import { AgentsLedger, AGENTS_LEDGER_FILE, AGENTS_LEDGER_LOCK_FILE, RUN_HISTORY_LIMIT, type AgentsLedgerData } from './ledger.ts'
 import { agentsHomeDirectory } from './home.ts'
-import { listOfferedModelCatalog } from './model-catalog.ts'
-import { listOfferedPresets, resolvePinnedPreset, type MemberRunGateway, type WorkspaceRegistryFace } from './run-gateway.ts'
+import { DescribeError, type SquadDescriber } from './describe.ts'
+import { listOfferedModelCatalog, preferredModelRoute } from './model-catalog.ts'
+import { listOfferedPresets, listOfferedWorkspaces, resolvePinnedPreset, type MemberRunGateway, type WorkspaceRegistryFace } from './run-gateway.ts'
 import { isSquadSession, squadContextText } from './squad.ts'
 import type {
   AgentsStateView,
+  DescribeRequestBody,
   MemberDefinition,
   MemberDraft,
   RunRecord,
@@ -51,6 +53,12 @@ export interface AgentsHostServiceOptions {
    * surface for a Lead whose session already exists.
    */
   onSquadRun?: (run: RunRecord) => void
+  /**
+   * Writes one squad description with a model. Absent when this deployment
+   * serves no model service, and the description route then answers
+   * `describe-unavailable` instead of silently returning nothing.
+   */
+  describer?: SquadDescriber
   /** Clock seam. */
   now?: () => number
   /** Id minting seam. */
@@ -72,6 +80,7 @@ export class AgentsHostService {
   private readonly gateway: MemberRunGateway
   private readonly workspaces: WorkspaceRegistryFace | undefined
   private readonly onSquadRun: ((run: RunRecord) => void) | undefined
+  private readonly describer: SquadDescriber | undefined
   private readonly now: () => number
   private readonly idFactory: () => string
   private readonly directory: string
@@ -82,6 +91,7 @@ export class AgentsHostService {
     this.gateway = options.gateway
     this.workspaces = options.workspaces
     this.onSquadRun = options.onSquadRun
+    this.describer = options.describer
     this.now = options.now ?? Date.now
     this.idFactory = options.idFactory ?? (() => crypto.randomUUID())
     this.directory = options.dir ?? agentsHomeDirectory()
@@ -135,11 +145,46 @@ export class AgentsHostService {
     const state = this.state
     const presets = await listOfferedPresets(this.gateway)
     const catalog = await listOfferedModelCatalog(this.gateway)
+    const workspaces = listOfferedWorkspaces(this.workspaces)
     return {
       ...state,
       ...(presets === undefined ? {} : { presets }),
+      ...(workspaces === undefined ? {} : { workspaces }),
       ...(catalog === undefined ? {} : { models: catalog.models }),
       ...(catalog === undefined || catalog.efforts.length === 0 ? {} : { efforts: catalog.efforts }),
+    }
+  }
+
+  /**
+   * Draft one squad description with this deployment's model.
+   *
+   * The route is the catalog's own default, or the first route it offers: a
+   * description is a convenience, so it spends the model this Host already
+   * composes sessions from instead of introducing a second setting that can
+   * disagree with it. Every refusal is a typed code the page explains, and the
+   * definition is never touched here — the panel decides what to do with the
+   * text it gets back.
+   * @param request - the squad name and the user's rough intent.
+   * @param signal - cancellation from the caller's own request.
+   * @returns one bounded description.
+   */
+  async describe(request: DescribeRequestBody, signal?: AbortSignal): Promise<string> {
+    if (this.describer === undefined) {
+      throw new AgentsError('describe-unavailable', 'this deployment serves no model service, so no description can be written')
+    }
+    const route = preferredModelRoute(await listOfferedModelCatalog(this.gateway))
+    if (route === undefined) {
+      throw new AgentsError('describe-unavailable', 'this deployment publishes no model route, so no description can be written')
+    }
+    try {
+      return await this.describer({ name: request.name, ...(request.intent === undefined ? {} : { intent: request.intent }) }, route, signal)
+    } catch (error) {
+      // A deployment that serves no model service is the same statement as one
+      // that publishes no route: nothing here can write a description.
+      if (error instanceof DescribeError && error.code === 'no-model') {
+        throw new AgentsError('describe-unavailable', 'this deployment serves no model service, so no description can be written')
+      }
+      throw new AgentsError('describe-failed', describe(error))
     }
   }
 

@@ -16,6 +16,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { AgentsError, isAgentsError, statusForCode } from '../core/errors.ts'
 import {
   DSH_AGENTS_API_PREFIX,
+  parseDescribeRequestBody,
   parseMemberDeleteRequestBody,
   parseMemberRequestBody,
   parseRunRequestBody,
@@ -237,6 +238,23 @@ export function makeAgentsRoutes(service: AgentsHostService): WebRoute[] {
           const body = parseSquadRunRequestBody(await post(req, res))
           if (body === undefined) return refuse(res, 400, 'invalid-request', 'the squad run request does not name one team')
           writeJson(res, 200, { run: await service.runSquad(body) })
+        } catch (error) {
+          replyFailure(res, error)
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: DSH_AGENTS_API_PREFIX + '/describe',
+      handler: async (req, res): Promise<void> => {
+        if (req.method !== 'POST') return refuse(res, 405, 'method-not-allowed', 'this route serves POST only')
+        if (!guard(req, res)) return
+        try {
+          const body = parseDescribeRequestBody(await post(req, res))
+          if (body === undefined) return refuse(res, 400, 'invalid-request', 'the describe request names no squad')
+          // The model call is bounded by the Host's own timeout rather than by
+          // this request: the browser always reads the body before it waits.
+          writeJson(res, 200, { description: await service.describe(body) })
         } catch (error) {
           replyFailure(res, error)
         }

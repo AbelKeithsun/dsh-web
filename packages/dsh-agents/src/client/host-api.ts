@@ -13,6 +13,8 @@ import { DSH_AGENTS_API_PREFIX, DSH_AGENTS_SQUAD_TEAM_PATH } from '../protocol.t
 import type {
   AgentsErrorCode,
   AgentsStateView,
+  DescribeRequestBody,
+  DescribeResponseBody,
   MemberDraft,
   RunRecord,
   SquadRunRequestBody,
@@ -30,8 +32,12 @@ const CLIENT_API_PREFIX = DSH_AGENTS_API_PREFIX.slice(1)
 
 /** Ceiling for one request, matching the task board's transport budget. */
 const REQUEST_TIMEOUT_MS = 15_000
-/** The same budget in the words the timeout copy needs. */
-const TIMEOUT_SECONDS = 15
+/**
+ * Ceiling for one description draft. The Host may wait up to 90s for a model,
+ * so this budget sits above it: the page must report the Host's own timeout,
+ * never cut the call short and then blame the model.
+ */
+const DESCRIBE_TIMEOUT_MS = 95_000
 
 const JSON_HEADERS = { accept: 'application/json' } as const
 
@@ -50,6 +56,10 @@ export type AgentsFailure =
   | 'unknown-preset'
   /** Neither the squad nor the member has a usable workspace. */
   | 'no-workspace'
+  /** This deployment serves no model route, so no description can be written. */
+  | 'describe-unavailable'
+  /** The description model failed, timed out, or answered nothing usable. */
+  | 'describe-failed'
   /** The addressed squad is gone: deleted between the read and the write. */
   | 'squad-missing'
   /** The Host refused to create the squad Lead session. */
@@ -78,6 +88,8 @@ const FAILURE_KEYS: Record<AgentsFailure, AgentsKey> = {
   'rejected': 'error.rejected',
   'unknown-preset': 'error.unknownPreset',
   'no-workspace': 'error.noWorkspace',
+  'describe-unavailable': 'error.describeUnavailable',
+  'describe-failed': 'error.describeFailed',
   'squad-missing': 'error.squadMissing',
   'lead-create-failed': 'error.leadCreateFailed',
   'lead-prepare-failed': 'error.leadPrepareFailed',
@@ -104,6 +116,10 @@ const HOST_FAILURE_CODES: Partial<Record<AgentsErrorCode, AgentsFailure>> = {
   'workspace-required': 'no-workspace',
   'workspace-unknown': 'no-workspace',
   'workspace-unavailable': 'no-workspace',
+  // A deployment with no model service and one with no model route make the
+  // same statement about the description button, so both read through it.
+  'describe-unavailable': 'describe-unavailable',
+  'describe-failed': 'describe-failed',
   'forbidden': 'forbidden',
   // M2 squad-run codes: a Lead this Host never managed to launch reads as its
   // own failure instead of one generic refusal, and a ledger this browser cannot
@@ -180,11 +196,13 @@ function postInit(body: unknown): RequestInit {
 /**
  * Send one request under the plugin's own timeout, forwarding the caller's
  * abort signal (the page cancels in-flight reads when it unmounts).
+ * @param timeoutMs - this request's own budget; the model-backed routes get a
+ *   longer one than the ledger reads.
  * @returns the Host response, whatever its status.
  */
-async function sendWithTimeout(fetchImpl: typeof fetch, path: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+async function sendWithTimeout(fetchImpl: typeof fetch, path: string, init: RequestInit, signal?: AbortSignal, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController()
-  const timer = globalThis.setTimeout(() => { controller.abort() }, REQUEST_TIMEOUT_MS)
+  const timer = globalThis.setTimeout(() => { controller.abort() }, timeoutMs)
   const forward = (): void => { controller.abort() }
   if (signal !== undefined) {
     if (signal.aborted) controller.abort()
@@ -200,7 +218,7 @@ async function sendWithTimeout(fetchImpl: typeof fetch, path: string, init: Requ
   } catch (error) {
     // A caller-side abort is not a failure of the Host: let the page drop it.
     if (signal !== undefined && signal.aborted) throw error
-    if (controller.signal.aborted) throw new AgentsApiError('timeout', failureMessage('timeout', { seconds: String(TIMEOUT_SECONDS) }))
+    if (controller.signal.aborted) throw new AgentsApiError('timeout', failureMessage('timeout', { seconds: String(Math.round(timeoutMs / 1_000)) }))
     throw new AgentsApiError('unreachable', failureMessage('unreachable'))
   } finally {
     globalThis.clearTimeout(timer)
@@ -227,6 +245,14 @@ export interface AgentsTransport {
    * live state is unavailable instead of polling a missing route forever.
    */
   squadTeam(sessionId: string, signal?: AbortSignal): Promise<SquadTeamResponseBody>
+  /**
+   * Draft one squad description with this deployment's model.
+   *
+   * The Host spends a model call here, so the caller decides when to ask; a
+   * deployment that serves no model route refuses with its own class rather
+   * than answering an empty string.
+   */
+  describe(request: DescribeRequestBody, signal?: AbortSignal): Promise<string>
 }
 
 /**
@@ -234,7 +260,7 @@ export interface AgentsTransport {
  * @param fetchImpl - fetch to use (injected by tests; the page uses the global).
  */
 export function createAgentsTransport(fetchImpl: typeof fetch = fetch): AgentsTransport {
-  const send = (path: string, init: RequestInit, signal?: AbortSignal): Promise<Response> => sendWithTimeout(fetchImpl, path, init, signal)
+  const send = (path: string, init: RequestInit, signal?: AbortSignal, timeoutMs?: number): Promise<Response> => sendWithTimeout(fetchImpl, path, init, signal, timeoutMs)
   return {
     async state(signal?: AbortSignal): Promise<AgentsStateView> {
       return readJson<AgentsStateView>(await send('state', { method: 'GET', headers: JSON_HEADERS }, signal))
@@ -268,6 +294,10 @@ export function createAgentsTransport(fetchImpl: typeof fetch = fetch): AgentsTr
       // a query parameter because the route path itself stays exact.
       const route = DSH_AGENTS_SQUAD_TEAM_PATH.slice(DSH_AGENTS_API_PREFIX.length + 1)
       return readJson<SquadTeamResponseBody>(await send(route + '?sessionId=' + encodeURIComponent(sessionId), { method: 'GET', headers: JSON_HEADERS }, signal))
+    },
+    async describe(request: DescribeRequestBody, signal?: AbortSignal): Promise<string> {
+      const body = await readJson<DescribeResponseBody>(await send('describe', postInit(request), signal, DESCRIBE_TIMEOUT_MS))
+      return body.description
     },
   }
 }

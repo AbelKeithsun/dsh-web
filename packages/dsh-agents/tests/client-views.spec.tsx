@@ -12,7 +12,7 @@ import { AgentsPage } from '../src/client/AgentsPage.tsx'
 import { AgentsApiError } from '../src/client/host-api.ts'
 import { t } from '../src/client/locales.ts'
 import css from '../src/client/agents.module.css'
-import { buttonByText, click, flush, mount, unmountAll } from './render.tsx'
+import { buttonByText, click, flush, mount, typeInto, unmountAll } from './render.tsx'
 import { fakeTransport, memberOf, stateOf, teamOf } from './agents-fixtures.ts'
 
 afterEach(() => { unmountAll() })
@@ -120,5 +120,77 @@ describe('agents page states', () => {
     const card = must(view.container, '[data-dsh-part="member-card"]')
     const inherited = card.textContent?.split(t('member.inherit')).length ?? 0
     expect(inherited - 1).toBe(3)
+  })
+})
+
+describe('the squad form', () => {
+  it('user cannot create a squad before it has a name, and both pickers offer what the Host reports', async () => {
+    // Given a Host reporting presets and workspaces, When the new-squad form opens, Then create stays disabled until a name is typed, both pickers carry their rows, and the preview follows the name.
+    const transport = fakeTransport({
+      state: async () => stateOf([teamOf()], [], ['xundong'], [{ id: 'ws-1', title: 'repo', path: '/repo' }]),
+    })
+    const page = mount(<AgentsPage transport={transport} />)
+    await flush()
+    click(buttonByText(page.container, t('list.new')))
+    await flush()
+    const form = must(page.container, '[data-dsh-part="team-form"]')
+    const create = buttonByText(form as HTMLElement, t('form.create'))
+    expect(create.disabled).toBe(true)
+    typeInto(must(form, 'input') as HTMLInputElement, 'Architecture review')
+    expect(create.disabled).toBe(false)
+    const workspace = must(form, 'select[aria-label="' + t('form.workspace') + '"]') as HTMLSelectElement
+    expect([...workspace.options].map(option => option.textContent)).toEqual([t('form.workspaceInherit'), 'repo'])
+    const preset = must(form, 'select[aria-label="' + t('form.leadPreset') + '"]') as HTMLSelectElement
+    expect([...preset.options].map(option => option.textContent)).toEqual([t('squad.leadPresetInherit'), 'xundong'])
+    expect(must(form, '[data-dsh-part="team-form-preview"]').textContent).toContain('Architecture review')
+  })
+
+  it('user keeps typed ids when the Host reports no workspace or preset list', async () => {
+    // Given a Host reporting neither list, When the form opens, Then both fields are text inputs rather than empty pickers.
+    const transport = fakeTransport({ state: async () => stateOf([teamOf()]) })
+    const page = mount(<AgentsPage transport={transport} />)
+    await flush()
+    click(buttonByText(page.container, t('list.new')))
+    await flush()
+    const form = must(page.container, '[data-dsh-part="team-form"]')
+    expect(form.querySelectorAll('select')).toHaveLength(0)
+    expect(form.querySelectorAll('input')).toHaveLength(3)
+  })
+
+  it('user drafts the description with the Host model and sees the reply in the field', async () => {
+    // Given a Host model that answers, When generate is pressed, Then the page posts the name and intent once and the reply lands in the textarea.
+    const transport = fakeTransport({
+      state: async () => stateOf([teamOf()]),
+      describe: async () => 'Two reviewers and one builder.',
+    })
+    const page = mount(<AgentsPage transport={transport} />)
+    await flush()
+    click(buttonByText(page.container, t('list.new')))
+    await flush()
+    const form = must(page.container, '[data-dsh-part="team-form"]')
+    typeInto(must(form, 'input') as HTMLInputElement, 'Architecture review')
+    typeInto(must(form, 'textarea') as HTMLTextAreaElement, '评审架构')
+    click(buttonByText(form as HTMLElement, t('form.generate')))
+    await flush()
+    expect(transport.describes).toEqual([{ name: 'Architecture review', intent: '评审架构' }])
+    expect((must(form, 'textarea') as HTMLTextAreaElement).value).toBe('Two reviewers and one builder.')
+  })
+
+  it('user is told why the model could not draft and is offered the template instead', async () => {
+    // Given a Host model that refuses, When generate is pressed on an empty description, Then the failure sentence is shown and the template fills the field.
+    const transport = fakeTransport({
+      state: async () => stateOf([teamOf()]),
+      describe: async () => { throw new Error(t('error.describeFailed', { detail: 'timeout' })) },
+    })
+    const page = mount(<AgentsPage transport={transport} />)
+    await flush()
+    click(buttonByText(page.container, t('list.new')))
+    await flush()
+    const form = must(page.container, '[data-dsh-part="team-form"]')
+    typeInto(must(form, 'input') as HTMLInputElement, 'Architecture review')
+    click(buttonByText(form as HTMLElement, t('form.generate')))
+    await flush()
+    expect(form.textContent).toContain('timeout')
+    expect((must(form, 'textarea') as HTMLTextAreaElement).value).toContain('Architecture review')
   })
 })

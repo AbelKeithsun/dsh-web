@@ -51,6 +51,8 @@ const STATUS_BY_CODE: Record<AgentsErrorCode, number> = {
   'ledger-corrupt': 503,
   'ledger-owned': 503,
   'ledger-write-failed': 500,
+  'describe-unavailable': 503,
+  'describe-failed': 502,
   'internal-error': 500,
 }
 

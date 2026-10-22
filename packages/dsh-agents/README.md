@@ -89,9 +89,12 @@ POST /dsh-agents/api/member
 POST /dsh-agents/api/member/delete
 POST /dsh-agents/api/run
 POST /dsh-agents/api/squad/run
+POST /dsh-agents/api/describe
 ```
 
 - The browser half drops the leading slash, exactly like the task board's prefix, and refreshes by polling `state` while the page is mounted.
+- `state` also carries the workspaces and agent presets this Host offers (each omitted when it offers none), which is what turns the squad form's workspace and Lead-preset fields into pickers instead of typed ids.
+- `describe` drafts one squad description with this deployment's own model route (the catalog default, else its first route) and answers only the text: a Host with no model service or no route refuses with a stable code, and the form falls back to a typed template rather than storing an empty description.
 - Failures are JSON with a stable code and one bounded sentence; no stack trace, no ledger content and no session text crosses the wire.
 
 ## Storage

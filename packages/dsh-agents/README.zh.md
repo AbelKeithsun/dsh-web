@@ -89,9 +89,12 @@ POST /dsh-agents/api/member
 POST /dsh-agents/api/member/delete
 POST /dsh-agents/api/run
 POST /dsh-agents/api/squad/run
+POST /dsh-agents/api/describe
 ```
 
 - 浏览器半区去掉前导斜杠，与任务看板的前缀处理一致；页面挂载期间轮询 `state` 刷新。
+- `state` 还会带上本部署提供的工作区与 agent 预设（各自没有可提供项时省略该字段），小队表单的工作区、Lead 预设两格因此是下拉选择而不是手打 id。
+- `describe` 用本部署自己的模型路由（优先目录默认，否则目录第一条）起草一段小队简介，只回正文：没有模型服务或没有可用路由时以稳定 code 拒绝，表单退回可编辑模板，而不是存下一段空简介。
 - 失败一律是 JSON：稳定 code 加一句有界文字；协议上不出现堆栈、账本内容或会话文本。
 
 ## 存储

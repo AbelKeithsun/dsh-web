@@ -430,3 +430,76 @@ describe('a ledger this host cannot read', () => {
     expect(codeOf(() => second.state)).toBe('ledger-owned')
   })
 })
+
+describe('workspaces and description drafts this Host can offer', () => {
+  it('operator offers the workspaces the registry serves and omits the field when none can be listed', async () => {
+    // Given a registry holding one titled workspace and a Host serving none, When the panel reads state, Then the picker rows carry id/title/path and the field is absent rather than empty.
+    const titled = { list: (): readonly Workspace[] => [{ id: 'ws-1', title: 'repo', path: '/repo' } as unknown as Workspace] }
+    expect(await service({ workspaces: titled }).stateView()).toMatchObject({ workspaces: [{ id: 'ws-1', title: 'repo', path: '/repo' }] })
+    const without = service({ workspaces: undefined })
+    expect('workspaces' in await without.stateView()).toBe(false)
+    const throwing = { list: (): readonly Workspace[] => { throw new Error('no workspace registry here') } }
+    expect('workspaces' in await service({ workspaces: throwing }).stateView()).toBe(false)
+  })
+
+  it('operator drafts a description through the catalog route it offers', async () => {
+    // Given a describer and a catalog with a default route, When the form asks for a description, Then the name and intent are handed over with that route and its text comes back.
+    const seen: unknown[] = []
+    const instance = new AgentsHostService({
+      dir: tempDir(),
+      gateway: gateway({ modelCatalog: vi.fn(async () => ({ groups: [{ id: 'deepseek', models: [{ id: 'chat' }] }], default: { provider: 'deepseek', model: 'chat' } })) }),
+      describer: async (facts, route) => {
+        seen.push({ facts, route })
+        return 'Two reviewers and one builder.'
+      },
+      now: () => NOW,
+    })
+    services.push(instance)
+    expect(await instance.describe({ name: 'Squad one', intent: 'architecture review' })).toBe('Two reviewers and one builder.')
+    expect(seen).toEqual([{ facts: { name: 'Squad one', intent: 'architecture review' }, route: { provider: 'deepseek', model: 'chat' } }])
+  })
+
+  it('operator falls back to the first offered route when the catalog states no default', async () => {
+    // Given a catalog without a default route, When a description is drafted, Then the first offered route is used instead of refusing.
+    const seen: unknown[] = []
+    const instance = new AgentsHostService({
+      dir: tempDir(),
+      gateway: gateway({ modelCatalog: vi.fn(async () => ({ groups: [{ id: 'deepseek', models: [{ id: 'chat' }, { id: 'reasoner' }] }] })) }),
+      describer: async (_facts, route) => {
+        seen.push(route)
+        return 'text'
+      },
+      now: () => NOW,
+    })
+    services.push(instance)
+    expect(await instance.describe({ name: 'Squad one' })).toBe('text')
+    expect(seen).toEqual([{ provider: 'deepseek', model: 'chat' }])
+  })
+
+  it('operator refuses a description when this deployment serves no describer or no route', async () => {
+    // Given a Host with no model service and one with no usable route, When a description is asked for, Then both answer describe-unavailable instead of an empty string.
+    expect(await asyncCodeOf(() => service().describe({ name: 'Squad' }))).toBe('describe-unavailable')
+    const noRoute = new AgentsHostService({ dir: tempDir(), gateway: gateway(), describer: async () => 'x', now: () => NOW })
+    services.push(noRoute)
+    expect(await asyncCodeOf(() => noRoute.describe({ name: 'Squad' }))).toBe('describe-unavailable')
+  })
+
+  it('operator reports a model failure as describe-failed carrying the model sentence', async () => {
+    // Given a describer that throws, When a description is asked for, Then the refusal is describe-failed and the model sentence survives.
+    const instance = new AgentsHostService({
+      dir: tempDir(),
+      gateway: gateway({ modelCatalog: vi.fn(async () => ({ groups: [{ id: 'deepseek', models: [{ id: 'chat' }] }] })) }),
+      describer: async () => { throw new Error('the model did not answer within 90s') },
+      now: () => NOW,
+    })
+    services.push(instance)
+    let message = ''
+    try {
+      await instance.describe({ name: 'Squad' })
+    } catch (error) {
+      message = error instanceof Error ? error.message : ''
+    }
+    expect(await asyncCodeOf(() => instance.describe({ name: 'Squad' }))).toBe('describe-failed')
+    expect(message).toContain('did not answer within 90s')
+  })
+})

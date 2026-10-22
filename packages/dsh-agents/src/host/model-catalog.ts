@@ -17,12 +17,37 @@
 import type { AgentsModelOption } from '../protocol.ts'
 import type { MemberRunGateway } from './run-gateway.ts'
 
+/** One qualified model route. */
+export interface AgentsModelRoute {
+  provider: string
+  model: string
+}
+
 /** What the state view publishes about models: the routes and the levels they declare. */
 export interface AgentsModelCatalog {
   /** One row per route, in catalog order, without duplicates. */
   models: readonly AgentsModelOption[]
   /** Every level the offered models declare, first-seen order. */
   efforts: readonly string[]
+  /**
+   * The route this deployment composes new sessions from, when the catalog
+   * states one. Host-internal: the browser never sees it, because the only
+   * caller is the Host's own description call.
+   */
+  defaultRoute?: AgentsModelRoute
+}
+
+/**
+ * The route a Host-side model call should use: the catalog's own default, or
+ * the first route the catalog offers.
+ * @param catalog - the catalog, when this deployment publishes one.
+ * @returns the route, or undefined when nothing is offered.
+ */
+export function preferredModelRoute(catalog: AgentsModelCatalog | undefined): AgentsModelRoute | undefined {
+  if (catalog === undefined) return undefined
+  if (catalog.defaultRoute !== undefined) return catalog.defaultRoute
+  const first = catalog.models[0]
+  return first === undefined ? undefined : { provider: first.provider, model: first.model }
 }
 
 /** A plain JSON object, or undefined for anything else (including arrays). */
@@ -92,7 +117,15 @@ export function readModelCatalog(value: unknown): AgentsModelCatalog | undefined
       })
     }
   }
-  return models.length === 0 ? undefined : { models, efforts }
+  const fallback = record(record(value)?.default)
+  const defaultProvider = text(fallback?.provider)
+  const defaultModel = text(fallback?.model)
+  if (models.length === 0) return undefined
+  return {
+    models,
+    efforts,
+    ...(defaultProvider === undefined || defaultModel === undefined ? {} : { defaultRoute: { provider: defaultProvider, model: defaultModel } }),
+  }
 }
 
 /**

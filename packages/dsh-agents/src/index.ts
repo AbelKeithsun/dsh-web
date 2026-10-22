@@ -19,7 +19,9 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { Workspace } from '@deepseek-ai/dsh-workspace/types'
+import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { AGENTS_TOOL_GUIDANCE, AGENTS_TOOL_NAMES, buildAgentsTools } from './host/agent-tools.ts'
+import { createLlmSquadDescriber } from './host/describe.ts'
 import { agentsHomeDirectory } from './host/home.ts'
 import { assembleIdentity, registerMemberPromptSeam, type MemberPromptRegistry } from './host/member-prompt.ts'
 import { makeAgentsRoutes } from './host/routes.ts'
@@ -136,6 +138,20 @@ export function resolveWorkspaceRegistry(ctx: Context): WorkspaceRegistryFace | 
 export function resolveCommandDispatcher(ctx: Context): CommandDispatcherFace | undefined {
   const commands = readService<CommandDispatcherFace>(ctx, 'commands', false)
   return commands !== undefined && typeof commands.execute === 'function' ? commands : undefined
+}
+
+/**
+ * Read the optional model service the description button calls.
+ *
+ * Resolved per call rather than once: a model provider that activates after
+ * this row still answers, and a deployment that serves none keeps mounting with
+ * the description route answering `describe-unavailable`.
+ * @param ctx - the plugin context.
+ * @returns the llm runtime, or undefined when this deployment serves none.
+ */
+export function resolveLlm(ctx: Context): LlmRuntime | undefined {
+  const llm = readService<{ stream?: unknown }>(ctx, 'llm', false)
+  return llm !== undefined && typeof llm.stream === 'function' ? llm as unknown as LlmRuntime : undefined
 }
 
 /**
@@ -275,6 +291,7 @@ export function apply(ctx: Context, config?: Config): void {
     dir: agentsHomeDirectory(),
     gateway,
     ...(workspaces === undefined ? {} : { workspaces }),
+    describer: createLlmSquadDescriber(() => resolveLlm(ctx)),
     onSquadRun: () => { teamTools?.refresh() },
   })
 

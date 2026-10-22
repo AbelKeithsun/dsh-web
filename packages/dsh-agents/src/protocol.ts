@@ -50,6 +50,9 @@ export const FIRST_MESSAGE_MAX_LENGTH = 32_000
 /** Longest accepted squad goal; it reaches the Lead through the system prompt. */
 export const SQUAD_GOAL_MAX_LENGTH = 4_000
 
+/** Longest accepted rough intent handed to the description model. */
+export const DESCRIBE_INTENT_MAX_LENGTH = 1_000
+
 /**
  * Stable machine codes every error reply carries. The browser switches on this
  * value; the human-readable `error` text beside it is not a contract and never
@@ -100,6 +103,10 @@ export const AGENTS_ERROR_CODES = [
   'ledger-owned',
   /** The ledger could not be written. */
   'ledger-write-failed',
+  /** This deployment serves no model route, so no description can be written. */
+  'describe-unavailable',
+  /** The model behind a description failed, timed out, or answered nothing usable. */
+  'describe-failed',
   /** The Host failed in a way this plugin did not anticipate. */
   'internal-error',
 ] as const
@@ -188,6 +195,21 @@ export interface AgentsModelOption {
 }
 
 /** `GET {DSH_AGENTS_API_PREFIX}/state`: everything the browser panel renders. */
+/**
+ * One host workspace a squad can pin, as the panel's picker needs it.
+ *
+ * The picker shows the title and the path; the id is what the squad stores and
+ * what the run gate validates against the host registry.
+ */
+export interface AgentsWorkspaceOption {
+  /** Workspace id this squad pins. */
+  id: string
+  /** Display title the host registry gave it. */
+  title: string
+  /** Canonical directory path, when the host reports one. */
+  path?: string
+}
+
 export interface AgentsStateView {
   teams: TeamDefinition[]
   runs: RunRecord[]
@@ -199,6 +221,14 @@ export interface AgentsStateView {
    * uses it to offer the Lead preset of a whole-squad run.
    */
   presets?: readonly string[]
+  /**
+   * Host workspaces this deployment offers as a squad pin, in registry order.
+   * Additive and optional under the same rule as `presets`: a deployment that
+   * serves no workspace registry answers without the key, and the squad form
+   * then falls back to a typed id instead of an empty picker that reads as
+   * "this machine has no workspace".
+   */
+  workspaces?: readonly AgentsWorkspaceOption[]
   /**
    * Model routes this deployment's own catalog offers. Additive and optional,
    * under the same rule as `presets`: a Host whose catalog service is absent,
@@ -272,6 +302,25 @@ export interface SquadRunRequestBody {
   goal?: string
   /** Optional first user message queued on the Lead session. */
   firstMessage?: string
+}
+
+/**
+ * `POST {DSH_AGENTS_API_PREFIX}/describe` body: draft one squad description.
+ *
+ * The name is the identity the description has to fit; the intent is whatever
+ * the user typed, which may be a bare phrase ("architecture review"). Both are
+ * bounded here so a caller cannot turn the model call into a data pump.
+ */
+export interface DescribeRequestBody {
+  /** The squad's display name. */
+  name: string
+  /** The user's rough intent, when they wrote one. */
+  intent?: string
+}
+
+/** `POST {DSH_AGENTS_API_PREFIX}/describe` reply: one paragraph, ready to store. */
+export interface DescribeResponseBody {
+  description: string
 }
 
 /** `POST {DSH_AGENTS_API_PREFIX}/team/delete` reply. */
@@ -449,6 +498,21 @@ export function parseSquadRunRequestBody(value: unknown): SquadRunRequestBody | 
 }
 
 /**
+ * Gate the `POST /describe` body. The name is required — the description is
+ * written for it — while an absent intent is a legitimate request: it asks the
+ * model to describe the squad from its name alone.
+ */
+export function parseDescribeRequestBody(value: unknown): DescribeRequestBody | undefined {
+  const body = record(value)
+  if (body === undefined || !exactKeys(body, ['name', 'intent'])) return undefined
+  const name = optionalText(body.name, NAME_MAX_LENGTH)
+  if (name === undefined || name === null) return undefined
+  const intent = optionalText(body.intent, DESCRIBE_INTENT_MAX_LENGTH)
+  if (intent === null) return undefined
+  return { name, ...(intent === undefined ? {} : { intent }) }
+}
+
+/**
  * The read-only roster route the browser falls back to when the shared session
  * store's `agentTeam` projection is not reachable from its context.
  *
@@ -492,4 +556,5 @@ export const DSH_AGENTS_ROUTE_PATHS = [
   DSH_AGENTS_API_PREFIX + '/member/delete',
   DSH_AGENTS_API_PREFIX + '/run',
   DSH_AGENTS_API_PREFIX + '/squad/run',
+  DSH_AGENTS_API_PREFIX + '/describe',
 ] as const

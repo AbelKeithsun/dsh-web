@@ -17,7 +17,7 @@ import { parseModelPin, type ModelRoute } from '../core/model-pin.ts'
 import { TeamError } from '../team/error.ts'
 import type { TeammatePins } from '../team/pins.ts'
 import type { SpawnTeammateRequest } from '../team/types.ts'
-import type { AgentsPermission } from '../protocol.ts'
+import type { AgentsPermission, AgentsWorkspaceOption } from '../protocol.ts'
 import type { Workspace } from '@deepseek-ai/dsh-workspace/types'
 
 /** One agent preset as the host registry reports it. */
@@ -77,6 +77,38 @@ export interface MemberRunGateway {
 /** The workspace registry face the run gate validates against. */
 export interface WorkspaceRegistryFace {
   list(): readonly Workspace[]
+}
+
+/**
+ * The workspaces this deployment offers as a squad pin, for the form's picker.
+ *
+ * Absence is a first-class answer, exactly like the preset list beside it: a
+ * deployment that serves no registry, one whose read throws, or one whose list
+ * carries no usable id answers undefined, and the state view then omits the
+ * field so the form falls back to a typed id instead of an empty picker.
+ * @param face - the workspace registry, when this deployment serves one.
+ * @returns the offered workspaces, or undefined when none can be listed.
+ */
+export function listOfferedWorkspaces(face: WorkspaceRegistryFace | undefined): readonly AgentsWorkspaceOption[] | undefined {
+  if (face === undefined) return undefined
+  let rows: readonly Workspace[]
+  try {
+    rows = face.list()
+  } catch {
+    // A registry whose read throws is a registry this deployment does not serve.
+    return undefined
+  }
+  const offered: AgentsWorkspaceOption[] = []
+  for (const row of rows) {
+    const id = String(row.id)
+    if (id === '') continue
+    offered.push({
+      id,
+      title: typeof row.title === 'string' && row.title !== '' ? row.title : id,
+      ...(typeof row.path === 'string' && row.path !== '' ? { path: row.path } : {}),
+    })
+  }
+  return offered.length === 0 ? undefined : offered
 }
 
 /** The command dispatcher face the permission pin drives. */

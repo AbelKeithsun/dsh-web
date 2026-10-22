@@ -26,7 +26,7 @@ import { SquadDetail } from './SquadDetail.tsx'
 import type { MemberNotice } from './MemberCard.tsx'
 import type { SquadNotice, SquadRunRequest } from './SquadRunPanel.tsx'
 import type { SquadTeamSnapshot, SquadTeamSource } from './team-source.ts'
-import type { AgentsStateView, MemberDefinition, MemberDraft, TeamDefinition, TeamDraft } from '../protocol.ts'
+import type { AgentsStateView, AgentsWorkspaceOption, MemberDefinition, MemberDraft, TeamDefinition, TeamDraft } from '../protocol.ts'
 import css from './agents.module.css'
 
 /** Refresh cadence while the page is mounted. M1 polls; there is no stream. */
@@ -54,6 +54,11 @@ export interface AgentsPageProps {
 /** The preset list a Host reports, or none: a Host that reports nothing offers no list. */
 function presetsOf(state: AgentsStateView): readonly string[] {
   return Array.isArray(state.presets) ? state.presets : []
+}
+
+/** The workspaces a Host offers as a squad pin, or none: none means "type an id". */
+function workspacesOf(state: AgentsStateView): readonly AgentsWorkspaceOption[] {
+  return Array.isArray(state.workspaces) ? state.workspaces : []
 }
 
 /**
@@ -200,7 +205,21 @@ export function AgentsPage({ transport, openSession, teamSource }: AgentsPagePro
 
   const body = ((): ReactNode => {
     if (form !== undefined && form.kind === 'team') {
-      return <TeamForm team={form.team} busy={busy} onSubmit={submitTeam} onCancel={() => { setForm(undefined) }} />
+      // The squad form's pickers and its description button read the last good
+      // read, exactly like the member form's catalog: a failed poll keeps the
+      // previous snapshot, so nothing turns into a text box mid-typing.
+      const catalog = load.phase === 'ready' ? load.state : undefined
+      return (
+        <TeamForm
+          team={form.team}
+          busy={busy}
+          presets={catalog === undefined ? [] : presetsOf(catalog)}
+          workspaces={catalog === undefined ? [] : workspacesOf(catalog)}
+          onDescribe={async (draft) => await transport.describe(draft)}
+          onSubmit={submitTeam}
+          onCancel={() => { setForm(undefined) }}
+        />
+      )
     }
     if (form !== undefined && form.kind === 'member') {
       // The pickers read the catalog of the last good read: a failed poll keeps

@@ -9,6 +9,8 @@ import type { AgentsTransport } from '../src/client/host-api.ts'
 import type { SessionListFace, SquadTeamSnapshot, SquadTeamSource } from '../src/client/team-source.ts'
 import type {
   AgentsStateView,
+  AgentsWorkspaceOption,
+  DescribeRequestBody,
   MemberDefinition,
   MemberDraft,
   RunRecord,
@@ -96,8 +98,19 @@ export function agentTeamOf(
 }
 
 /** One published state. */
-export function stateOf(teams: TeamDefinition[], runs: RunRecord[] = [], presets?: readonly string[]): AgentsStateView {
-  return { teams, runs, host: { ownerPid: 4242 }, ...(presets === undefined ? {} : { presets }) }
+export function stateOf(
+  teams: TeamDefinition[],
+  runs: RunRecord[] = [],
+  presets?: readonly string[],
+  workspaces?: readonly AgentsWorkspaceOption[],
+): AgentsStateView {
+  return {
+    teams,
+    runs,
+    host: { ownerPid: 4242 },
+    ...(presets === undefined ? {} : { presets }),
+    ...(workspaces === undefined ? {} : { workspaces }),
+  }
 }
 
 /** The fake's configuration; every hook is optional except the read. */
@@ -110,6 +123,7 @@ export interface FakeTransportConfig {
   deleteTeam?: (teamId: string) => Promise<void>
   saveMember?: (teamId: string, member: MemberDraft) => Promise<TeamDefinition>
   deleteMember?: (teamId: string, memberId: string) => Promise<TeamDefinition>
+  describe?: (request: DescribeRequestBody) => Promise<string>
 }
 
 /** The injected fake plus the counters the poll suite reads. */
@@ -122,6 +136,8 @@ export interface FakeTransport extends AgentsTransport {
   readonly squadRequests: readonly SquadRunRequestBody[]
   /** Every team draft the page saved, in order. */
   readonly teamSaves: readonly TeamDraft[]
+  /** Every describe request the page posted, in order. */
+  readonly describes: readonly DescribeRequestBody[]
 }
 
 /**
@@ -135,6 +151,7 @@ export function fakeTransport(config: FakeTransportConfig): FakeTransport {
   let teamReads = 0
   const squadRequests: SquadRunRequestBody[] = []
   const teamSaves: TeamDraft[] = []
+  const describes: DescribeRequestBody[] = []
   const missing = (route: string): never => { throw new Error(route + ' is not configured in this fake') }
   return {
     get reads(): number { return reads },
@@ -143,6 +160,7 @@ export function fakeTransport(config: FakeTransportConfig): FakeTransport {
     get teamReads(): number { return teamReads },
     get squadRequests(): readonly SquadRunRequestBody[] { return squadRequests },
     get teamSaves(): readonly TeamDraft[] { return teamSaves },
+    get describes(): readonly DescribeRequestBody[] { return describes },
     async state(_signal?: AbortSignal): Promise<AgentsStateView> {
       reads += 1
       return config.state(reads)
@@ -172,6 +190,10 @@ export function fakeTransport(config: FakeTransportConfig): FakeTransport {
     },
     async deleteMember(teamId: string, memberId: string): Promise<TeamDefinition> {
       return config.deleteMember === undefined ? missing('deleteMember') : config.deleteMember(teamId, memberId)
+    },
+    async describe(request: DescribeRequestBody): Promise<string> {
+      describes.push(request)
+      return config.describe === undefined ? missing('describe') : config.describe(request)
     },
   }
 }

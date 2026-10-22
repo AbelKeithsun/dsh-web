@@ -18,7 +18,8 @@ import type { ReactNode } from 'react'
 import { t } from './locales.ts'
 import { effortLevels, effortRows, modelDeclaresNoLevels, modelRows } from './model-options.ts'
 import { PERMISSION_MODES, permissionLabel } from './permissions.ts'
-import type { AgentsModelOption, MemberDraft, MemberDefinition, AgentsPermission, TeamDefinition, TeamDraft } from '../protocol.ts'
+import { DESCRIPTION_MAX_LENGTH } from '../protocol.ts'
+import type { AgentsModelOption, AgentsWorkspaceOption, MemberDraft, MemberDefinition, AgentsPermission, TeamDefinition, TeamDraft } from '../protocol.ts'
 import css from './agents.module.css'
 
 /**
@@ -44,10 +45,27 @@ export function teamDraftOf(team: TeamDefinition, overrides?: { leadPreset?: str
   }
 }
 
+/** What the description button asks the page for. */
+export interface DescribeDraft {
+  /** The squad name the description has to fit. */
+  name: string
+  /** The user's rough intent, when they wrote one. */
+  intent?: string
+}
+
 export interface TeamFormProps {
   /** The squad being edited; omitted when creating one. */
   team: TeamDefinition | undefined
   busy: boolean
+  /** Agent preset ids the Host reports; empty when it reports none. */
+  presets: readonly string[]
+  /** Host workspaces to pin; empty when the Host reports none. */
+  workspaces: readonly AgentsWorkspaceOption[]
+  /**
+   * Draft a description with the Host's model. Absent when this page cannot
+   * offer the button at all, and the field stays a plain textarea.
+   */
+  onDescribe?: (draft: DescribeDraft) => Promise<string>
   onSubmit: (draft: TeamDraft) => void
   onCancel: () => void
 }
@@ -56,14 +74,44 @@ export interface TeamFormProps {
  * Render the squad form.
  * @param props - the squad under edit and the page actions.
  */
-export function TeamForm({ team, busy, onSubmit, onCancel }: TeamFormProps): ReactNode {
+export function TeamForm({ team, busy, presets, workspaces, onDescribe, onSubmit, onCancel }: TeamFormProps): ReactNode {
   const [name, setName] = useState(team?.name ?? '')
   const [description, setDescription] = useState(team?.description ?? '')
   const [workspaceId, setWorkspaceId] = useState(team?.workspaceId ?? '')
   const [leadPreset, setLeadPreset] = useState(team?.leadPreset ?? '')
+  const [nameTouched, setNameTouched] = useState(false)
   const [error, setError] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState('')
+  const trimmedName = name.trim()
+  // A field is only marked invalid once the user has actually left it or tried
+  // to submit: an untouched empty form is a place to start, not a mistake.
+  const invalidName = trimmedName === '' && nameTouched
+  const canSubmit = trimmedName !== ''
+  const selectedWorkspace = workspaces.find(workspace => workspace.id === workspaceId)
+  const workspaceLabel = selectedWorkspace === undefined ? t('detail.noWorkspace') : selectedWorkspace.title
+  const leadLabel = leadPreset === '' ? t('squad.leadPresetInherit') : leadPreset
+  const generate = (): void => {
+    if (onDescribe === undefined || generating) return
+    setGenerating(true)
+    setGenerateError('')
+    const intent = description.trim()
+    void onDescribe({ name: trimmedName, ...(intent === '' ? {} : { intent }) })
+      .then((text) => { setDescription(text) })
+      .catch((failure: unknown) => {
+        setGenerateError(failure instanceof Error ? failure.message : t('error.unknown'))
+        // A model that cannot answer must not leave the field empty-handed: the
+        // typed template offers the same three lines to fill in, and it never
+        // overwrites text the user already wrote.
+        if (intent === '') {
+          setDescription(t('form.descriptionTemplate', { name: trimmedName === '' ? t('form.previewName') : trimmedName }))
+        }
+      })
+      .finally(() => { setGenerating(false) })
+  }
   const submit = (): void => {
-    if (name.trim() === '') {
+    if (trimmedName === '') {
+      setNameTouched(true)
       setError(t('form.nameRequired'))
       return
     }
@@ -71,9 +119,9 @@ export function TeamForm({ team, busy, onSubmit, onCancel }: TeamFormProps): Rea
     const pinnedLead = leadPreset.trim()
     onSubmit({
       ...(team === undefined ? {} : teamDraftOf(team)),
-      name: name.trim(),
+      name: trimmedName,
       description,
-      workspaceId,
+      workspaceId: workspaceId.trim(),
       // Always present so clearing the field actually clears the pin: the Host
       // reads an absent field as "keep nothing" for a replace and drops the key
       // from the JSON body either way.
@@ -81,27 +129,103 @@ export function TeamForm({ team, busy, onSubmit, onCancel }: TeamFormProps): Rea
     })
   }
   return (
-    <form className={css.form} data-dsh-part="team-form" onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <h3 className={css.sectionTitle}>{t('form.teamTitle')}</h3>
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('form.name')}</span>
-        <input className={css.input} value={name} placeholder={t('form.namePlaceholder')} onChange={(event) => { setName(event.target.value) }} />
-      </label>
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('form.description')}</span>
-        <textarea className={css.textarea} value={description} placeholder={t('form.descriptionPlaceholder')} onChange={(event) => { setDescription(event.target.value) }} />
-      </label>
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('form.workspace')}</span>
-        <input className={css.input} value={workspaceId} placeholder={t('form.workspacePlaceholder')} onChange={(event) => { setWorkspaceId(event.target.value) }} />
-      </label>
-      <label className={css.field}>
-        <span className={css.fieldLabel}>{t('form.leadPreset')}</span>
-        <input className={css.input} value={leadPreset} placeholder={t('form.leadPresetPlaceholder')} onChange={(event) => { setLeadPreset(event.target.value) }} />
-      </label>
+    <form className={css.form + ' ' + css.formWide} data-dsh-part="team-form" onSubmit={(event) => { event.preventDefault(); submit() }}>
+      <div className={css.formLayout}>
+        <div className={css.formGroups}>
+          <fieldset className={css.formGroup} data-dsh-part="team-form-basics">
+            <legend className={css.formGroupTitle}>{t('form.basics')}</legend>
+            <p className={css.formGroupHint}>{t('form.basicsHint')}</p>
+            <label className={css.field}>
+              <span className={css.fieldLabel}>
+                {t('form.name')}
+                <span className={css.fieldRequired} aria-hidden="true">*</span>
+              </span>
+              <input
+                className={css.input}
+                required
+                value={name}
+                placeholder={t('form.namePlaceholder')}
+                aria-invalid={invalidName}
+                onChange={(event) => { setName(event.target.value) }}
+                onBlur={() => { setNameTouched(true) }}
+              />
+              <span className={css.fieldHint + (invalidName ? ' ' + css.fieldHintError : '')}>
+                {invalidName ? t('form.nameRequired') : t('form.nameHint')}
+              </span>
+            </label>
+            <div className={css.field}>
+              <span className={css.fieldLabel}>{t('form.description')}</span>
+              <textarea
+                className={css.textarea}
+                rows={3}
+                maxLength={DESCRIPTION_MAX_LENGTH}
+                value={description}
+                placeholder={t('form.descriptionPlaceholder')}
+                onChange={(event) => { setDescription(event.target.value) }}
+              />
+              <div className={css.inlineRow}>
+                {onDescribe === undefined ? null : (
+                  <button
+                    type="button"
+                    className={css.action + ' ' + css.actionSmall}
+                    disabled={busy || generating || (trimmedName === '' && description.trim() === '')}
+                    onClick={generate}
+                  >
+                    {generating ? t('form.generating') : t('form.generate')}
+                  </button>
+                )}
+                <span className={css.fieldHint}>{t('form.descriptionHint')}</span>
+              </div>
+              {generateError === '' ? null : <span className={css.fieldHint + ' ' + css.fieldHintError} role="status">{generateError}</span>}
+            </div>
+          </fieldset>
+          <fieldset className={css.formGroup} data-dsh-part="team-form-runtime">
+            <legend className={css.formGroupTitle}>{t('form.runtime')}</legend>
+            <p className={css.formGroupHint}>{t('form.runtimeHint')}</p>
+            <div className={css.field}>
+              <span className={css.fieldLabel}>{t('form.workspace')}</span>
+              {workspaces.length === 0 ? (
+                <input className={css.input} value={workspaceId} placeholder={t('form.workspacePlaceholder')} onChange={(event) => { setWorkspaceId(event.target.value) }} />
+              ) : (
+                <select className={css.input} value={workspaceId} aria-label={t('form.workspace')} onChange={(event) => { setWorkspaceId(event.target.value) }}>
+                  <option value="">{t('form.workspaceInherit')}</option>
+                  {workspaces.map(workspace => (
+                    <option key={workspace.id} value={workspace.id} title={workspace.path ?? workspace.id}>{workspace.title}</option>
+                  ))}
+                </select>
+              )}
+              <span className={css.fieldHint}>{workspaces.length === 0 ? t('form.workspaceHintTyped') : t('form.workspaceHint')}</span>
+            </div>
+            <div className={css.field}>
+              <span className={css.fieldLabel}>{t('form.leadPreset')}</span>
+              {presets.length === 0 ? (
+                <input className={css.input} value={leadPreset} placeholder={t('form.leadPresetPlaceholder')} onChange={(event) => { setLeadPreset(event.target.value) }} />
+              ) : (
+                <select className={css.input} value={leadPreset} aria-label={t('form.leadPreset')} onChange={(event) => { setLeadPreset(event.target.value) }}>
+                  <option value="">{t('squad.leadPresetInherit')}</option>
+                  {presets.map(id => <option key={id} value={id}>{id}</option>)}
+                </select>
+              )}
+              <span className={css.fieldHint}>{presets.length === 0 ? t('form.leadPresetHintTyped') : t('form.leadPresetHint')}</span>
+            </div>
+          </fieldset>
+        </div>
+        <aside className={css.formPreview} data-dsh-part="team-form-preview" aria-label={t('form.preview')}>
+          <span className={css.formPreviewLabel}>{t('form.preview')}</span>
+          <div className={css.formPreviewCard}>
+            <span className={css.formPreviewName}>{trimmedName === '' ? t('form.previewName') : trimmedName}</span>
+            <span className={css.formPreviewMeta}>{t('list.memberCount', { count: String(team?.members.length ?? 0) })}</span>
+            <span className={css.formPreviewDescription}>{description.trim() === '' ? t('list.noDescription') : description.trim()}</span>
+            <span className={css.formPreviewFoot}>
+              <span>{t('form.previewWorkspace', { name: workspaceLabel })}</span>
+              <span>{t('form.previewLead', { name: leadLabel })}</span>
+            </span>
+          </div>
+        </aside>
+      </div>
       {error === '' ? null : <p className={css.noticeError} role="alert">{error}</p>}
       <div className={css.formActions}>
-        <button type="submit" className={css.primary} disabled={busy}>{team === undefined ? t('form.create') : t('form.save')}</button>
+        <button type="submit" className={css.primary} disabled={busy || !canSubmit}>{team === undefined ? t('form.create') : t('form.save')}</button>
         <button type="button" className={css.secondary} onClick={onCancel}>{t('form.cancel')}</button>
       </div>
     </form>
