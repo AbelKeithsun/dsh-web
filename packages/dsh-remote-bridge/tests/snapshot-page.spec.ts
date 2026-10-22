@@ -280,7 +280,7 @@ describe('paged opening snapshots over protocol v1', () => {
     expect('nextBefore' in page).toBe(false)
   })
 
-  it('the page answers hasMore only about its own projection, even when the window stopped short', async () => {
+  it('user reading a whole page is told hasMore speaks only about its own projection, even when the window stopped short', async () => {
     // Given a window whose every entry fits one page, over a session the window cannot reach the start of
     const harness = makeConnection({ paired: true })
     await harness.connection.handleText(requestFrame(1, 'hello', { proto: 1, cap: ['session.snapshot.trim.v1', 'session.snapshot.page.v1'] }))
