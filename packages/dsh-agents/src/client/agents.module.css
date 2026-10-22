@@ -494,6 +494,14 @@
   flex-direction: column;
   gap: 10px;
   min-inline-size: 0;
+  /* No cap here: each form states its own. A shared cap on this class would be
+     the single reason a wide panel ends in a narrow column, and a later class
+     could only argue with it, not remove it. */
+  max-inline-size: none;
+}
+
+/* The member form is a single column of pickers and keeps the reading width. */
+.memberForm {
   max-inline-size: 560px;
 }
 
@@ -776,19 +784,20 @@
    beside a live card preview, single column below the two-column breakpoint so
    a 360px phone reads the same fields in the same order. */
 .formWide {
-  max-inline-size: 900px;
+  inline-size: 100%;
+  max-inline-size: none;
 }
 
 .formLayout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
+  gap: 16px 20px;
   align-items: start;
 }
 
-@media (min-width: 760px) {
+@media (min-width: 720px) {
   .formLayout {
-    grid-template-columns: minmax(0, 1fr) minmax(200px, 240px);
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 340px);
   }
 }
 
@@ -935,4 +944,3 @@
   max-inline-size: 100%;
   overflow-wrap: anywhere;
 }
-

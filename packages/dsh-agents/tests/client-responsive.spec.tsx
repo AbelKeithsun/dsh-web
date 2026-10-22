@@ -85,6 +85,21 @@ describe('agents page narrow viewport', () => {
     expect(rule('.headerTitle')).toContain('min-inline-size: 0')
   })
 
+  it('operator sees the squad form claim the panel width while the member form keeps its column', () => {
+    // Given the two form widths
+    // When a wide panel lays out the new-squad form
+    // Then nothing caps the shared form class, the squad form fills its
+    // container, and only the member form keeps the 560px reading column
+    expect(rule('.form')).not.toContain('max-inline-size: 5')
+    expect(rule('.formWide')).toContain('inline-size: 100%')
+    expect(rule('.formWide')).toContain('max-inline-size: none')
+    expect(rule('.memberForm')).toContain('max-inline-size: 560px')
+    // And the wide layout's second column is a card, not a strip: the pair
+    // lives in the breakpoint, which the single-class reader cannot see
+    expect(rule('.formLayout')).toContain('grid-template-columns: minmax(0, 1fr)')
+    expect(sheet).toContain('grid-template-columns: minmax(0, 1fr) minmax(240px, 340px)')
+  })
+
   it('operator sees the card grids never demand more width than the column has', () => {
     // Given both grids
     // When the column is narrower than one ideal card

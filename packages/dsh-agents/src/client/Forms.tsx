@@ -280,7 +280,7 @@ export function MemberForm({ teamId, member, busy, models, efforts, onSubmit, on
     })
   }
   return (
-    <form className={css.form} data-dsh-part="member-form" onSubmit={(event) => { event.preventDefault(); submit() }}>
+    <form className={css.form + ' ' + css.memberForm} data-dsh-part="member-form" onSubmit={(event) => { event.preventDefault(); submit() }}>
       <h3 className={css.sectionTitle}>{t('form.memberTitle')}</h3>
       <label className={css.field}>
         <span className={css.fieldLabel}>{t('form.name')}</span>
