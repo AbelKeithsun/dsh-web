@@ -173,7 +173,7 @@ describe('standing watchers: the stream the bridge keeps for a card', () => {
     // Then the card is ended for that session
     expect(sink.cards).toHaveLength(1)
     expect(sink.cards[0]?.aps.event).toBe('end')
-    expect(sink.cards[0]?.aps['content-state']).toMatchObject({ phase: 'ended', statusLine: '回合结束' })
+    expect(sink.cards[0]?.aps['content-state']).toMatchObject({ phase: 'ended', statusLine: 'Turn finished' })
     // And the notification of §28.5 went with it
     expect(sink.notices).toHaveLength(1)
     expect(sink.notices[0]?.st).toBe('turn-end')
