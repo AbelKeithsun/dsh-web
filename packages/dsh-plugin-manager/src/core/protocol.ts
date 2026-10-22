@@ -51,6 +51,29 @@ export interface InstalledPluginItem {
  */
 export type RestartMode = 'relaunch' | 'shell' | 'manual'
 
+/**
+ * The result of one applied update: the installed row, plus the host's verdict
+ * on whether this process can serve it without a restart.
+ *
+ * The two facts are separate because they answer different questions and must
+ * not be folded into one: the version landed (the row carries it), and the
+ * running host may still not have loaded it. Reporting the second as an error
+ * would be wrong twice over — the update did apply, and a batch update stops on
+ * the first error it sees — so it travels as an accompanying fact instead.
+ */
+export interface PluginUpdateResult {
+  /** The installed row, at the version the update landed on. */
+  plugin: InstalledPluginItem
+  /**
+   * Bundles whose new version is on disk but which the running host has not
+   * loaded, empty when the update took effect in place. The official manager
+   * reports this as `application: 'restart-required'` (issue #1905); the
+   * official installer channel carries no such fact, so it answers an empty
+   * list.
+   */
+  restartRequired: string[]
+}
+
 /** Point-in-time install/update progress reported by the host. */
 export interface InstallProgressItem {
   kind: 'idle' | 'install' | 'update'
@@ -176,6 +199,26 @@ export function parseInstalledPlugin(value: unknown): InstalledPluginItem {
     throw new Error('plugin-manager: response must contain a plugin row')
   }
   return parsePlugin(value.plugin, 0)
+}
+
+/**
+ * Read the restart-required list off one gateway job (or off anything else
+ * carrying it).
+ *
+ * Deliberately tolerant where the other parsers in this module throw: this list
+ * is a hint attached to an update that already landed, so an unreadable value
+ * must cost the user the hint only. Throwing would reject an applied update and
+ * stop a batch run — the exact outcome the fact exists to avoid.
+ * @param value - decoded but untrusted job value.
+ * @returns the bundle names, empty when the value is absent or unusable.
+ */
+export function parseRestartRequired(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const names: string[] = []
+  for (const item of value) {
+    if (typeof item === 'string' && item !== '') names.push(item)
+  }
+  return names
 }
 
 /**

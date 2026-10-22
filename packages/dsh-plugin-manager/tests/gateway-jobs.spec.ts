@@ -8,7 +8,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { CliGateway, unsafeSpecReason, type GatewayJob } from '../src/host/gateway.ts'
+import {
+  CliGateway,
+  nativeManagerFailure,
+  nativeManagerRestartRequired,
+  unsafeSpecReason,
+  type GatewayJob,
+} from '../src/host/gateway.ts'
 import type { ProfileFacts } from '../src/host/profile.ts'
 
 interface FakeChild {
@@ -150,6 +156,32 @@ describe('unsafeSpecReason', () => {
     for (const spec of ['dsh-pet', '@linxin666/dsh-pet@^1.2.3', 'pkg@~2.0.0', 'git+https://github.com/a/b.git#main', 'github:a/b', 'link:../local-pkg']) {
       expect(unsafeSpecReason(spec), spec).toBeUndefined()
     }
+  })
+})
+
+describe('nativeManagerRestartRequired', () => {
+  it('operator: reads the landed-but-unloaded verdict as a restart fact, not a failure', () => {
+    // Given the verdicts the official manager resolves with: an in-place apply,
+    // an apply only a restart loads, a folded refusal, and a cancellation
+    const applied = { stage: 'install', target: 'dsh-memoir@1.1.0', changed: true, application: 'applied' }
+    const needsRestart = { stage: 'remove', target: 'dsh-memoir', changed: true, application: 'restart-required' }
+    const refused = {
+      stage: 'install',
+      target: 'dsh-memoir@1.1.0',
+      changed: false,
+      application: 'failed',
+      error: { code: 'bundle-in-use' },
+    }
+    const cancelled = { stage: 'install', changed: false, application: 'cancelled' }
+
+    // When each resolved verdict is read for its restart fact
+    const facts = [applied, needsRestart, refused, cancelled].map(verdict => nativeManagerRestartRequired(verdict))
+
+    // Then only restart-required carries it, and it is not a failure: the
+    // version landed, so reporting it as an error would undo an applied update
+    expect(facts).toEqual([false, true, false, false])
+    expect(nativeManagerRestartRequired(undefined)).toBe(false)
+    expect(nativeManagerFailure(needsRestart)).toBeUndefined()
   })
 })
 
@@ -642,6 +674,8 @@ describe('CliGateway operations on an application-owned profile', () => {
     expect(calls).toEqual([['install', 'dsh-memoir@1.1.0']])
     expect(job.phase).toBe('done')
     expect(job.plugin).toMatchObject({ id: 'dsh-memoir', version: '1.1.0' })
+    // An update this process serves needs no restart, so no such fact is claimed
+    expect(job.restartRequired).toBeUndefined()
   })
 
   it('operator: sees a failed manager run reported as an error job', async () => {
@@ -789,6 +823,90 @@ describe('CliGateway operations on an application-owned profile', () => {
     expect(job.error).toContain('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
     expect(job.error).toContain('已装回 dsh-memoir@1.0.0')
     expect(readManifest(facts.profileDir).dependencies['dsh-memoir']).toBe('1.0.0')
+  })
+
+  it('operator: sees a replacement whose removal landed as restart-required, not as a clean success', async () => {
+    // Given an application-owned profile whose official manager refuses the
+    // in-place reinstall, applies the removal only as far as a restart loads it
+    // (the replaced bundle's rows already left the running process, issue
+    // #1905), and then installs the target version
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    const calls: string[][] = []
+    const gateway = new CliGateway(desktopFacts(facts), {} as NodeJS.ProcessEnv, {
+      spawnImpl: (() => { throw new Error('the CLI must not run for an application-owned profile') }) as never,
+      findBinary: () => '/fake/dsh',
+      nativeManager: () => ({
+        installBundle: async (spec: string) => {
+          calls.push(['install', spec])
+          if (readManifest(facts.profileDir).dependencies['dsh-memoir'] !== undefined) return alreadyInstalledRefusal
+          installPackage(facts.profileDir, 'dsh-memoir', { version: '1.1.0' })
+          return { stage: 'install', target: spec, changed: true, application: 'applied' }
+        },
+        removeBundle: async (name: string) => {
+          calls.push(['remove', name])
+          removePackage(facts.profileDir, name)
+          return { stage: 'remove', target: name, changed: true, application: 'restart-required' }
+        },
+      }),
+    })
+
+    // When the update runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then the target version landed and the job is done, carrying the fact
+    // that only a restart loads it — not an error, which would roll it back
+    expect(calls).toEqual([
+      ['install', 'dsh-memoir@1.1.0'],
+      ['remove', 'dsh-memoir'],
+      ['install', 'dsh-memoir@1.1.0'],
+    ])
+    expect(job.phase).toBe('done')
+    expect(job.plugin).toMatchObject({ id: 'dsh-memoir', version: '1.1.0' })
+    expect(job.error).toBeUndefined()
+    expect(job.restartRequired).toEqual(['dsh-memoir'])
+  })
+
+  it('operator: sees a reinstall that landed as restart-required read as an applied update', async () => {
+    // Given the removal applies cleanly and the reinstall lands but cannot be
+    // loaded in this process
+    const { facts, dir } = makeProfile({ 'dsh-memoir': { version: '1.0.0' } })
+    tempDirs.push(dir)
+    const calls: string[][] = []
+    const gateway = new CliGateway(desktopFacts(facts), {} as NodeJS.ProcessEnv, {
+      spawnImpl: (() => { throw new Error('the CLI must not run for an application-owned profile') }) as never,
+      findBinary: () => '/fake/dsh',
+      nativeManager: () => ({
+        installBundle: async (spec: string) => {
+          calls.push(['install', spec])
+          if (readManifest(facts.profileDir).dependencies['dsh-memoir'] !== undefined) return alreadyInstalledRefusal
+          installPackage(facts.profileDir, 'dsh-memoir', { version: '1.1.0' })
+          return { stage: 'install', target: spec, changed: true, application: 'restart-required' }
+        },
+        removeBundle: async (name: string) => {
+          calls.push(['remove', name])
+          removePackage(facts.profileDir, name)
+          return { stage: 'remove', target: name, changed: true, application: 'applied' }
+        },
+      }),
+    })
+
+    // When the update runs
+    const { jobId } = gateway.update('dsh-memoir', '1.1.0')
+    const job = await settle(gateway, jobId)
+
+    // Then the update is applied, the report says a restart loads it, and the
+    // previous version was never reinstalled: a landed update is not a failure
+    expect(calls).toEqual([
+      ['install', 'dsh-memoir@1.1.0'],
+      ['remove', 'dsh-memoir'],
+      ['install', 'dsh-memoir@1.1.0'],
+    ])
+    expect(job.phase).toBe('done')
+    expect(job.plugin).toMatchObject({ id: 'dsh-memoir', version: '1.1.0' })
+    expect(job.error).toBeUndefined()
+    expect(job.restartRequired).toEqual(['dsh-memoir'])
   })
 
   /** The verdict a removal the official guard refuses with a still-running row carries. */
@@ -1118,9 +1236,11 @@ describe('CliGateway operations on an application-owned profile', () => {
     const job = await settle(gateway, jobId)
 
     // Then the profile re-read still settles it, because a positive verdict is
-    // not trusted on its own either
+    // not trusted on its own either, and the restart the manager named is
+    // carried as a fact instead of being dropped
     expect(job.phase).toBe('done')
     expect(job.plugin).toMatchObject({ id: 'dsh-memoir', version: '1.1.0' })
+    expect(job.restartRequired).toEqual(['dsh-memoir'])
   })
 
   it('operator: keeps the CLI as the writer on a non-desktop profile', async () => {

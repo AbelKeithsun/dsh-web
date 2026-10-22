@@ -43,13 +43,30 @@ function pluginPage(): { page: HTMLElement; group: HTMLElement; head: HTMLElemen
   return { page, group, head }
 }
 
+/**
+ * An applied-update result. This file never clicks the update action, so only
+ * the resolved shape matters here; the React body is covered by
+ * plugin-list-toolbar.spec.tsx.
+ */
+const landed: PluginListToolbarProps['update'] = async () => ({
+  plugin: {
+    id: 'dsh-usage',
+    name: 'dsh-usage',
+    version: '1.0.0',
+    source: { kind: 'npm', spec: 'dsh-usage@1.0.0' },
+    installedAt: '2026-10-01T00:00:00.000Z',
+    enabled: true,
+  },
+  restartRequired: [],
+})
+
 /** Mount options over an inert face; the React body is not under test here. */
 function options(extra: Partial<PluginToolbarMountOptions> = {}): PluginToolbarMountOptions {
   return {
     props: () => ({
       isLoopback: true,
       checkUpdates: async () => [],
-      update: async () => undefined,
+      update: landed,
       restartPlan: async () => 'relaunch' as const,
       restart: async () => 'relaunch' as const,
       t,
@@ -155,7 +172,7 @@ describe('toolbar placement', () => {
       props: () => ({
         isLoopback: true,
         checkUpdates: async () => [],
-        update: async () => undefined,
+        update: landed,
         restartPlan: async () => 'relaunch' as const,
         restart: async () => 'relaunch' as const,
         t: () => label,

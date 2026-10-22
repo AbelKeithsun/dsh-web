@@ -22,6 +22,7 @@ export const ru: Record<string, string> = {
   'updateAll': 'Обновить все ({count})',
   'updatingAll': 'Обновление {name} ({index}/{total})',
   'updateAllDone': 'Обновлено; перезапустите, чтобы изменения вступили в силу.',
+  'updateRestartRequired': 'Обновлено до {version}; перезапустите DSH, чтобы изменения вступили в силу',
   'updatesPanelTitle': 'Обновления плагинов',
   'thirdPartyOnly': 'Проверяются только сторонние плагины; пакеты @deepseek-ai/ обновляются вместе с DSH.',
   'restartNow': 'Перезапустить сейчас',

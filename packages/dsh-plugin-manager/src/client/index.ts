@@ -38,11 +38,13 @@ import {
   parseInstalledPlugin,
   parsePluginList,
   parseRestartMode,
+  parseRestartRequired,
   parseUpdateList,
   type InstalledPluginItem,
   type InstallProgressItem,
   type PluginFailuresSnapshot,
   type PluginUpdateItem,
+  type PluginUpdateResult,
   type RestartMode,
 } from '../core/protocol.ts'
 import { PLUGIN_MANAGER_SERVICE, type PluginManagerService } from '../core/service.ts'
@@ -84,6 +86,14 @@ interface GatewayJobWire {
   phase: 'running' | 'done' | 'error'
   plugin?: unknown
   error?: string
+  /**
+   * Bundles the job applied but this process has not loaded (the host read
+   * `application: 'restart-required'` from the official manager). Optional and
+   * untyped here: it is read through {@link parseRestartRequired}, which
+   * degrades an unusable value to "no restart needed" instead of rejecting an
+   * update that already landed.
+   */
+  restartRequired?: unknown
 }
 
 /**
@@ -134,7 +144,12 @@ export function createPluginManagerFace(ctx: ClientContext): PluginManagerFace {
   const official = {
     list: async (): Promise<InstalledPluginItem[]> => parsePluginList(await call(LIST_ENDPOINT, {})),
     install: async (spec: string): Promise<InstalledPluginItem> => parseInstalledPlugin(await call(INSTALL_ENDPOINT, { spec })),
-    update: async (id: string): Promise<InstalledPluginItem> => parseInstalledPlugin(await call(UPDATE_ENDPOINT, { id })),
+    update: async (id: string): Promise<PluginUpdateResult> => ({
+      plugin: parseInstalledPlugin(await call(UPDATE_ENDPOINT, { id })),
+      // The official installer channel reports no restart fact: it owns the
+      // load itself, so an applied update there is one this process serves.
+      restartRequired: [],
+    }),
     uninstall: async (id: string): Promise<InstalledPluginItem[]> => parsePluginList(await call(UNINSTALL_ENDPOINT, { id })),
     setEnabled: async (id: string, enabled: boolean): Promise<InstalledPluginItem> =>
       parseInstalledPlugin(await call(SET_ENABLED_ENDPOINT, { id, enabled })),
@@ -194,7 +209,7 @@ export function createPluginManagerFace(ctx: ClientContext): PluginManagerFace {
         gatewayInflight = false
       }
     },
-    update: async (id: string): Promise<InstalledPluginItem> => {
+    update: async (id: string): Promise<PluginUpdateResult> => {
       gatewayInflight = true
       try {
         const started = await gatewayJson(`${GATEWAY_PREFIX}/update`, {
@@ -203,7 +218,12 @@ export function createPluginManagerFace(ctx: ClientContext): PluginManagerFace {
         }) as { jobId?: string }
         if (started.jobId === undefined) throw new Error('plugin-manager: gateway update returned no job')
         const job = await waitJob(started.jobId)
-        return parseInstalledPlugin({ plugin: job.plugin })
+        return {
+          plugin: parseInstalledPlugin({ plugin: job.plugin }),
+          // The job is done either way; this is the difference between an
+          // update this process serves and one only a restart loads.
+          restartRequired: parseRestartRequired(job.restartRequired),
+        }
       } finally {
         gatewayInflight = false
       }

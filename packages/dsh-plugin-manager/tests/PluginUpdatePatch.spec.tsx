@@ -19,7 +19,7 @@ import React from 'react'
 import type { ComponentProps } from 'react'
 import { PluginUpdatePatch, type PluginUpdatePatchInjected, type PluginPageSubject } from '../src/client/PluginUpdatePatch.tsx'
 import { en, type PluginManagerKey } from '../src/client/locales.ts'
-import type { InstallProgressItem, PluginUpdateItem } from '../src/core/protocol.ts'
+import type { InstallProgressItem, PluginUpdateItem, PluginUpdateResult } from '../src/core/protocol.ts'
 
 afterEach(cleanup)
 
@@ -49,12 +49,30 @@ const updateItem: PluginUpdateItem = {
   id: '@linxin666/dsh-web-all', current: '0.4.2', latest: '0.5.0',
 }
 
+/**
+ * The result one applied update resolves with: the row at the version that
+ * landed, plus the bundles only a restart loads (empty for an in-place update).
+ */
+function landed(version: string, restartRequired: string[] = []): PluginUpdateResult {
+  return {
+    plugin: {
+      id: '@linxin666/dsh-web-all',
+      name: '@linxin666/dsh-web-all',
+      version,
+      source: { kind: 'npm', spec: `@linxin666/dsh-web-all@${version}` },
+      installedAt: '2026-10-01T00:00:00.000Z',
+      enabled: true,
+    },
+    restartRequired,
+  }
+}
+
 /** A face fake; every member is overridable per case. */
 function face(overrides: Partial<PluginUpdatePatchInjected> = {}): PluginUpdatePatchInjected {
   return {
     isLoopback: true,
     checkUpdates: async () => [],
-    update: async () => undefined,
+    update: async () => landed('0.5.0'),
     status: async (): Promise<InstallProgressItem> => ({ kind: 'idle', stage: 'fetch' }),
     ...overrides,
   }
@@ -184,7 +202,7 @@ describe('update check', () => {
 describe('update application', () => {
   it('user applies the update for the page bundle and is asked to restart', async () => {
     // Given a newer release was found
-    const update = vi.fn(async (_id: string) => undefined)
+    const update = vi.fn(async (_id: string) => landed('0.5.0'))
     const section = renderPatch(face({ checkUpdates: async () => [updateItem], update }))
     fireEvent.click(screen.getByRole('button', { name: t('checkUpdates') }))
     await waitFor(() => { expect(updateAction().disabled).toBe(false) })
@@ -195,6 +213,29 @@ describe('update application', () => {
     // Then the page's own bundle was updated and the section asks for a restart
     await waitFor(() => { expect(section.textContent).toContain(t('restartHint')) })
     expect(update.mock.calls[0]?.[0]).toBe('@linxin666/dsh-web-all')
+    // An update that took effect in place states no restart-only fact
+    expect(document.querySelector('[data-update-restart-required]')).toBeNull()
+  })
+
+  it('user is told the update landed but needs a restart instead of reading it as a clean in-place success', async () => {
+    // Given the host applied the release while this process no longer carries
+    // the bundle's rows, so it reports the update as needing a restart
+    const update = vi.fn(async (_id: string) => landed('0.5.0', ['@linxin666/dsh-web-all']))
+    const section = renderPatch(face({ checkUpdates: async () => [updateItem], update }))
+    fireEvent.click(screen.getByRole('button', { name: t('checkUpdates') }))
+    await waitFor(() => { expect(updateAction().disabled).toBe(false) })
+
+    // When the user applies the update
+    fireEvent.click(updateAction())
+
+    // Then the section names the version that landed and the restart only it
+    // needs, and the applied update is not reported as a failure
+    await waitFor(() => {
+      expect(section.querySelector('[data-update-restart-required]')?.textContent)
+        .toBe(t('updateRestartRequired', { version: '0.5.0' }))
+    })
+    expect(section.querySelector('[data-update-error]')).toBeNull()
+    expect(section.textContent).not.toContain(t('restartHint'))
   })
 
   it('user cannot apply a release whose declared DSH minimum this host misses', async () => {

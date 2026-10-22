@@ -18,7 +18,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { PluginUpdateItem, RestartMode } from '../core/protocol.ts'
+import type { PluginUpdateItem, PluginUpdateResult, RestartMode } from '../core/protocol.ts'
 import { applicableUpdates, thirdPartyUpdates } from '../core/updates.ts'
 import { displayMinimumVersion } from '../core/version.ts'
 import { dshGateOf } from './PluginUpdatePatch.tsx'
@@ -30,8 +30,12 @@ export interface PluginListToolbarInjected {
   isLoopback: boolean
   /** Compare every installed plugin against the version its source serves. */
   checkUpdates: () => Promise<PluginUpdateItem[]>
-  /** Re-install one plugin from its recorded source. */
-  update: (id: string) => Promise<unknown>
+  /**
+   * Re-install one plugin from its recorded source. Resolves with what landed:
+   * the row at the new version, plus the bundles only a restart loads. A landed
+   * update that needs a restart keeps the batch running instead of failing it.
+   */
+  update: (id: string) => Promise<PluginUpdateResult>
   /**
    * Read how a restart would be carried out, without carrying it out: the
    * confirmation must name the same consequence the host will produce (an
@@ -76,6 +80,13 @@ export function PluginListToolbar(props: PluginListToolbarProps) {
   const [found, setFound] = useState(0)
   const [rows, setRows] = useState<PluginUpdateItem[]>([])
   const [applied, setApplied] = useState<string[]>([])
+  /**
+   * Updates this run applied whose new version the running host has not loaded,
+   * with the version that landed. They stay in `applied` — the update did go
+   * through — and are listed as needing a restart instead of leaving the panel
+   * claiming a plain success.
+   */
+  const [restartRequired, setRestartRequired] = useState<{ id: string; version: string }[]>([])
   const [cursor, setCursor] = useState<{ name: string; index: number; total: number } | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const [panel, setPanel] = useState<Panel>('none')
@@ -108,6 +119,7 @@ export function PluginListToolbar(props: PluginListToolbarProps) {
       setRows(thirdParty)
       setFound(thirdParty.length)
       setApplied([])
+      setRestartRequired([])
       setChecked(true)
       setPanel('list')
     }).catch(reason => {
@@ -131,7 +143,12 @@ export function PluginListToolbar(props: PluginListToolbarProps) {
       for (const [index, row] of queue.entries()) {
         setCursor({ name: row.id, index: index + 1, total: queue.length })
         try {
-          await update(row.id)
+          const result = await update(row.id)
+          // The update landed; when this process cannot load it, the run still
+          // counts as applied and continues, and the panel names the restart.
+          if (result.restartRequired.length > 0) {
+            setRestartRequired(current => [...current, { id: row.id, version: result.plugin.version }])
+          }
         } catch (reason) {
           // Stop at the first failure: the remaining rows stay listed with their
           // versions, so the user sees exactly what did not go through.
@@ -251,6 +268,16 @@ export function PluginListToolbar(props: PluginListToolbarProps) {
         <div className={css.panel} data-update-panel role="group" aria-label={t('updatesPanelTitle')}>
           {errorLine}
           {applied.length > 0 && <p className={css.ok} data-update-applied>{t('updateAllDone')}</p>}
+          {restartRequired.length > 0 && (
+            <ul className={css.restartRequired} data-update-restart-required>
+              {restartRequired.map(item => (
+                <li key={item.id} className={css.panelRow} data-update-restart-row={item.id}>
+                  <span className={css.panelName}>{item.id}</span>
+                  <span className={css.restartRequiredLine}>{t('updateRestartRequired', { version: item.version })}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           {rows.length === 0 && applied.length === 0 && error === undefined && <p className={css.hint}>{t('noUpdates')}</p>}
           {rows.length > 0 && (
             <ul className={css.panelList}>

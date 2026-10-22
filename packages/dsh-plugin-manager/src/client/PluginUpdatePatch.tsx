@@ -20,7 +20,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { InstallProgressItem, PluginUpdateItem } from '../core/protocol.ts'
+import type { InstallProgressItem, PluginUpdateItem, PluginUpdateResult } from '../core/protocol.ts'
 import { displayMinimumVersion } from '../core/version.ts'
 import css from './plugin-manager.module.css'
 
@@ -73,8 +73,12 @@ export interface PluginUpdatePatchInjected {
   isLoopback: boolean
   /** Compare every installed plugin against the version its source serves. */
   checkUpdates: () => Promise<PluginUpdateItem[]>
-  /** Re-install one plugin from its recorded source. */
-  update: (id: string) => Promise<unknown>
+  /**
+   * Re-install one plugin from its recorded source. Resolves with what landed:
+   * the row at the new version, plus the bundles only a restart loads. A landed
+   * update that needs a restart is not a failure and must not be reported as one.
+   */
+  update: (id: string) => Promise<PluginUpdateResult>
   /** Read the current install/update progress. */
   status: () => Promise<InstallProgressItem>
 }
@@ -145,6 +149,8 @@ export function PluginUpdatePatch(props: PluginUpdatePatchProps) {
   const [error, setError] = useState<string | undefined>(undefined)
   const [progress, setProgress] = useState<InstallProgressItem>({ kind: 'idle', stage: 'fetch' })
   const [dirty, setDirty] = useState(false)
+  /** Version the update landed on when this process cannot load it without a restart. */
+  const [restartRequired, setRestartRequired] = useState<string | undefined>(undefined)
   /** Synchronous in-flight mirror of `busy`: the render guard alone lets a click and an Enter land in the same frame and double-fire. */
   const busyRef = useRef(false)
 
@@ -199,10 +205,13 @@ export function PluginUpdatePatch(props: PluginUpdatePatchProps) {
     busyRef.current = true
     setBusy('update')
     setError(undefined)
-    void update(found.id).then(() => {
+    void update(found.id).then(result => {
       setFound(undefined)
       setChecked(false)
       setDirty(true)
+      // A version that landed but is not loaded is stated as such: the update
+      // succeeded, and the plugin's rows are not running until DSH restarts.
+      setRestartRequired(result.restartRequired.length > 0 ? result.plugin.version : undefined)
     }).catch(reason => {
       setError(t('failed', { reason: messageOf(reason) }))
     }).finally(() => {
@@ -288,7 +297,11 @@ export function PluginUpdatePatch(props: PluginUpdatePatchProps) {
         <p className={css.error} role="alert" data-update-error>{error}</p>
       )}
 
-      {dirty && (
+      {restartRequired !== undefined ? (
+        <div className={css.restartRow} data-update-restart-required="yes">
+          <p>{t('updateRestartRequired', { version: restartRequired })}</p>
+        </div>
+      ) : dirty && (
         <div className={css.restartRow}>
           <p>{t('restartHint')}</p>
         </div>

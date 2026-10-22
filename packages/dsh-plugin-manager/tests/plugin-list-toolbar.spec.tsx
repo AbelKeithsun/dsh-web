@@ -18,7 +18,7 @@ import React from 'react'
 import type { ComponentProps } from 'react'
 import { PluginListToolbar } from '../src/client/PluginListToolbar.tsx'
 import { en, type PluginManagerKey } from '../src/client/locales.ts'
-import type { PluginUpdateItem } from '../src/core/protocol.ts'
+import type { PluginUpdateItem, PluginUpdateResult } from '../src/core/protocol.ts'
 
 afterEach(cleanup)
 
@@ -29,12 +29,30 @@ const t: ComponentProps<typeof PluginListToolbar>['t'] = (key, params) => {
   return text.replace(/\{(\w+)\}/g, (match, name: string) => String(params[name] ?? match))
 }
 
+/**
+ * The result one applied update resolves with: the row at the version that
+ * landed, plus the bundles only a restart loads (empty for an in-place update).
+ */
+function landed(id: string, version: string, restartRequired: string[] = []): PluginUpdateResult {
+  return {
+    plugin: {
+      id,
+      name: id,
+      version,
+      source: { kind: 'npm', spec: `${id}@${version}` },
+      installedAt: '2026-10-01T00:00:00.000Z',
+      enabled: true,
+    },
+    restartRequired,
+  }
+}
+
 /** A face fake; every member is overridable per case. */
 function face(overrides: Partial<ComponentProps<typeof PluginListToolbar>> = {}) {
   return {
     isLoopback: true,
     checkUpdates: vi.fn(async (): Promise<PluginUpdateItem[]> => []),
-    update: vi.fn(async () => undefined),
+    update: vi.fn(async (id: string) => landed(id, '1.0.0')),
     restartPlan: vi.fn(async () => 'relaunch' as const),
     restart: vi.fn(async () => 'relaunch' as const),
     ...overrides,
@@ -124,7 +142,7 @@ describe('checking every installed plugin', () => {
 describe('updating every third-party plugin', () => {
   it('user applies every applicable row in one run', async () => {
     // Given two third-party updates and one shipped package
-    const update = vi.fn(async (_id: string) => undefined)
+    const update = vi.fn(async (id: string) => landed(id, '1.1.0'))
     const second: PluginUpdateItem = { id: 'dsh-weather', current: '1.0.0', latest: '1.1.0' }
     renderToolbar(face({ checkUpdates: vi.fn(async () => [thirdParty, second, official]), update }))
     fireEvent.click(screen.getByRole('button', { name: t('checkUpdates') }))
@@ -145,7 +163,7 @@ describe('updating every third-party plugin', () => {
   it('user sees a row below the declared DSH minimum listed but never applied', async () => {
     // Given an update whose manifest needs a newer DSH
     const blocked: PluginUpdateItem = { id: 'dsh-future', current: '1.0.0', latest: '2.0.0', requiresDsh: '>=9.0.0', compatible: false }
-    const update = vi.fn(async (_id: string) => undefined)
+    const update = vi.fn(async (id: string) => landed(id, '2.0.0'))
     renderToolbar(face({ checkUpdates: vi.fn(async () => [blocked]), update }))
     fireEvent.click(screen.getByRole('button', { name: t('checkUpdates') }))
 
@@ -191,6 +209,7 @@ describe('updating every third-party plugin', () => {
     const second: PluginUpdateItem = { id: 'dsh-weather', current: '1.0.0', latest: '1.1.0' }
     const update = vi.fn(async (id: string) => {
       if (id === 'dsh-usage') throw new Error('pnpm refused the install')
+      return landed(id, '1.1.0')
     })
     renderToolbar(face({ checkUpdates: vi.fn(async () => [thirdParty, second]), update }))
     fireEvent.click(screen.getByRole('button', { name: t('checkUpdates') }))
@@ -214,6 +233,7 @@ describe('updating every third-party plugin', () => {
     const second: PluginUpdateItem = { id: 'dsh-weather', current: '1.0.0', latest: '1.1.0' }
     const update = vi.fn(async (id: string) => {
       if (id === 'dsh-weather') throw new Error('pnpm refused the install')
+      return landed(id, '0.9.2')
     })
     renderToolbar(face({ checkUpdates: vi.fn(async () => [thirdParty, second]), update }))
     fireEvent.click(screen.getByRole('button', { name: t('checkUpdates') }))
@@ -229,6 +249,37 @@ describe('updating every third-party plugin', () => {
     expect(listedRows()).toEqual(['dsh-weather'])
     expect(summaryText()).toBe(t('updatesAvailable', { count: '1' }))
     expect(document.querySelector('[data-update-applied]')?.textContent).toBe(t('updateAllDone'))
+  })
+
+  it('user sees an update that landed but needs a restart named, while the run carries on', async () => {
+    // Given the host applies the first row only as far as a restart can load it
+    // (the replaced bundle's rows left this process, issue #1905) and the
+    // second one in place
+    const second: PluginUpdateItem = { id: 'dsh-weather', current: '1.0.0', latest: '1.1.0' }
+    const update = vi.fn(async (id: string) => {
+      const version = id === 'dsh-usage' ? '0.9.2' : '1.1.0'
+      return landed(id, version, id === 'dsh-usage' ? [id] : [])
+    })
+    renderToolbar(face({ checkUpdates: vi.fn(async () => [thirdParty, second]), update }))
+    fireEvent.click(screen.getByRole('button', { name: t('checkUpdates') }))
+    await waitFor(() => { expect(document.querySelector('[data-update-all]')?.textContent).toBe(t('updateAll', { count: '2' })) })
+
+    // When the user updates everything
+    fireEvent.click(document.querySelector('[data-update-all]') as HTMLElement)
+
+    // Then both rows were applied, the batch ran to the end, nothing is
+    // reported as a failure, and the restart-only row states its own fact
+    await waitFor(() => {
+      expect(document.querySelector('[data-update-restart-row="dsh-usage"]')?.textContent).toContain(
+        t('updateRestartRequired', { version: '0.9.2' }),
+      )
+    })
+    expect(update.mock.calls.map(call => call[0])).toEqual(['dsh-usage', 'dsh-weather'])
+    expect(document.querySelector('[data-update-error]')).toBeNull()
+    expect(document.querySelector('[data-update-restart-row="dsh-weather"]')).toBeNull()
+    // The plugin still counts as applied, so the restart entry stays offered
+    expect(document.querySelector('[data-update-restart]')?.getAttribute('data-restart-pending')).toBe('2')
+    expect(listedRows()).toEqual([])
   })
 })
 

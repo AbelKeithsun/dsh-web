@@ -4,6 +4,7 @@ import {
   parseInstallStatus,
   parseInstalledPlugin,
   parsePluginList,
+  parseRestartRequired,
   parseUpdateList,
 } from '../src/core/protocol.ts'
 
@@ -60,6 +61,19 @@ describe('parsePluginList', () => {
     expect(item.children).toBeUndefined()
   })
 
+
+describe('parseRestartRequired', () => {
+  it('user keeps the restart fact the host lists and loses nothing when it cannot be read', () => {
+    // Given the values a gateway job can carry for the restart-required list
+    // When each one is read
+    // Then names are kept and an unusable value degrades to "no restart needed",
+    // because the update already landed and this is only its hint
+    expect(parseRestartRequired(['dsh-memoir', 'dsh-pet'])).toEqual(['dsh-memoir', 'dsh-pet'])
+    expect(parseRestartRequired(['dsh-memoir', '', 42])).toEqual(['dsh-memoir'])
+    expect(parseRestartRequired(undefined)).toEqual([])
+    expect(parseRestartRequired('dsh-memoir')).toEqual([])
+  })
+})
 
 describe('parseInstalledPlugin', () => {
   it('parses a valid plugin wrapper', () => {

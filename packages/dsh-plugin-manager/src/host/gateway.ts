@@ -82,6 +82,16 @@ export interface GatewayJob {
    * the package itself stays installed and row-mounted.
    */
   notices?: ControlChange[]
+  /**
+   * Bundles whose new version is on disk but not loaded in this process: the
+   * official manager answered `application: 'restart-required'` for the run
+   * that applied it, so the plugin is installed and its rows are gone until the
+   * host restarts (issue #1905). Absent on an update that took effect in place.
+   * The job is still `done` either way — the version landed — and this fact
+   * rides the same job wire as `plugin`, so the caller can say so instead of
+   * reporting a clean in-place update.
+   */
+  restartRequired?: string[]
   error?: string
 }
 
@@ -726,6 +736,26 @@ export function nativeManagerRefusalCode(outcome: unknown): string | undefined {
   return typeof code === 'string' && code !== '' ? code : undefined
 }
 
+/**
+ * Whether the official manager's verdict says the run landed but this process
+ * does not hold it yet. The manager answers `application: 'restart-required'`
+ * when the profile moved while the running host still carries the old state;
+ * on a two-phase replacement the removal alone can produce it, because the
+ * replaced bundle's rows are already gone from the running fiber tree by the
+ * time the guard reports the removal applied (issue #1905).
+ *
+ * Read as a success that carries a fact, never as a failure: the version did
+ * land on disk, so turning it into an error would send the caller into a
+ * rollback the profile does not need and stop a batch update on its first item.
+ * @param outcome - the resolved value of `installBundle` / `removeBundle`.
+ * @returns true when the run landed and a restart is what loads it.
+ */
+export function nativeManagerRestartRequired(outcome: unknown): boolean {
+  if (typeof outcome !== 'object' || outcome === null) return false
+  const verdict = outcome as NativeManagerOutcome
+  return verdict.application === 'restart-required'
+}
+
 /** One layer snapshot plus the profile patch text and dependency list. */
 interface CapturedState {
   layer: LayerSnapshot
@@ -733,6 +763,21 @@ interface CapturedState {
   /** Raw profile patch text (the duplicate-mount guard reads row names from it). */
   patchText: string
   dependencies: string[]
+}
+
+/**
+ * What one two-phase replacement produced: the failure to report, or the fact
+ * that the target landed and only a restart loads it.
+ */
+interface ReplacementResult {
+  /** The failure to report, or undefined once the target spec landed. */
+  failure?: string
+  /**
+   * Whether the official manager answered `restart-required` for a run that
+   * applied (issue #1905): the profile carries the target version while the
+   * running process no longer holds the bundle's rows.
+   */
+  restartRequired: boolean
 }
 
 /** The gateway: serializes CLI operations through one job table and one mutation queue. */
@@ -1167,8 +1212,13 @@ export class CliGateway {
     const carried = await readProfileManifest(this.facts.packageJsonPath)
     const first = await native.installBundle(job.spec, { enabled: true, requestId: job.id })
     let refusal = nativeManagerFailure(first)
+    // A landed run that answered `restart-required` is still a landed run; the
+    // fact is carried to the caller instead of being folded into a failure.
+    let restartRequired = nativeManagerRestartRequired(first)
     if (refusal !== undefined && nativeManagerRefusalCode(first) === 'already-installed') {
-      refusal = await this.replaceInstalled(job, native, targetId, carried.dependencies[targetId])
+      const replacement = await this.replaceInstalled(job, native, targetId, carried.dependencies[targetId])
+      refusal = replacement.failure
+      restartRequired = replacement.restartRequired
     }
     if (refusal !== undefined) {
       job.phase = 'error'
@@ -1199,6 +1249,9 @@ export class CliGateway {
       from: change.from,
       to: change.to,
     }))
+    // The version landed, so the job is `done`; this names what only a restart
+    // can load, which is exactly the fact an in-place success does not carry.
+    if (restartRequired) job.restartRequired = [targetId]
     job.phase = 'done'
   }
 
@@ -1222,43 +1275,56 @@ export class CliGateway {
    *   ({@link restoreBundleIndex} puts it back).
    * - **A `bundle-in-use` refusal is answered once, not repeated.** The
    *   official guard deselects the bundle and reloads before it checks whether
-   *   the bundle's rows still run, so a refusal means the session still holds
-   *   them: the update is retried exactly once against that settled state, and a
-   *   second refusal restores the selection and names the restart the person has
-   *   to do ({@link removeForReplacement}).
+   *   the bundle's rows still run, so a real occupant cleared by that reload is
+   *   gone on the second call: the update is retried exactly once against that
+   *   settled state, and a second refusal restores the selection and names the
+   *   restart the person has to do ({@link removeForReplacement}).
+   * - **A landed replacement can still need a restart.** The guard answers
+   *   `application: 'restart-required'` when the removal applied and the
+   *   replaced bundle's rows are already gone from the running process (issue
+   *   #1905). The version does land, so that is a fact to report, not a failure:
+   *   the update is `done` and names what only a restart loads.
    *
    * @param job - the update job whose spec is installed.
    * @param native - the official manager.
    * @param targetId - the installed bundle being replaced.
    * @param previousSpec - the dependency spec the profile carried before the run.
-   * @returns the failure to report, or undefined once the target spec landed.
+   * @returns the failure to report, or the restart fact once the target landed.
    */
   private async replaceInstalled(
     job: GatewayJob,
     native: NativePluginManager,
     targetId: string,
     previousSpec: string | undefined,
-  ): Promise<string | undefined> {
-    if (previousSpec === undefined) return `${targetId} 不在 profile 依赖中，无法替换已安装版本`
+  ): Promise<ReplacementResult> {
+    if (previousSpec === undefined) {
+      return { failure: `${targetId} 不在 profile 依赖中，无法替换已安装版本`, restartRequired: false }
+    }
     // Read while the bundle is still in the list: the removal is what drops it.
     const index = await this.bundleIndexOf(targetId)
     const removal = await this.removeForReplacement(native, targetId)
     if (removal.failure !== undefined) {
       if (removal.deselected) await this.restoreBundleSelection(native, targetId)
-      return `已安装版本无法移除（${removal.failure}），本次更新未做改动${removal.remedy}`
+      return { failure: `已安装版本无法移除（${removal.failure}），本次更新未做改动${removal.remedy}`, restartRequired: false }
     }
-    const refusal = nativeManagerFailure(await native.installBundle(job.spec, { enabled: true, requestId: job.id }))
+    const installVerdict = await native.installBundle(job.spec, { enabled: true, requestId: job.id })
+    const refusal = nativeManagerFailure(installVerdict)
+    // Either phase can report it: the removal because the old rows are already
+    // gone, the reinstall because the new ones cannot be loaded in place.
+    const restartRequired = removal.restartRequired || nativeManagerRestartRequired(installVerdict)
     if (refusal === undefined) {
       await this.restoreBundleIndex(targetId, previousSpec, index)
-      return undefined
+      return { restartRequired }
     }
     const restoreSpec = `${targetId}@${previousSpec}`
     const restoreFailure = nativeManagerFailure(await native.installBundle(restoreSpec, { enabled: true, requestId: job.id }))
-    if (restoreFailure !== undefined) return `${refusal}；装回 ${restoreSpec} 也失败：${restoreFailure}，请手动重新安装`
+    if (restoreFailure !== undefined) {
+      return { failure: `${refusal}；装回 ${restoreSpec} 也失败：${restoreFailure}，请手动重新安装`, restartRequired: false }
+    }
     // The rollback reinstalls the previous version at the end of the list too,
     // so the same index has to be restored for a failed update as for a landed one.
     await this.restoreBundleIndex(targetId, previousSpec, index)
-    return `${refusal}；已装回 ${restoreSpec}`
+    return { failure: `${refusal}；已装回 ${restoreSpec}`, restartRequired: false }
   }
 
   /**
@@ -1310,38 +1376,48 @@ export class CliGateway {
    *
    * Read the official `removeBundle` guard in order: it deselects the bundle,
    * reloads the profile, and only then checks whether the bundle's own rows
-   * still hold a running fiber, which it reports as `bundle-in-use`. The
-   * deselection is therefore already on disk when the refusal arrives — the
-   * guard re-reads the selection on entry, so asking once more after that
-   * settled state is idempotent and is the only way an update can continue
-   * without a restart. A second refusal means the rows really are still
-   * loaded, and the report then names the restart instead of a bare code.
+   * still hold a running fiber, which it reports as `bundle-in-use`. A refusal
+   * is therefore answered exactly once, against the state that reload left on
+   * disk: that covers a real occupant whose fiber the reload did clear.
+   *
+   * It does not cover a reload that rebuilds the very rows it just unloaded —
+   * the fresh fiber matches the guard again — so the retry is worth exactly one
+   * call and never a loop, and the second refusal names the restart instead of
+   * a bare code. A removal the guard does apply while the rows are already gone
+   * resolves as `application: 'restart-required'`; that is a success carrying a
+   * restart fact, which is reported as such rather than as a refusal.
    * @param native - the official manager.
    * @param name - the bundle to remove.
    * @returns the refusal to report, whether the profile lost the selection on the
-   * way, and the remedy text for that refusal.
+   * way, the remedy text for that refusal, and whether the applied removal still
+   * needs a restart to load.
    */
   private async removeForReplacement(
     native: NativePluginManager,
     name: string,
-  ): Promise<{ failure?: string, deselected: boolean, remedy: string }> {
+  ): Promise<{ failure?: string, deselected: boolean, remedy: string, restartRequired: boolean }> {
     const first = await native.removeBundle(name)
     const failure = nativeManagerFailure(first)
-    if (failure === undefined) return { deselected: false, remedy: '' }
+    if (failure === undefined) {
+      return { deselected: false, remedy: '', restartRequired: nativeManagerRestartRequired(first) }
+    }
     // Any other refusal is final: a retry cannot change a management-owned
     // bundle, a missing dependency or a failed pnpm run.
     if (nativeManagerRefusalCode(first) !== 'bundle-in-use') {
-      return { failure, deselected: await this.bundleSelectionLost(name), remedy: '' }
+      return { failure, deselected: await this.bundleSelectionLost(name), remedy: '', restartRequired: false }
     }
     // The guard deselected the bundle before refusing; a second call finds the
     // selection it left and checks the rows once more.
     const second = await native.removeBundle(name)
     const retryFailure = nativeManagerFailure(second)
-    if (retryFailure === undefined) return { deselected: false, remedy: '' }
+    if (retryFailure === undefined) {
+      return { deselected: false, remedy: '', restartRequired: nativeManagerRestartRequired(second) }
+    }
     return {
       failure: retryFailure,
       deselected: await this.bundleSelectionLost(name),
       remedy: '；该插件仍由当前 DSH 进程加载，重启 DSH 后再执行本次更新即可',
+      restartRequired: false,
     }
   }
 
@@ -1484,6 +1560,7 @@ export class CliGateway {
       ...job,
       conflicts: job.conflicts === undefined ? undefined : [...job.conflicts],
       notices: job.notices === undefined ? undefined : [...job.notices],
+      restartRequired: job.restartRequired === undefined ? undefined : [...job.restartRequired],
     }
   }
 
