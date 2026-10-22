@@ -40,7 +40,8 @@ import {
 import { isPromptEdited, issueSourceHash, type IssuePromptSource } from '../core/prompt.ts'
 import { workspaceIdForRepository, type WorkspaceMatchCandidate } from '../core/workspace-match.ts'
 import { IssueAnalysisError, splitModelRoute, type AnalysisRoute, type IssueAnalyzer } from './analysis.ts'
-import { GitHubApiClient } from './client.ts'
+import { GitHubApiClient, proxyClientOptions } from './client.ts'
+import type { ProxyConfiguration } from './proxy.ts'
 
 /** Options of one analysis request. */
 export interface AnalysisRequest {
@@ -104,6 +105,15 @@ export interface GitHubSyncServiceOptions {
   analyzer?: IssueAnalyzer
   /** Resolves the host's default model route (provider/model), when there is one. */
   defaultModel?: () => Promise<string | undefined>
+  /**
+   * Resolves the proxy for the client this service builds itself.
+   *
+   * Only read by the `new GitHubApiClient()` fallback: a caller that hands a
+   * client in has already decided its transport. Absent keeps the conventional
+   * variables deciding, so a programmatic mount behaves as it did before the
+   * proxy became configuration.
+   */
+  proxy?: () => ProxyConfiguration
 }
 
 const DEFAULT_TIMERS: HostTimerFace = {
@@ -152,7 +162,7 @@ export class GitHubSyncService {
 
   constructor(options: GitHubSyncServiceOptions) {
     this.host = options.host
-    this.client = options.client ?? new GitHubApiClient()
+    this.client = options.client ?? new GitHubApiClient(proxyClientOptions(options.proxy?.()))
     this.repositories = (options.repositories ?? []).map(resolveRepoConfig)
     this.timers = options.timers ?? DEFAULT_TIMERS
     this.now = options.now ?? Date.now
@@ -170,6 +180,22 @@ export class GitHubSyncService {
    * out of the pass, and the pass then reports a missing credential through
    * its ordinary error path instead.
    */
+  /**
+   * Apply a newly stored credential to this process, now.
+   *
+   * A credential write lands in the store while the provider keeps running, so
+   * without this the client keeps the token it read on the previous pass: a
+   * write attempted right after the operator replaced the token failed until
+   * the next five-minute poll or a restart. The login cached for an `@me`
+   * inclusion rule belongs to the old credential and is dropped with it,
+   * because a different account must be asked again rather than reported from
+   * memory.
+   */
+  async reloadCredential(): Promise<void> {
+    this.authenticatedLogin = undefined
+    await this.refreshCredential()
+  }
+
   private async refreshCredential(): Promise<void> {
     if (this.credential === undefined) return
     try {

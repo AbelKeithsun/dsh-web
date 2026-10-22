@@ -18,7 +18,7 @@
  * @module dsh-task-board-github/host/configuration
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { GITHUB_ENTRY_IDS } from '../core/setup.ts'
+import { GITHUB_ENTRY_IDS, type GitHubProxySettings } from '../core/setup.ts'
 import type { GitHubRepoConfig } from '../core/types.ts'
 
 /** One entry the settings surface reports. */
@@ -99,4 +99,30 @@ export async function writeConfiguredRepositories(ctx: Context, repositories: re
   const entry = findGitHubSettingsEntry(face)
   if (entry === undefined) throw new Error('this deployment exposes no settings form for the GitHub extension')
   await face.mutate(entry.ns, [{ op: 'set', path: ['repositories'], value: repositories }], entry.revision)
+}
+
+/**
+ * Store the proxy mode and the custom proxy URL.
+ *
+ * Both fields are written in one batch against the revision just read, so a
+ * mode and a URL that only make sense together cannot be stored split: a
+ * concurrent settings edit is refused by the surface rather than woven into
+ * this one. The write reaches the running provider through the Loader's
+ * volatile commit, which is what makes a proxy change apply to the next request
+ * without a restart.
+ * @param ctx - host context.
+ * @param settings - the sanitized proxy settings to store.
+ * @throws when this deployment serves no settings form for this extension, or
+ *   the surface refuses the write.
+ */
+export async function writeProxySettings(ctx: Context, settings: GitHubProxySettings): Promise<void> {
+  const face = resolveSettingsFace(ctx)
+  if (face === undefined) throw new Error('this deployment serves no settings surface, so the proxy settings cannot be written')
+  if (face.writable === false) throw new Error('this deployment serves configuration read-only')
+  const entry = findGitHubSettingsEntry(face)
+  if (entry === undefined) throw new Error('this deployment exposes no settings form for the GitHub extension')
+  await face.mutate(entry.ns, [
+    { op: 'set', path: ['proxyMode'], value: settings.mode },
+    { op: 'set', path: ['proxyUrl'], value: settings.url },
+  ], entry.revision)
 }

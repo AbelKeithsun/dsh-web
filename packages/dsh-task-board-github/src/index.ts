@@ -20,6 +20,9 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { resolveTaskBoardHostFace } from './core/contract.ts'
+import { GITHUB_PROXY_MODES, type GitHubProxyMode } from './core/setup.ts'
+import { GITHUB_API_BASE_URL } from './host/client.ts'
+import { resolveProxyConfiguration } from './host/proxy.ts'
 import { createLlmIssueAnalyzer } from './host/analysis.ts'
 import { createGitHubExtension } from './host/extension.ts'
 import { probeWorkspaceRegistry } from './host/workspace-registry.ts'
@@ -135,6 +138,14 @@ export interface Config {
   tokenEnv?: Volatile<string>
   /** Repositories configured for GitHub Issues synchronization. */
   repositories?: Volatile<GitHubRepoConfig[]>
+  /**
+   * How this integration reaches GitHub: `auto` follows the conventional proxy
+   * variables and then the operating system's own proxy, `custom` pins
+   * {@link proxyUrl}, and `direct` never proxies.
+   */
+  proxyMode?: Volatile<GitHubProxyMode>
+  /** Custom proxy URL; read only while {@link proxyMode} is `custom`. */
+  proxyUrl?: Volatile<string>
 }
 
 /**
@@ -151,6 +162,10 @@ export interface ConfigInput {
   tokenEnv?: string
   /** Repositories configured for GitHub Issues synchronization. */
   repositories?: GitHubRepoConfigInput[]
+  /** Proxy mode: `auto` (default), `custom` or `direct`. */
+  proxyMode?: GitHubProxyMode
+  /** Custom proxy URL; only the `custom` mode reads it. */
+  proxyUrl?: string
 }
 
 /**
@@ -218,6 +233,12 @@ export const Config: z<ConfigInput, Config> = z.object({
   announceToAgent: z.boolean().default(false).volatile(),
   tokenEnv: z.string().default(DEFAULT_TOKEN_ENV).volatile(),
   repositories: z.array(GitHubRepoConfigSchema).default([]).volatile(),
+  // `auto` is the default because it is the mode that is right without being
+  // configured: on a host whose egress runs through a proxy that no environment
+  // variable names, this is the difference between a working integration and a
+  // transport error the user has no obvious way to explain.
+  proxyMode: z.union(GITHUB_PROXY_MODES).default('auto').volatile(),
+  proxyUrl: z.string().default('').volatile(),
 })
 
 /** Schema default of the announcement switch, re-read for hand-built contexts. */
@@ -233,6 +254,10 @@ export interface GitHubProviderSettings {
   tokenEnv: string
   /** Repositories to synchronize. */
   repositories: readonly GitHubRepoConfig[]
+  /** How this integration reaches GitHub. */
+  proxyMode: GitHubProxyMode
+  /** Custom proxy URL; read only by the `custom` mode. */
+  proxyUrl: string
 }
 
 /**
@@ -265,6 +290,8 @@ export function resolveProviderSettings(config?: Config): GitHubProviderSettings
     announceToAgent: readConfigField(config?.announceToAgent, DEFAULT_ANNOUNCE_TO_AGENT),
     tokenEnv: readConfigField(config?.tokenEnv, DEFAULT_TOKEN_ENV),
     repositories: readConfigField<GitHubRepoConfig[]>(config?.repositories, []),
+    proxyMode: readConfigField<GitHubProxyMode>(config?.proxyMode, 'auto'),
+    proxyUrl: readConfigField(config?.proxyUrl, ''),
   }
 }
 
@@ -426,6 +453,8 @@ function applyImpl(ctx: Context, config?: Config): void {
     ctx,
     repositories: () => settings().repositories,
     tokenEnv: () => settings().tokenEnv,
+    proxyMode: () => settings().proxyMode,
+    proxyUrl: () => settings().proxyUrl,
     running: () => providerLive,
     // Health of the provider THIS process mounted, read live: the status route
     // is how an operator tells a configured integration that has stopped
@@ -433,8 +462,10 @@ function applyImpl(ctx: Context, config?: Config): void {
     // would say nothing about the pass running now.
     health: () => liveService?.syncHealth(),
     // A credential write lands in the store, so the value this process already
-    // read is stale: re-resolve and remount before the next request.
-    reload: () => { requestSync() },
+    // read is stale: push the new one onto the mounted client as well as
+    // re-resolving the mount, otherwise a write attempted before the next poll
+    // still authenticates with the superseded token.
+    reload: () => { requestSync(); void liveService?.reloadCredential() },
   })
 
   /** Drop the mounted registration; the next sync remounts it. */
@@ -490,7 +521,11 @@ function applyImpl(ctx: Context, config?: Config): void {
     // revisited that decision.
     const resolved = await resolveGitHubToken(ctx, next.tokenEnv)
     if (disposed) return
-    const desired = JSON.stringify({ tokenEnv: next.tokenEnv, repositories: next.repositories })
+    // The proxy settings are part of the mount key: the client resolves its
+    // transport when the service is built, so a mode or URL edit that did not
+    // remount would be stored and then ignored by every request until the next
+    // restart.
+    const desired = JSON.stringify({ tokenEnv: next.tokenEnv, repositories: next.repositories, proxyMode: next.proxyMode, proxyUrl: next.proxyUrl })
     if (desired === mounted) return
     teardownProvider()
     token = resolved
@@ -516,6 +551,12 @@ function applyImpl(ctx: Context, config?: Config): void {
           tokenEnv: next.tokenEnv,
           enabled: () => settings().enabled,
           workspaceRegistry: () => probeWorkspaceRegistry(ctx),
+          // Read per mount, and re-resolved per remount because the mode and URL
+          // are part of the mount key above.
+          proxy: () => resolveProxyConfiguration(GITHUB_API_BASE_URL, {
+            mode: settings().proxyMode,
+            customUrl: settings().proxyUrl,
+          }),
           // Resolved PER PASS by the service, never captured here: reading it
           // during activation races the credential store and mounts the
           // provider with nothing, which no restart clears.

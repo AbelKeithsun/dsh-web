@@ -14,7 +14,8 @@ import { makeGitHubSetupRoutes } from '../src/host/routes.ts'
 import type { GitHubSetup } from '../src/host/setup.ts'
 
 const credential: GitHubCredentialStatus = { configured: false, writable: true, envName: 'GITHUB_TOKEN' }
-const summary: GitHubSetupSummary = { credential, repositories: [], running: true, settingsWritable: true }
+const proxy: GitHubSetupSummary['proxy'] = { mode: 'auto', url: '' }
+const summary: GitHubSetupSummary = { credential, repositories: [], running: true, settingsWritable: true, proxy }
 
 /** A setup surface double recording every operation the routes reach. */
 function recordingSetup() {
@@ -30,6 +31,8 @@ function recordingSetup() {
     listRepositories: () => { calls.push('listRepositories'); return [] },
     writeRepositories: async (value) => { calls.push('writeRepositories ' + JSON.stringify(value)); return value as never },
     credential: async () => credential,
+    proxy: () => { calls.push('proxy'); return proxy },
+    setProxy: async (value) => { calls.push('setProxy ' + JSON.stringify(value)); return summary },
   }
   return { setup, calls }
 }
@@ -87,6 +90,7 @@ describe('GitHub setup route addressing', () => {
       '/api/task-board-github/test',
       '/api/task-board-github/credential',
       '/api/task-board-github/repositories',
+      '/api/task-board-github/proxy',
     ])
   })
 

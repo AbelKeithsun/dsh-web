@@ -13,9 +13,12 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import {
+  sanitizeProxySettings,
   sanitizeRepositoryList,
   type GitHubConnectionReport,
   type GitHubCredentialStatus,
+  type GitHubProxyMode,
+  type GitHubProxyStatus,
   type GitHubRepositoryCheck,
   type GitHubSetupSummary,
   type GitHubSyncHealth,
@@ -23,9 +26,10 @@ import {
 import type { GitHubRepoConfig } from '../core/types.ts'
 import { ME_ASSIGNEE, resolveRepoConfig } from '../core/types.ts'
 import { isIssueIncluded } from '../core/projection.ts'
-import { GitHubApiClient, GitHubApiError } from './client.ts'
+import { GITHUB_API_BASE_URL, GitHubApiClient, GitHubApiError, proxyClientOptions } from './client.ts'
 import { clearGitHubToken, describeGitHubCredential, resolveGitHubToken, setGitHubToken } from './credentials.ts'
-import { findGitHubSettingsEntry, resolveSettingsFace, writeConfiguredRepositories } from './configuration.ts'
+import { findGitHubSettingsEntry, resolveSettingsFace, writeConfiguredRepositories, writeProxySettings } from './configuration.ts'
+import { detectSystemProxy, resolveProxyConfiguration } from './proxy.ts'
 
 /** How one repository is checked during a connection test. */
 export interface GitHubSetupTarget {
@@ -61,6 +65,18 @@ export interface GitHubSetupOptions {
   clientFor?(token: string | undefined): GitHubApiClient
   /** Environment seam for tests. */
   env?: Record<string, string | undefined>
+  /** Live proxy mode, read at call time so a settings edit is followed. */
+  proxyMode?(): GitHubProxyMode
+  /** Live custom proxy URL, read at call time. */
+  proxyUrl?(): string
+  /**
+   * System proxy detection seam.
+   *
+   * Absent reads the operating system's own proxy (cached, see ./proxy.ts). The
+   * seam exists so a test never inherits the machine it happens to run on, and
+   * so a deployment that would rather not spawn a child process can say "none".
+   */
+  detectSystemProxy?(): string | undefined
 }
 
 /** The setup surface the routes and tools share. */
@@ -79,6 +95,10 @@ export interface GitHubSetup {
   writeRepositories(value: unknown): Promise<GitHubRepoConfig[]>
   /** Credential facts only, for callers that need nothing else. */
   credential(): Promise<GitHubCredentialStatus>
+  /** Proxy configuration and what it resolves to right now. */
+  proxy(): GitHubProxyStatus
+  /** Store the proxy mode and custom URL, then reload the provider. */
+  setProxy(value: unknown): Promise<GitHubSetupSummary>
 }
 
 /**
@@ -113,6 +133,24 @@ export function createGitHubSetup(options: GitHubSetupOptions): GitHubSetup {
 
   const repositories = (): GitHubRepoConfig[] => options.repositories().map(config => ({ ...config }))
 
+  /** The proxy this configuration resolves to for the API this client dials. */
+  const proxy = (): GitHubProxyStatus => {
+    const mode = options.proxyMode?.() ?? 'auto'
+    const url = options.proxyUrl?.() ?? ''
+    const resolved = resolveProxyConfiguration(GITHUB_API_BASE_URL, {
+      mode,
+      customUrl: url,
+      env,
+      ...(options.detectSystemProxy === undefined ? {} : { detect: options.detectSystemProxy }),
+    })
+    return {
+      mode,
+      url,
+      ...(resolved.url === undefined ? {} : { effective: resolved.url }),
+      ...(resolved.source === undefined ? {} : { source: resolved.source }),
+    }
+  }
+
   const status = async (): Promise<GitHubSetupSummary> => {
     const face = resolveSettingsFace(options.ctx)
     const health = options.health?.()
@@ -121,13 +159,38 @@ export function createGitHubSetup(options: GitHubSetupOptions): GitHubSetup {
       repositories: repositories(),
       running: options.running(),
       settingsWritable: face !== undefined && face.writable !== false && findGitHubSettingsEntry(face) !== undefined,
+      proxy: proxy(),
       ...(health === undefined ? {} : { health }),
     }
   }
 
   const clientFor = (token: string | undefined): GitHubApiClient => {
     if (options.clientFor !== undefined) return options.clientFor(token)
-    return new GitHubApiClient({ token, tokenEnv: options.tokenEnv(), env })
+    // The proxy is resolved here, from the plugin configuration, instead of
+    // being left to the client's own environment read: a mode of `direct` must
+    // win over an inherited HTTPS_PROXY, and a detected system proxy must be
+    // used where no variable names one.
+    return new GitHubApiClient({
+      token,
+      tokenEnv: options.tokenEnv(),
+      env,
+      ...proxyClientOptions(resolveProxyConfiguration(GITHUB_API_BASE_URL, {
+        mode: options.proxyMode?.() ?? 'auto',
+        customUrl: options.proxyUrl?.() ?? '',
+        env,
+        ...(options.detectSystemProxy === undefined ? {} : { detect: options.detectSystemProxy }),
+      })),
+    })
+  }
+
+  const setProxy = async (value: unknown): Promise<GitHubSetupSummary> => {
+    const settings = sanitizeProxySettings(value)
+    if (settings === undefined) {
+      throw new GitHubSetupError(400, 'invalid-proxy', 'the proxy settings are not the shape this extension stores')
+    }
+    await writeProxySettings(options.ctx, settings)
+    options.reload()
+    return await status()
   }
 
   const test = async (target?: GitHubSetupTarget): Promise<GitHubConnectionReport> => {
@@ -193,6 +256,8 @@ export function createGitHubSetup(options: GitHubSetupOptions): GitHubSetup {
     listRepositories: repositories,
     writeRepositories,
     credential,
+    proxy,
+    setProxy,
   }
 }
 

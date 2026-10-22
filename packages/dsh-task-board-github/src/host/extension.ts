@@ -18,8 +18,9 @@ import type { HostTimerFace } from '../core/timers.ts'
 import type { WorkspaceRegistryFace } from './service.ts'
 import { GITHUB_EXTENSION_ID, type GitHubRepoConfig } from '../core/types.ts'
 import type { IssueAnalyzer } from './analysis.ts'
-import { GitHubApiClient } from './client.ts'
+import { GitHubApiClient, proxyClientOptions } from './client.ts'
 import { GitHubSyncService } from './service.ts'
+import type { ProxyConfiguration } from './proxy.ts'
 import { buildGitHubTools, buildSetupTools } from './tools.ts'
 import type { GitHubSetup } from './setup.ts'
 
@@ -72,6 +73,16 @@ export interface GitHubExtensionOptions {
   analyzer?: IssueAnalyzer
   /** Resolves the host's default model route (provider/model). */
   defaultModel?: () => Promise<string | undefined>
+  /**
+   * Resolves the proxy the client routes through.
+   *
+   * Read when the service is built rather than per request, because the client
+   * owns one transport for its lifetime; the host half keeps the mode and the
+   * custom URL in the mount key so an edit remounts instead of being ignored.
+   * Absent leaves the conventional variables deciding, which is the behavior of
+   * a bare programmatic mount.
+   */
+  proxy?: () => ProxyConfiguration
 }
 
 /** One provider action the GitHub browser half dispatches. */
@@ -111,7 +122,11 @@ export function createGitHubExtension(options: GitHubExtensionOptions = {}): Tas
         try { host.publish(service.snapshotSummary()) } catch { /* best-effort */ }
       },
       host,
-      client: options.client ?? new GitHubApiClient({ token: options.token, tokenEnv: options.tokenEnv }),
+      client: options.client ?? new GitHubApiClient({
+        token: options.token,
+        tokenEnv: options.tokenEnv,
+        ...proxyClientOptions(options.proxy?.()),
+      }),
       repositories: options.repositories,
       timers: options.timers,
       now: options.now,

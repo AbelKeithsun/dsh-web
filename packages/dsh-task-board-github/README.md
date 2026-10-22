@@ -61,6 +61,7 @@ Open the Web GUI settings and find the **GitHub Issues sync** card. Everything a
 1. **Paste a GitHub token** into the credential field and save it. The token goes to the local host once and is stored in the DSH credential store — the same store the Models page writes API keys into — and the browser never reads it back. A fine-grained token with repository read access (contents, issues and pull requests) is enough. A deployment that would rather keep the token out of the store can export `GITHUB_TOKEN` (or another name through `tokenEnv`) or `GH_TOKEN` instead; the card reports which source is in use and whether the store can be written at all.
 2. **Add the repositories to synchronize**: type `owner/repo`, paste a GitHub URL or an SSH remote, and optionally name the inclusion label each repository uses plus an inclusion assignee. An issue becomes a board card when it carries that label, is assigned to that login, or — for a repository whose unassigned channel is on — has no assignee at all — put `@me` in the assignee field to follow your own assignments, which is the easy way to pull in the issues you are working on without labeling anything; for a repository that assigns nothing, press that row's take-unassigned button to also collect the unassigned backlog.
 3. **Test the connection**: the card reports the authenticated account and, per repository, whether it is reachable and how many open issues carry the inclusion label.
+4. **Pick the network proxy** if the machine does not reach GitHub directly: the **Network proxy** block offers the three modes and, under `custom`, a URL box. The line below it names the proxy a request would actually use and where it came from, so an `auto` that found the system proxy says so instead of silently going direct. See [Network proxy](#network-proxy).
 
 The same setup can be delegated to an agent: `task_board_github_setup` stores or clears the credential and runs the connection test, and `task_board_github_repositories` lists, adds, removes and updates repositories. A token passed as a tool argument becomes part of that conversation, so prefer the settings card where you can reach it.
 
@@ -71,9 +72,33 @@ The same setup can be delegated to an agent: `task_board_github_setup` stores or
 | `enabled` | `true` | Master switch for the extension; the settings card writes it in place and both halves follow it immediately. |
 | `announceToAgent` | `false` | Opt-in: when true, the extension announces itself in agent system prompts. |
 | `tokenEnv` | `GITHUB_TOKEN` | Credential reference the token is resolved under: the name it is stored under in the credential store, or the environment variable holding it. |
+| `proxyMode` | `auto` | How the Host reaches GitHub: `auto` follows the conventional proxy variables and then the operating system proxy, `custom` pins `proxyUrl`, `direct` never proxies. See [Network proxy](#network-proxy). |
+| `proxyUrl` | `''` | Custom proxy URL, read only by the `custom` mode; a missing scheme is filled in as `http://`. |
 | `repositories` | `[]` | Repositories to synchronize, each with `owner`, `repository`, `inclusionLabel`, `assignee` (`@me` for this host's account), `includeUnassigned` (whether to also collect issues nobody is assigned), `managedLabelPrefix`, `stateLabels`, `prPhaseLabel`, `pollingIntervalMs`, `prCreationEnabled`, `draftPrPolicy`, `closeIssueOnMerge`, `baseBranch` and `analysisModel` (the `provider/model` the AI issue analysis uses; empty falls back to the card's pinned model, then the host default). |
 
 Every key is volatile, which is what lets the settings card, the setup tools and the profile patch all write it: a saved change reaches the running provider without remounting the row. The card itself renders the credential line, the repository list and the connection test; it reads them from this extension's own host routes, which answer loopback requests only. The read-only summary the running provider publishes (configured repositories and credential presence) still rides the board's own state channel and is what the card falls back to when the host routes are unreachable.
+
+## Network proxy
+
+The Host reaches `api.github.com` through one of three modes. The settings card carries a **Network proxy** block that writes both keys in place, and a profile patch can declare them:
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` (default) | Reads `HTTPS_PROXY` / `https_proxy` / `ALL_PROXY` / `all_proxy` first (`HTTP_PROXY` / `http_proxy` for an `http://` base URL), then the operating system's own proxy (the Windows registry through `reg query`, `scutil --proxy` on macOS), then connects directly. |
+| `custom` | Always dials `proxyUrl`. A missing scheme is filled in as `http://`, so `127.0.0.1:7890` is accepted as typed; an empty `proxyUrl` is not a decision, so the mode falls back to `auto`. |
+| `direct` | Never proxies, even when a variable or the system proxy names one. |
+
+`NO_PROXY` / `no_proxy` applies to all three modes, down to a per-entry `:port`. Only `http` and `https` proxies are supported: a `socks://` value is refused with a reason and the request goes direct, because this transport is a `CONNECT` tunnel over `node:http` and a SOCKS proxy needs a different handshake. The card reports the proxy a request would actually use and where it came from (`environment`, `system proxy` or `custom`), so `auto` picking up the machine's system proxy is visible rather than assumed.
+
+```yaml
+- id: web-ui-task-board-github
+  name: '@linxin666/dsh-client-ui-task-board-github'
+  config:
+    proxyMode: auto    # auto | custom | direct
+    proxyUrl: ''       # read only by custom, e.g. http://127.0.0.1:7890
+```
+
+Both keys are volatile, so an edit in the card applies to the next request without a restart. The system proxy probe is cached for 30 seconds and any failure reads as "no system proxy": detection can lose the proxy, never the request.
 
 ## Migrating from the task board row
 
@@ -102,6 +127,7 @@ The switch defaults (`enabled: true`, `announceToAgent: false`) are the same on 
 - Turning the extension off does not delete board cards that were synchronized before, because the board owns its ledger.
 - A repository whose poll interval is `0` is synchronized on demand only (a manual refresh, a status change or an execution settlement) and never on a timer.
 - **A stalled sync now announces itself.** Every GitHub request is bounded at 30 seconds (`GitHubTimeoutError`), so one request that never returns can no longer wedge an entire pass; the re-entry guard is a timestamp rather than a boolean, so a pass still running after one poll interval is taken over by the next one instead of every later poll returning at its first line. Background failures and the errors a pass collects are written to the host log (`[dsh-task-board-github] ...`) and are **no longer swallowed by `.catch(() => {})`**. The settings card carries a Background sync line: when the last clean pass landed, how long it has been stale, and how many errors the last pass reported; going three poll intervals without a clean pass is marked as stopped.
+- **Reaching GitHub through a proxy is configuration, and the transport honours it.** `proxyMode` decides between the environment and system proxy (`auto`, the default), one pinned URL (`custom`, which also accepts a scheme-less `127.0.0.1:7890`), and never proxying (`direct`); `NO_PROXY` / `no_proxy` applies to all three down to a per-entry `:port`, and `https` is tunnelled through a `CONNECT` request. Only `http` and `https` proxies are supported, so a SOCKS-only configuration resolves to a direct connection with a reason naming the scheme. See [Network proxy](#network-proxy). A failure at the transport layer — DNS, TCP, TLS, or a refused tunnel — is retried once with a fresh connection for an idempotent request (`GET`, `HEAD`, `PUT`, `PATCH`, `DELETE`) and then reported as `GitHubTransportError`, which names the endpoint and the transport cause instead of undici's bare `fetch failed`. A `POST` is attempted once only: the connection can die after GitHub accepted the write and before the answer was read, so repeating it would post a comment twice. Node's own `NODE_USE_ENV_PROXY=1` remains an alternative for a deployment that would rather route every host request; the plugin does not require it.
 - The listing call takes the FIRST page of `state=all&per_page=100` and never paginates. In a repository with more than 100 issues only the newest 100 take part in the inclusion decision; older ones are seen only when a single-issue read still finds them included.
 
 ## Build and test

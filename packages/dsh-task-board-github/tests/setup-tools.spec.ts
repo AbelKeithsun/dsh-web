@@ -16,10 +16,10 @@ function setupDouble(initial: GitHubRepoConfig[] = []) {
   let repositories = [...initial]
   const calls: string[] = []
   const setup: GitHubSetup = {
-    status: async () => { calls.push('status'); return { credential: { configured: true, writable: true, envName: 'GITHUB_TOKEN' }, repositories, running: true, settingsWritable: true } },
+    status: async () => { calls.push('status'); return { credential: { configured: true, writable: true, envName: 'GITHUB_TOKEN' }, repositories, running: true, settingsWritable: true, proxy: { mode: 'auto', url: '' } } },
     test: async () => { calls.push('test'); return { ok: true, login: 'octocat', credential: { configured: true, writable: true, envName: 'GITHUB_TOKEN' }, checks: [] } },
-    setCredential: async token => { calls.push('setCredential ' + token); return { credential: { configured: true, writable: true, envName: 'GITHUB_TOKEN' }, repositories, running: true, settingsWritable: true } },
-    clearCredential: async () => { calls.push('clearCredential'); return { credential: { configured: false, writable: true, envName: 'GITHUB_TOKEN' }, repositories, running: true, settingsWritable: true } },
+    setCredential: async token => { calls.push('setCredential ' + token); return { credential: { configured: true, writable: true, envName: 'GITHUB_TOKEN' }, repositories, running: true, settingsWritable: true, proxy: { mode: 'auto', url: '' } } },
+    clearCredential: async () => { calls.push('clearCredential'); return { credential: { configured: false, writable: true, envName: 'GITHUB_TOKEN' }, repositories, running: true, settingsWritable: true, proxy: { mode: 'auto', url: '' } } },
     listRepositories: () => { calls.push('listRepositories'); return [...repositories] },
     writeRepositories: async value => {
       calls.push('writeRepositories')
@@ -27,6 +27,8 @@ function setupDouble(initial: GitHubRepoConfig[] = []) {
       return repositories
     },
     credential: async () => ({ configured: true, writable: true, envName: 'GITHUB_TOKEN' }),
+    proxy: () => ({ mode: 'auto', url: '' }),
+    setProxy: async () => { calls.push('setProxy'); return { credential: { configured: true, writable: true, envName: 'GITHUB_TOKEN' }, repositories, running: true, settingsWritable: true, proxy: { mode: 'auto', url: '' } } },
   }
   return { setup, calls, list: () => repositories }
 }

@@ -23,6 +23,9 @@ const CREDENTIAL_BODY_MAX_BYTES = 4 * 1024
 /** Body cap of the repository route: hundreds of repositories still fit. */
 const REPOSITORY_BODY_MAX_BYTES = 64 * 1024
 
+/** Body cap of the proxy route: a mode and one URL. */
+const PROXY_BODY_MAX_BYTES = 4 * 1024
+
 /**
  * Build the setup routes.
  * @param setup - the shared setup surface.
@@ -81,6 +84,20 @@ export function makeGitHubSetupRoutes(setup: GitHubSetup): WebRoute[] {
         }
         const repositories = await setup.writeRepositories(list)
         writeJson(res, 200, { ok: true, repositories }, { 'cache-control': 'no-store' })
+      }),
+    },
+    {
+      kind: 'exact',
+      path: GITHUB_SETUP_API_PREFIX + '/proxy',
+      handler: (req, res) => route(req, res, async () => {
+        if (req.method === 'GET') {
+          writeJson(res, 200, { ok: true, proxy: setup.proxy() }, { 'cache-control': 'no-store' })
+          return
+        }
+        if (req.method !== 'PUT') return writeJson(res, 405, { ok: false, error: 'method not allowed' })
+        const body = asJsonObject(await readJsonBody(req, { maxBytes: PROXY_BODY_MAX_BYTES }))
+        if (body === undefined) return writeJson(res, 400, { ok: false, error: 'a proxy configuration is required' })
+        writeJson(res, 200, { ok: true, ...(await setup.setProxy({ mode: body.mode, url: body.url })) }, { 'cache-control': 'no-store' })
       }),
     },
   ]

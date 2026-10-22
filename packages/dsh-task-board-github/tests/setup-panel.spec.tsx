@@ -8,7 +8,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { GitHubSetupSummary } from '../src/core/setup.ts'
+import type { GitHubProxyStatus as GitHubProxySummary, GitHubSetupSummary } from '../src/core/setup.ts'
 import type { GitHubRepoConfig } from '../src/core/types.ts'
 import { GitHubSetupPanel } from '../src/client/SetupPanel.tsx'
 import type { GitHubSetupApi } from '../src/client/setup-api.ts'
@@ -27,13 +27,31 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
+/**
+ * The proxy the host would report for one stored pair.
+ *
+ * It models the documented precedence: `direct` resolves to nothing, `custom`
+ * to the URL it was given, and `auto` to the local system proxy this machine
+ * happens to have (a fixed value, so the case is about the rendering rather
+ * than about whatever proxy the test runner has).
+ */
+function resolveProxy(mode: GitHubProxySummary['mode'], url: string): GitHubProxySummary {
+  if (mode === 'direct') return { mode, url }
+  if (mode === 'custom' && url !== '') {
+    const dialed = /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : 'http://' + url
+    return { mode, url, effective: dialed, source: 'custom' }
+  }
+  return { mode, url, effective: 'http://127.0.0.1:7890', source: 'system' }
+}
+
 /** The setup API double: an in-memory configuration recording every call. */
 function apiDouble(initial: GitHubRepoConfig[] = []) {
   const calls: string[] = []
   let repositories = [...initial]
   let credential: GitHubSetupSummary['credential'] = { configured: false, writable: true, envName: 'GITHUB_TOKEN' }
+  let proxy: GitHubSetupSummary['proxy'] = { mode: 'auto', url: '' }
   const api: GitHubSetupApi = {
-    status: async () => { calls.push('status'); return { credential, repositories: [...repositories], running: true, settingsWritable: true } },
+    status: async () => { calls.push('status'); return { credential, repositories: [...repositories], running: true, settingsWritable: true, proxy } },
     test: async () => {
       calls.push('test')
       return {
@@ -46,12 +64,12 @@ function apiDouble(initial: GitHubRepoConfig[] = []) {
     setCredential: async (token) => {
       calls.push('setCredential ' + token)
       credential = { configured: true, writable: true, envName: 'GITHUB_TOKEN', source: 'store' }
-      return { credential, repositories: [...repositories], running: true, settingsWritable: true }
+      return { credential, repositories: [...repositories], running: true, settingsWritable: true, proxy }
     },
     clearCredential: async () => {
       calls.push('clearCredential')
       credential = { configured: false, writable: true, envName: 'GITHUB_TOKEN' }
-      return { credential, repositories: [...repositories], running: true, settingsWritable: true }
+      return { credential, repositories: [...repositories], running: true, settingsWritable: true, proxy }
     },
     listRepositories: async () => [...repositories],
     writeRepositories: async (value) => {
@@ -59,8 +77,13 @@ function apiDouble(initial: GitHubRepoConfig[] = []) {
       repositories = [...value]
       return repositories
     },
+    setProxy: async (value) => {
+      calls.push('setProxy ' + value.mode + ' ' + value.url)
+      proxy = resolveProxy(value.mode, value.url)
+      return { credential, repositories: [...repositories], running: true, settingsWritable: true, proxy }
+    },
   }
-  return { api, calls, list: () => repositories }
+  return { api, calls, list: () => repositories, proxy: () => proxy, setProxyState: (next: GitHubSetupSummary['proxy']) => { proxy = next } }
 }
 
 /** Render the panel and let its first status read settle. */
@@ -113,6 +136,33 @@ function tokenInput(container: HTMLElement): HTMLInputElement {
   const input = container.querySelector('[data-dsh-part="github-token"]')
   if (input === null) throw new Error('the token input did not render')
   return input as HTMLInputElement
+}
+
+/** The proxy mode select the panel renders. */
+function proxyModeSelect(container: HTMLElement): HTMLSelectElement {
+  const select = container.querySelector('[data-dsh-part="github-proxy-mode"]')
+  if (select === null) throw new Error('the proxy mode select did not render')
+  return select as HTMLSelectElement
+}
+
+/** The custom proxy URL input, or null while the mode does not read one. */
+function proxyUrlInput(container: HTMLElement): HTMLInputElement | null {
+  const input = container.querySelector('[data-dsh-part="github-proxy-url"]')
+  return input === null ? null : input as HTMLInputElement
+}
+
+/** The line reporting what the Host would actually dial. */
+function proxyEffectiveLine(container: HTMLElement): HTMLElement {
+  const line = container.querySelector('[data-dsh-part="github-proxy-effective"]')
+  if (line === null) throw new Error('the effective-proxy line did not render')
+  return line as HTMLElement
+}
+
+/** Choose one option of a select the way a browser does (React reads the native setter). */
+function choose(select: HTMLSelectElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+  setter?.call(select, value)
+  select.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
 describe('GitHub setup panel', () => {
@@ -321,3 +371,87 @@ describe('GitHub setup panel', () => {
     expect(container.textContent).toContain(zh['summary.title'])
   })
 })
+
+
+describe('GitHub setup panel network proxy', () => {
+  it('operator on auto is told which proxy the Host detected', async () => {
+    // Given a deployment whose auto mode resolved the machine system proxy
+    const double = apiDouble()
+    double.setProxyState({ mode: 'auto', url: '', effective: 'http://127.0.0.1:7890', source: 'system' })
+
+    // When the panel renders
+    const container = await renderPanel(double.api)
+
+    // Then the detected line names the proxy and where it came from, and the
+    // mode select reads auto with no URL box
+    const line = proxyEffectiveLine(container).textContent ?? ''
+    expect(line).toContain('http://127.0.0.1:7890')
+    expect(line).toContain(zh['setup.proxySourceSystem'])
+    expect(proxyModeSelect(container).value).toBe('auto')
+    expect(proxyUrlInput(container)).toBeNull()
+  })
+
+  it('operator on auto with nothing detected is told the requests go direct', async () => {
+    // Given a deployment where nothing resolved a proxy
+    const { api } = apiDouble()
+
+    // When the panel renders
+    const container = await renderPanel(api)
+
+    // Then the line says so instead of staying blank
+    expect(proxyEffectiveLine(container).textContent).toBe(zh['setup.proxyDirect'])
+  })
+
+  it('operator switching the mode to custom gets the URL box and has the choice stored', async () => {
+    // Given a panel on the default auto mode
+    const double = apiDouble()
+    const container = await renderPanel(double.api)
+    expect(proxyUrlInput(container)).toBeNull()
+
+    // When the operator chooses the custom mode
+    await act(async () => { choose(proxyModeSelect(container), 'custom') })
+
+    // Then the choice was written through the setup API, and the URL box the
+    // custom mode needs is now on screen
+    expect(double.calls).toContain('setProxy custom ')
+    expect(proxyModeSelect(container).value).toBe('custom')
+    const input = proxyUrlInput(container)
+    if (input === null) throw new Error('the custom URL input did not render')
+    expect(input.placeholder).toBe(zh['setup.proxyUrlPlaceholder'])
+  })
+
+  it('operator typing a custom URL has it stored on Enter, without waiting for a blur', async () => {
+    // Given a panel already in the custom mode
+    const double = apiDouble()
+    double.setProxyState({ mode: 'custom', url: '' })
+    const container = await renderPanel(double.api)
+
+    // When the operator types an address and presses Enter
+    const input = proxyUrlInput(container)
+    if (input === null) throw new Error('the custom URL input did not render')
+    type(input, '127.0.0.1:7890')
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    // Then the Host stored it and the detected line reports the URL it resolves
+    expect(double.calls).toContain('setProxy custom 127.0.0.1:7890')
+    expect(proxyEffectiveLine(container).textContent ?? '').toContain('http://127.0.0.1:7890')
+  })
+
+  it('operator switching to direct is told no proxy is used at all', async () => {
+    // Given a panel resolving a detected proxy
+    const double = apiDouble()
+    double.setProxyState({ mode: 'auto', url: '', effective: 'http://127.0.0.1:7890', source: 'system' })
+    const container = await renderPanel(double.api)
+
+    // When the operator chooses the direct mode
+    await act(async () => { choose(proxyModeSelect(container), 'direct') })
+
+    // Then the detected line switches to the direct wording and the URL box
+    // stays away
+    expect(proxyEffectiveLine(container).textContent).toBe(zh['setup.proxyDirectMode'])
+    expect(proxyUrlInput(container)).toBeNull()
+  })
+})
+

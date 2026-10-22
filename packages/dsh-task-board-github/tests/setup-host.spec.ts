@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import type { GitHubProxyMode } from '../src/core/setup.ts'
 import type { GitHubRepoConfig } from '../src/core/types.ts'
 import { GitHubApiError, type GitHubApiClient } from '../src/host/client.ts'
 import { createGitHubSetup, GitHubSetupError, normalizeTokenInput } from '../src/host/setup.ts'
@@ -97,10 +98,17 @@ function setupOf(options: {
   settings?: ReturnType<typeof settingsSurface>
   client?: GitHubApiClient
   reloads?: { count: number }
+  proxyMode?: GitHubProxyMode
+  proxyUrl?: string
+  detectedProxy?: string
 }) {
   const credentials = options.credentials ?? credentialStore()
   const settings = options.settings ?? settingsSurface('web-ui-task-board-github')
   const reloads = options.reloads ?? { count: 0 }
+  // The live config the Loader commits into: a write reaches the provider
+  // through that commit, so a case that wants to read the value back after a
+  // write sets it here, exactly as the Loader would.
+  const live = { mode: options.proxyMode ?? 'auto' as GitHubProxyMode, url: options.proxyUrl ?? '' }
   const setup = createGitHubSetup({
     ctx: hostContext({ credentials: credentials.face, settings: settings.face }),
     repositories: () => options.repositories ?? [],
@@ -109,9 +117,115 @@ function setupOf(options: {
     reload: () => { reloads.count += 1 },
     clientFor: () => options.client ?? apiClient({}),
     env: {},
+    proxyMode: () => live.mode,
+    proxyUrl: () => live.url,
+    // Injected so the status assertions describe the resolver, not whichever
+    // proxy the machine running the suite happens to have configured.
+    detectSystemProxy: () => options.detectedProxy,
   })
-  return { setup, credentials, settings, reloads }
+  return { setup, credentials, settings, reloads, live }
 }
+
+describe('GitHub setup proxy', () => {
+  it('operator on auto sees the system proxy the Host detected', async () => {
+    // Given: an auto configuration and a machine with a system proxy
+    const { setup } = setupOf({ detectedProxy: '127.0.0.1:7890' })
+
+    // When: the status is read
+    const status = await setup.status()
+
+    // Then: the card can say which proxy a request would use and where it came
+    // from, which is the only way a user learns auto worked
+    expect(status.proxy).toEqual({ mode: 'auto', url: '', effective: 'http://127.0.0.1:7890', source: 'system' })
+  })
+
+  it('operator on direct is told no proxy is used even with one detected', async () => {
+    // Given: the direct mode on the same machine
+    const { setup } = setupOf({ proxyMode: 'direct', detectedProxy: '127.0.0.1:7890' })
+
+    // When: the status is read
+    const status = await setup.status()
+
+    // Then: there is no effective proxy to report
+    expect(status.proxy).toEqual({ mode: 'direct', url: '' })
+  })
+
+  it('operator saving a custom proxy has both fields stored and the provider reloaded', async () => {
+    // Given: a setup surface over a writable settings document
+    const settings = settingsSurface('web-ui-task-board-github')
+    const reloads = { count: 0 }
+    const { setup, live } = setupOf({ settings, reloads })
+
+    // When: a custom URL without a scheme is saved
+    const status = await setup.setProxy({ mode: 'custom', url: '127.0.0.1:7890' })
+
+    // Then: both fields are written against the revision that was read, the
+    // provider is reloaded so the next request uses it, and the status reports
+    // the URL the client will actually dial
+    expect(settings.writes).toEqual([{
+      ns: 'web-ui-task-board-github',
+      ops: [
+        { op: 'set', path: ['proxyMode'], value: 'custom' },
+        { op: 'set', path: ['proxyUrl'], value: '127.0.0.1:7890' },
+      ],
+      revision: 7,
+    }])
+    expect(reloads.count).toBe(1)
+    // The Loader commits the write into the live config; the next status read
+    // reports the URL the client will actually dial, scheme included
+    live.mode = 'custom'
+    live.url = '127.0.0.1:7890'
+    expect((await setup.status()).proxy).toEqual({
+      mode: 'custom',
+      url: '127.0.0.1:7890',
+      effective: 'http://127.0.0.1:7890',
+      source: 'custom',
+    })
+    expect(status.proxy.mode).toBe('auto')
+  })
+
+  it('operator saving a socks proxy is stored but not routed, without an exception', async () => {
+    // Given: a writable settings document
+    const { setup, live } = setupOf({})
+
+    // When: a socks URL is saved and committed
+    await setup.setProxy({ mode: 'custom', url: 'socks5://127.0.0.1:1080' })
+    live.mode = 'custom'
+    live.url = 'socks5://127.0.0.1:1080'
+
+    // Then: the value is stored as typed, yet nothing resolves to a dialable
+    // proxy, because this transport cannot speak SOCKS
+    expect((await setup.status()).proxy).toEqual({ mode: 'custom', url: 'socks5://127.0.0.1:1080' })
+  })
+
+  it('operator sending a malformed proxy write is refused with a reason to correct', async () => {
+    // Given: a setup surface
+    const settings = settingsSurface('web-ui-task-board-github')
+    const { setup } = setupOf({ settings })
+
+    // When: a mode outside the union is sent
+    const outcome = await setup.setProxy({ mode: 'proxy-by-magic' }).then(() => 'stored', (error: unknown) => error)
+
+    // Then: the write is refused as a bad request, and nothing was stored
+    expect(outcome).toBeInstanceOf(GitHubSetupError)
+    expect((outcome as GitHubSetupError).status).toBe(400)
+    expect((outcome as GitHubSetupError).code).toBe('invalid-proxy')
+    expect(settings.writes).toEqual([])
+  })
+
+  it('operator reading the status never receives the credential in the proxy block', async () => {
+    // Given: a stored credential and a custom proxy
+    const credentials = credentialStore({ GITHUB_TOKEN: 'ghp_secret_value' })
+    const { setup } = setupOf({ credentials, proxyMode: 'custom', proxyUrl: 'http://127.0.0.1:7890' })
+
+    // When: the status is read
+    const status = await setup.status()
+
+    // Then: the proxy block names the proxy and nothing else
+    expect(JSON.stringify(status.proxy)).not.toContain('ghp_secret_value')
+    expect(status.credential.configured).toBe(true)
+  })
+})
 
 describe('GitHub setup status', () => {
   it('operator opening an unconfigured integration sees what is missing', async () => {

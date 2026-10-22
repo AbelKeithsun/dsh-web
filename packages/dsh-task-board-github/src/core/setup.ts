@@ -54,6 +54,73 @@ export interface GitHubCredentialStatus {
 }
 
 /**
+ * Proxy modes the settings card offers.
+ *
+ * `auto` reads the conventional variables and, when they name nothing, the
+ * operating system's own proxy; `custom` pins one URL; `direct` never proxies.
+ * The list is the schema's union and the card's option set, so the two cannot
+ * drift into different ideas of what a mode is.
+ */
+export const GITHUB_PROXY_MODES = ['auto', 'custom', 'direct'] as const
+
+/** One proxy mode. */
+export type GitHubProxyMode = (typeof GITHUB_PROXY_MODES)[number]
+
+/** Where the proxy a request actually uses came from. */
+export type GitHubProxySource = 'env' | 'system' | 'custom'
+
+/**
+ * The proxy an integration currently uses, as the settings card renders it.
+ *
+ * It carries no credential: a proxy URL that embeds one is reported as the URL
+ * the host would dial and never as a resolved authorization header.
+ */
+export interface GitHubProxyStatus {
+  /** Configured mode. */
+  mode: GitHubProxyMode
+  /** Configured custom URL as stored; empty unless the mode is `custom`. */
+  url: string
+  /** The proxy a request would actually use right now, when one resolved. */
+  effective?: string
+  /** Where {@link effective} came from. */
+  source?: GitHubProxySource
+}
+
+/** The proxy settings one write carries. */
+export interface GitHubProxySettings {
+  /** Mode to store. */
+  mode: GitHubProxyMode
+  /** Custom proxy URL to store; only the `custom` mode reads it. */
+  url: string
+}
+
+/** Longest proxy URL this extension stores; a longer value is a paste accident. */
+export const GITHUB_PROXY_URL_MAX_CHARS = 512
+
+/**
+ * Validate a proxy settings write.
+ *
+ * Both halves and every writer go through this: the card sends the two fields
+ * it renders, an agent tool may send either, and a hand-edited settings
+ * document is a third source. A value that is not the shape this extension
+ * stores is refused as `undefined` rather than stored half-applied, and the
+ * custom URL is normalized the way the resolver normalizes it so a user who
+ * types `127.0.0.1:7890` reads back the URL that is actually dialled.
+ * @param value - the raw write.
+ * @returns the settings to store, or undefined when the value is not one.
+ */
+export function sanitizeProxySettings(value: unknown): GitHubProxySettings | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const row = value as Record<string, unknown>
+  const mode = row.mode
+  if (mode !== undefined && !GITHUB_PROXY_MODES.includes(mode as GitHubProxyMode)) return undefined
+  if (row.url !== undefined && typeof row.url !== 'string') return undefined
+  const url = typeof row.url === 'string' ? row.url.trim() : ''
+  if (url.length > GITHUB_PROXY_URL_MAX_CHARS) return undefined
+  return { mode: (mode as GitHubProxyMode | undefined) ?? 'auto', url }
+}
+
+/**
  * What a mounted provider reports about its own background synchronization.
  *
  * Declared structurally so the setup surface does not import the service.
@@ -78,6 +145,15 @@ export interface GitHubSetupSummary {
   running: boolean
   /** Whether the settings document accepts configuration writes at all. */
   settingsWritable: boolean
+  /**
+   * Proxy configuration and what it currently resolves to.
+   *
+   * The card has to show the detected proxy, not merely the configured mode: a
+   * machine whose egress runs through a local proxy that no environment
+   * variable names is exactly the case `auto` exists for, and the user can only
+   * tell it worked by reading the resolved URL.
+   */
+  proxy: GitHubProxyStatus
   /**
    * Whether background synchronization is actually reaching GitHub.
    *

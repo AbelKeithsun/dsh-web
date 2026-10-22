@@ -43,6 +43,8 @@ export class FakeGitHubBackend {
   networkFailure = false
   /** How many HTTP calls reached the stand-in. */
   requests = 0
+  /** How many of those were the `GET /user` identity read. */
+  userReads = 0
   /** Comment bodies posted through the stand-in, in arrival order. */
   comments: Array<{ issueNumber: number, body: string }> = []
 
@@ -54,6 +56,7 @@ export class FakeGitHubBackend {
     const pathname = url.pathname
 
     if (pathname === '/user' && method === 'GET') {
+      this.userReads += 1
       return json({ login: this.login })
     }
     if (pathname.includes('/issues') && method === 'GET' && !pathname.match(/\/issues\/\d+$/)) {

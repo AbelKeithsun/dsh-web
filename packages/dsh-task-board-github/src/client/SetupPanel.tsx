@@ -13,10 +13,13 @@
  * @module dsh-task-board-github/client/SetupPanel
  */
 import { useCallback, useEffect, useId, useState } from 'react'
-import type {
-  GitHubConnectionReport,
-  GitHubCredentialStatus,
-  GitHubSetupSummary,
+import {
+  GITHUB_PROXY_MODES,
+  type GitHubConnectionReport,
+  type GitHubCredentialStatus,
+  type GitHubProxyMode,
+  type GitHubProxySource,
+  type GitHubSetupSummary,
 } from '../core/setup.ts'
 import { addRepository, removeRepository, updateRepository } from '../core/setup.ts'
 import type { GitHubRepoConfig } from '../core/types.ts'
@@ -57,6 +60,13 @@ export function GitHubSetupPanel({ t, api, disabled = false }: GitHubSetupPanelP
   const [testError, setTestError] = useState<string | undefined>()
   const [testing, setTesting] = useState(false)
   const [repositoriesOpen, setRepositoriesOpen] = useState(false)
+  // The proxy block keeps its own draft: the select writes immediately, while
+  // the URL box is committed on blur or Enter so a half-typed address is never
+  // stored and never remounts the provider between keystrokes.
+  const [proxyMode, setProxyMode] = useState<GitHubProxyMode>('auto')
+  const [proxyUrlDraft, setProxyUrlDraft] = useState('')
+  const [proxyError, setProxyError] = useState<string | undefined>()
+  const [proxyBusy, setProxyBusy] = useState(false)
   // Points aria-controls at the disclosure region below.
   const repositoriesRegionId = useId()
 
@@ -65,6 +75,8 @@ export function GitHubSetupPanel({ t, api, disabled = false }: GitHubSetupPanelP
       const next = await api.status()
       setStatus(next)
       setRepositories(next.repositories)
+      setProxyMode(next.proxy.mode)
+      setProxyUrlDraft(next.proxy.url)
       setStatusError(undefined)
     } catch (error) {
       setStatus(undefined)
@@ -169,6 +181,21 @@ export function GitHubSetupPanel({ t, api, disabled = false }: GitHubSetupPanelP
     }
   }
 
+  const saveProxy = async (mode: GitHubProxyMode, url: string): Promise<void> => {
+    setProxyBusy(true)
+    setProxyError(undefined)
+    try {
+      const next = await api.setProxy({ mode, url })
+      setStatus(next)
+      setProxyMode(next.proxy.mode)
+      setProxyUrlDraft(next.proxy.url)
+    } catch (error) {
+      setProxyError(messageOf(error))
+    } finally {
+      setProxyBusy(false)
+    }
+  }
+
   const credential: GitHubCredentialStatus = status?.credential ?? {
     configured: mirror?.hasCredential === true,
     writable: false,
@@ -181,6 +208,15 @@ export function GitHubSetupPanel({ t, api, disabled = false }: GitHubSetupPanelP
   const repositoriesHeading = repositories.length === 0
     ? t('setup.repositoriesEmpty')
     : t('setup.repositoriesCount', { count: String(repositories.length) })
+  // What the Host says a request would actually dial, which is the only way a
+  // user can tell that `auto` found the machine's system proxy. Absent means
+  // nothing resolved: say which mode produced that instead of leaving a blank.
+  const detected = status?.proxy
+  const proxyLine = detected?.effective !== undefined
+    ? t('setup.proxyDetected', { url: detected.effective, source: proxySourceLabel(t, detected.source) })
+    : proxyMode === 'direct'
+      ? t('setup.proxyDirectMode')
+      : t('setup.proxyDirect')
 
   return (
     <div data-dsh-part="github-settings" className={css.setupPanel}>
@@ -265,6 +301,46 @@ export function GitHubSetupPanel({ t, api, disabled = false }: GitHubSetupPanelP
             ))}
           </div>
         )}
+      </div>
+
+      <div className={css.setupSection} data-dsh-part="github-proxy">
+        <p className={css.setupLine}>{t('setup.proxyTitle')}</p>
+        <div className={css.setupRow}>
+          <select
+            className={css.input}
+            data-dsh-part="github-proxy-mode"
+            aria-label={t('setup.proxyModeLabel')}
+            value={proxyMode}
+            disabled={disabled || proxyBusy}
+            onChange={event => {
+              const next = event.target.value as GitHubProxyMode
+              setProxyMode(next)
+              void saveProxy(next, proxyUrlDraft)
+            }}
+          >
+            {GITHUB_PROXY_MODES.map(mode => (
+              <option key={mode} value={mode}>{proxyModeLabel(t, mode)}</option>
+            ))}
+          </select>
+          {proxyMode === 'custom' && (
+            <input
+              type="text"
+              className={css.input}
+              data-dsh-part="github-proxy-url"
+              aria-label={t('setup.proxyUrlLabel')}
+              placeholder={t('setup.proxyUrlPlaceholder')}
+              value={proxyUrlDraft}
+              spellCheck={false}
+              disabled={disabled || proxyBusy}
+              onChange={event => setProxyUrlDraft(event.target.value)}
+              onBlur={() => { if (proxyUrlDraft !== (status?.proxy.url ?? '')) void saveProxy(proxyMode, proxyUrlDraft) }}
+              onKeyDown={event => { if (event.key === 'Enter') void saveProxy(proxyMode, proxyUrlDraft) }}
+            />
+          )}
+        </div>
+        <p className={css.setupLine} data-dsh-part="github-proxy-effective">{proxyLine}</p>
+        <p className={css.setupHint}>{t('setup.proxyHint')}</p>
+        {proxyError !== undefined && <p className={css.formError}>{proxyError}</p>}
       </div>
 
       <div className={css.setupSection} data-dsh-part="github-repositories">
@@ -401,4 +477,18 @@ export function GitHubSetupPanel({ t, api, disabled = false }: GitHubSetupPanelP
 /** Read one failure the way the API phrased it. */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** One proxy mode, as the select labels it. */
+function proxyModeLabel(t: SetupPanelTranslate, mode: GitHubProxyMode): string {
+  if (mode === 'custom') return t('setup.proxyModeCustom')
+  if (mode === 'direct') return t('setup.proxyModeDirect')
+  return t('setup.proxyModeAuto')
+}
+
+/** Where a resolved proxy came from, as the detected line names it. */
+function proxySourceLabel(t: SetupPanelTranslate, source: GitHubProxySource | undefined): string {
+  if (source === 'env') return t('setup.proxySourceEnv')
+  if (source === 'system') return t('setup.proxySourceSystem')
+  return t('setup.proxySourceCustom')
 }

@@ -11,7 +11,15 @@
  *
  * @module dsh-task-board-github/client/setup-api
  */
-import { GITHUB_SETUP_API_PREFIX, type GitHubConnectionReport, type GitHubSetupSummary } from '../core/setup.ts'
+import {
+  GITHUB_PROXY_MODES,
+  GITHUB_SETUP_API_PREFIX,
+  type GitHubConnectionReport,
+  type GitHubProxyMode,
+  type GitHubProxySettings,
+  type GitHubProxyStatus,
+  type GitHubSetupSummary,
+} from '../core/setup.ts'
 import type { GitHubRepoConfig } from '../core/types.ts'
 
 /** Hard ceiling for one setup call; a stalled host must not pile up requests. */
@@ -38,6 +46,8 @@ export interface GitHubSetupApi {
   listRepositories(): Promise<GitHubRepoConfig[]>
   /** Replace the configured repository list. */
   writeRepositories(repositories: readonly GitHubRepoConfig[]): Promise<GitHubRepoConfig[]>
+  /** Store the proxy mode and custom URL. */
+  setProxy(settings: GitHubProxySettings): Promise<GitHubSetupSummary>
 }
 
 /**
@@ -81,6 +91,25 @@ export function createGitHubSetupApi(fetchImpl: typeof fetch = fetch): GitHubSet
     }
   }
 
+  /**
+   * Parse the host's proxy block, falling back to the schema default.
+   *
+   * The fallback has to be `auto`: a host that predates this field proxies
+   * exactly as `auto` describes it, so the card must render the mode that
+   * matches what is actually happening rather than a `direct` it invented.
+   */
+  const asProxy = (value: unknown): GitHubProxyStatus => {
+    const row = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+    const mode = GITHUB_PROXY_MODES.includes(row.mode as GitHubProxyMode) ? row.mode as GitHubProxyMode : 'auto'
+    const source = row.source === 'env' || row.source === 'system' || row.source === 'custom' ? row.source : undefined
+    return {
+      mode,
+      url: typeof row.url === 'string' ? row.url : '',
+      ...(typeof row.effective === 'string' && row.effective !== '' ? { effective: row.effective } : {}),
+      ...(source === undefined ? {} : { source }),
+    }
+  }
+
   const asSummary = (body: Record<string, unknown>): GitHubSetupSummary => {
     const credential = typeof body.credential === 'object' && body.credential !== null ? body.credential as GitHubSetupSummary['credential'] : undefined
     const health = asHealth(body.health)
@@ -89,6 +118,7 @@ export function createGitHubSetupApi(fetchImpl: typeof fetch = fetch): GitHubSet
       repositories: Array.isArray(body.repositories) ? body.repositories as GitHubRepoConfig[] : [],
       running: body.running === true,
       settingsWritable: body.settingsWritable === true,
+      proxy: asProxy(body.proxy),
       ...(health === undefined ? {} : { health }),
     }
   }
@@ -116,6 +146,9 @@ export function createGitHubSetupApi(fetchImpl: typeof fetch = fetch): GitHubSet
     async writeRepositories(repositories) {
       const body = await call('/repositories', { method: 'PUT', body: JSON.stringify({ repositories }) })
       return Array.isArray(body.repositories) ? body.repositories as GitHubRepoConfig[] : []
+    },
+    async setProxy(settings) {
+      return asSummary(await call('/proxy', { method: 'PUT', body: JSON.stringify(settings) }))
     },
   }
 }

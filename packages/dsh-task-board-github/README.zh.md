@@ -61,6 +61,7 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board-github
 1. **粘贴 GitHub Token** 并保存。令牌只发给本机宿主一次，存进 DSH 凭据库（与 Models 页存 API Key 是同一处），浏览器不会读回；一个只有仓库读权限（contents / issues / pull requests）的 fine-grained token 就够用。如果不想把令牌放进凭据库，也可以改用环境变量：`tokenEnv` 指定的变量名（默认 `GITHUB_TOKEN`）或 `GH_TOKEN`；卡片会显示当前用的是哪种来源，以及凭据库是否可写。
 2. **添加要同步的仓库**：输入 `owner/repo`，或直接粘贴 GitHub 链接 / SSH 远程地址，并可顺便指定该仓库使用的纳入标签与纳入指派账号。issue 带该标签、被指派给该登录，**或**（当该行打开「收无指派」时）一个指派人都没有时，就会成为看板卡片——在指派栏填 `@me` 即可跟随你自己的指派，不必再给 issue 打标签；对从不指派的仓库，点该行的「收无指派」按钮即可连未分配的 issue 一起收。
 3. **测试连接**：卡片会报告认证到的账号，并逐个仓库给出是否可达、有多少个带纳入标签的 open issue。
+4. **按需选择网络代理**：机器不能直连 GitHub 时，用「网络代理」小节在三种模式之间切换，`custom` 模式下还会出现地址输入框。下面那一行会说明请求实际会连哪条代理、来源是什么，所以「自动模式找到了系统代理」会明确写出来，而不是静默直连。详见[网络代理](#网络代理)。
 
 也可以把这件事交给 agent：`task_board_github_setup` 负责存取/清除凭据并跑连接测试，`task_board_github_repositories` 负责列出、添加、移除与修改仓库。注意：作为工具参数传入的令牌会成为该次会话记录的一部分，能打开设置卡时优先用设置卡。
 
@@ -71,9 +72,33 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board-github
 | `enabled` | `true` | 扩展总开关；设置卡就地写入该字段，两侧半区即时跟随。 |
 | `announceToAgent` | `false` | 需要时开启：开启后扩展向 agent 系统提示注入自身公告。 |
 | `tokenEnv` | `GITHUB_TOKEN` | 令牌解析所用的凭据引用名：凭据库里的存储名，或存放它的环境变量名。 |
+| `proxyMode` | `auto` | 宿主访问 GitHub 的方式：`auto` 跟随常规代理环境变量、再读系统代理，`custom` 固定使用 `proxyUrl`，`direct` 永不代理。详见[网络代理](#网络代理)。 |
+| `proxyUrl` | `''` | 自定义代理地址，仅 `custom` 模式读取；缺协议会自动补 `http://`。 |
 | `repositories` | `[]` | 需要同步的仓库，每项含 `owner`、`repository`、`inclusionLabel`、`assignee`（`@me` 表示本机账号）、`includeUnassigned`（是否连无人指派的 issue 一起收）、`managedLabelPrefix`、`stateLabels`、`prPhaseLabel`、`pollingIntervalMs`、`prCreationEnabled`、`draftPrPolicy`、`closeIssueOnMerge`、`baseBranch` 与 `analysisModel`（AI issue 分析使用的 `provider/model`；留空则依次回退到卡片钉住的模型与宿主默认模型）。 |
 
-四个键都是 volatile 字段，这正是设置卡、配置工具与 profile patch 都能写入它们的原因：保存后的改动无需重挂载插件行就能到达正在运行的提供方。卡片自身渲染凭据状态、仓库列表与连接测试，数据来自本扩展自己的宿主路由，而这些路由只服务 loopback 请求。运行中的提供方仍会把只读摘要（已配置仓库与凭据有无）发布到看板状态通道，卡片在宿主路由不可达时回退到它。
+这些键都是 volatile 字段，这正是设置卡、配置工具与 profile patch 都能写入它们的原因：保存后的改动无需重挂载插件行就能到达正在运行的提供方。卡片自身渲染凭据状态、仓库列表与连接测试，数据来自本扩展自己的宿主路由，而这些路由只服务 loopback 请求。运行中的提供方仍会把只读摘要（已配置仓库与凭据有无）发布到看板状态通道，卡片在宿主路由不可达时回退到它。
+
+## 网络代理
+
+宿主访问 `api.github.com` 时走三种模式之一。设置卡里有一节「网络代理」，两个键都在那里就地写入；profile patch 也可以直接声明：
+
+| 模式 | 行为 |
+| --- | --- |
+| `auto`（默认） | 先读 `HTTPS_PROXY` / `https_proxy` / `ALL_PROXY` / `all_proxy`（`http://` 基址用 `HTTP_PROXY` / `http_proxy`），再读操作系统自己的代理（Windows 经 `reg query` 读注册表，macOS 用 `scutil --proxy`），两者都没有时直连。 |
+| `custom` | 始终连 `proxyUrl`。缺协议自动补 `http://`，所以直接把 `127.0.0.1:7890` 填进去即可；`proxyUrl` 为空不构成决定，该模式回落到 `auto`。 |
+| `direct` | 永不代理，即使环境变量或系统代理点名了一条。 |
+
+`NO_PROXY` / `no_proxy` 对三种模式都生效，可逐条带 `:端口`。只支持 `http` 与 `https` 代理：填 `socks://` 会带原因被拒、请求改为直连，因为本扩展的传输就是 `node:http` 上的 `CONNECT` 隧道，而 SOCKS 代理需要另一套握手。卡片会显示请求实际会连的代理及其来源（`环境变量`、`系统代理`、`自定义`），所以「自动模式读到了系统代理」是看得见的，而不是靠猜。
+
+```yaml
+- id: web-ui-task-board-github
+  name: '@linxin666/dsh-client-ui-task-board-github'
+  config:
+    proxyMode: auto    # auto | custom | direct
+    proxyUrl: ''       # 仅 custom 读取，例如 http://127.0.0.1:7890
+```
+
+两个键都是 volatile 字段，因此在卡片里改动会作用于下一个请求，无需重启。系统代理探测结果缓存 30 秒，任何失败都读作「没有系统代理」：探测可以丢掉代理，但绝不丢掉请求。
 
 ## 从看板行迁移
 
@@ -102,6 +127,7 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board-github
 - 关闭扩展不会删除此前同步到看板的卡片，因为账本归看板所有。
 - 轮询间隔为 `0` 的仓库只按需同步（手动刷新、列变化或执行结算），不会挂定时器。
 - **同步停滞现在会自己暴露。** 每一次对 GitHub 的请求都有 30 秒上限（`GitHubTimeoutError`），一次挂起的请求不再能把整轮同步永久卡死；重入保护是一个时间戳而不是布尔量，一轮超过一个轮询间隔还没结束会被判定为卡死并由下一轮接管，而不是让之后每一次轮询都在第一行直接返回。后台轮询的任何失败与每轮收集到的错误都会写入宿主日志（`[dsh-task-board-github] ...`），**不再被 `.catch(() => {})` 静默吞掉**。设置卡顶部会显示「后台同步」一行：最近一次成功同步的时间、停滞多久、以及上轮的错误条数；超过三个轮询间隔没有成功同步即标为「已停」。
+- **经代理访问 GitHub 是一项配置，传输层会照做。** `proxyMode` 决定三种方式之一：跟随环境变量与系统代理（`auto`，默认）、固定一条 URL（`custom`，也接受不带协议的 `127.0.0.1:7890`）、永不代理（`direct`）；`NO_PROXY` / `no_proxy` 对三者都生效并支持逐条 `:端口`，`https` 目标用 `CONNECT` 建隧道。只支持 `http` / `https` 代理，因此「只有 SOCKS」的配置会解析成直连并给出点名该协议的原因。详见[网络代理](#网络代理)。传输层失败（DNS、TCP、TLS 或被代理拒绝）对幂等请求（`GET`、`HEAD`、`PUT`、`PATCH`、`DELETE`）会用新连接重试一次，之后抛出 `GitHubTransportError`，报出端点与具体原因，而不是 undici 那句干巴巴的 `fetch failed`。`POST` 只发一次：连接可能在 GitHub 已经接受写入之后、答复读到之前断掉，重发会把同一条评论贴两遍。若希望宿主全部请求都走代理，也可以用 Node 自带的 `NODE_USE_ENV_PROXY=1`，本插件不依赖它。
 - 列表调用取 `state=all&per_page=100` 的**第一页**，不翻页。仓库的 issue 超过 100 条时，只有最新的 100 条参与判定；更早的 issue 只有在被单条补拉（且仍符合纳入条件）时才会被看到。
 
 ## 构建与测试

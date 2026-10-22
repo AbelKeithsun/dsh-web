@@ -10,6 +10,17 @@
  */
 
 import type { GitHubCommentPayload, GitHubIssuePayload, GitHubPullRequestPayload } from '../core/types.ts'
+import { createProxyFetch, resolveProxyUrl, type ProxyConfiguration } from './proxy.ts'
+
+/**
+ * Base URL of the GitHub REST API this client addresses by default.
+ *
+ * Exported because the proxy decision is made for a destination, and every
+ * caller that resolves one has to resolve it for the same destination the
+ * client dials: a status line computed for a different host would report a
+ * proxy the next request does not use (or hide the one it does).
+ */
+export const GITHUB_API_BASE_URL = 'https://api.github.com'
 
 /**
  * Default ceiling on one GitHub request, in milliseconds.
@@ -47,6 +58,91 @@ export class GitHubTimeoutError extends Error {
   }
 }
 
+/**
+ * A request that never reached GitHub: DNS, TCP, TLS or a proxy refused it.
+ *
+ * Distinct from both neighbours so a caller can act on the difference — an
+ * `GitHubApiError` means GitHub answered, and a `GitHubTimeoutError` means the
+ * endpoint stayed silent, while this one means the request did not get there.
+ * It exists because the raw transport failure ("fetch failed") names neither the
+ * endpoint nor the cause, and it is what a card stores as its sync error.
+ */
+export class GitHubTransportError extends Error {
+  /**
+   * @param endpoint - request that failed.
+   * @param reason - transport cause, already phrased for a person.
+   */
+  constructor(
+    readonly endpoint: string,
+    readonly reason: string,
+  ) {
+    super('GitHub request failed (network): ' + reason + ': ' + endpoint)
+    this.name = 'GitHubTransportError'
+  }
+}
+
+/** Methods a transport failure may be repeated for. */
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE'])
+
+/**
+ * Whether repeating one request is safe when the first attempt's fate is unknown.
+ *
+ * A transport failure does not prove the request never arrived: the connection
+ * can die after GitHub accepted it and before the answer was read. Repeating a
+ * GET costs one request, while repeating a POST creates a second comment, so
+ * the split is the HTTP idempotency rule rather than a preference. A POST that
+ * fails this way reports its transport cause and leaves the decision to the
+ * caller, which can look before it writes again.
+ * @param method - request method.
+ * @returns whether a retry is allowed.
+ */
+function isIdempotentMethod(method: string): boolean {
+  return IDEMPOTENT_METHODS.has(method.toUpperCase())
+}
+
+/** Attempts one request gets before the transport failure is final. */
+export const TRANSPORT_ATTEMPTS = 2
+
+/**
+ * Pause between the two attempts, in milliseconds.
+ *
+ * Long enough that a socket which died with a network change is replaced
+ * rather than reused, short enough that a pass of many requests stays bounded.
+ */
+export const TRANSPORT_RETRY_DELAY_MS = 250
+
+/**
+ * Whether one failure is a transport failure worth repeating.
+ *
+ * A timeout is not repeated: it already spent the whole ceiling, and a pass
+ * makes many sequential requests. An API refusal is not repeated either — GitHub
+ * answered, and asking again asks the same question.
+ * @param error - the failure.
+ * @returns whether the caller may try once more.
+ */
+function isRetryableTransportError(error: unknown): boolean {
+  if (error instanceof GitHubTimeoutError) return false
+  if (error instanceof GitHubApiError) return false
+  if (error instanceof Error && error.name === 'AbortError') return false
+  return error instanceof Error
+}
+
+/**
+ * Phrase a transport cause for a card's stored sync error.
+ * @param error - the failure.
+ * @returns the cause, most specific available first.
+ */
+function transportReason(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  const cause = (error as { cause?: unknown }).cause
+  if (cause instanceof Error) {
+    const code = (cause as { code?: unknown }).code
+    if (typeof code === 'string' && code !== '') return error.message + ' (' + code + ')'
+    if (cause.message !== '') return error.message + ': ' + cause.message
+  }
+  return error.message
+}
+
 export interface GitHubClientOptions {
   /** Explicit API token (testing or direct programmatic injection). */
   token?: string
@@ -59,6 +155,15 @@ export interface GitHubClientOptions {
   /** Custom env dictionary (defaults to process.env). */
   env?: Record<string, string | undefined>
   /**
+   * Proxy to reach GitHub through, when the deployment names one explicitly.
+   *
+   * Absent means the conventional variables decide (see ./proxy.ts), which is
+   * the case a machine whose egress runs through a local proxy actually hits.
+   */
+  proxyUrl?: string
+  /** Whether the conventional proxy variables are consulted (default true). */
+  useEnvironmentProxy?: boolean
+  /**
    * Ceiling on one request, in milliseconds.
    *
    * Every request is bounded by this. A sync pass issues a hundred or more
@@ -70,6 +175,22 @@ export interface GitHubClientOptions {
   requestTimeoutMs?: number
 }
 
+/**
+ * The client's proxy options for one already-resolved configuration.
+ *
+ * The proxy is resolved BEFORE the client is built (it depends on the target
+ * URL, the configured mode and the machine's system proxy), so the client must
+ * not resolve it a second time from the environment: an explicit `undefined`
+ * with the environment read switched off is the difference between "the host
+ * decided direct" and "let the client guess".
+ * @param configuration - the resolution, when one was made.
+ * @returns proxy options for {@link GitHubClientOptions}.
+ */
+export function proxyClientOptions(configuration: ProxyConfiguration | undefined): { proxyUrl?: string; useEnvironmentProxy?: boolean } {
+  if (configuration === undefined) return {}
+  return { proxyUrl: configuration.url, useEnvironmentProxy: false }
+}
+
 export class GitHubApiClient {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
@@ -77,15 +198,22 @@ export class GitHubApiClient {
   private readonly explicitToken?: string
   private readonly env: Record<string, string | undefined>
   private readonly requestTimeoutMs: number
+  /** Proxy this client routes through, when one resolved. */
+  readonly proxyUrl: string | undefined
   /** Token supplied by the owner per pass; wins over the configured value. */
   private liveToken: string | undefined
 
   constructor(options: GitHubClientOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? 'https://api.github.com').replace(/\/+$/, '')
-    this.fetchImpl = options.fetch ?? globalThis.fetch
+    this.baseUrl = (options.baseUrl ?? GITHUB_API_BASE_URL).replace(/\/+$/, '')
+    this.env = options.env ?? process.env
+    this.proxyUrl = options.proxyUrl
+      ?? (options.useEnvironmentProxy === false ? undefined : resolveProxyUrl(this.baseUrl, this.env))
+    // An injected fetch is the test seam and owns the transport: the proxy is
+    // never wrapped around it, so a test that stubs the network stays offline.
+    this.fetchImpl = options.fetch
+      ?? (this.proxyUrl === undefined ? globalThis.fetch : createProxyFetch(this.proxyUrl))
     this.tokenEnv = options.tokenEnv ?? 'GITHUB_TOKEN'
     this.explicitToken = options.token
-    this.env = options.env ?? process.env
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
   }
 
@@ -144,6 +272,36 @@ export class GitHubApiClient {
     }
   }
 
+/**
+   * One request with a single transport retry.
+   *
+   * The failure this exists for is a socket that died while the Host was idle:
+   * the next request inherits it and reports "fetch failed" for a destination
+   * that is perfectly reachable, which is why a freshly spawned CLI works at the
+   * same moment. A retry opens a new connection, and if that fails too the
+   * caller gets a `GitHubTransportError` naming the endpoint and the cause
+   * instead of a bare transport message.
+   * @param input - absolute URL.
+   * @param init - request to send.
+   * @param endpoint - endpoint the request addresses, for the error.
+   * @param allowRetry - whether this method may be repeated (see {@link isIdempotentMethod}).
+   * @returns the response.
+   */
+  private async fetchWithRetry(input: string, init: RequestInit, endpoint: string, allowRetry: boolean): Promise<Response> {
+    let attempt = 1
+    for (;;) {
+      try {
+        return await this.boundedFetch(input, init)
+      } catch (error) {
+        const retryable = isRetryableTransportError(error)
+        if (!retryable) throw error
+        if (!allowRetry || attempt >= TRANSPORT_ATTEMPTS) throw new GitHubTransportError(endpoint, transportReason(error))
+        attempt += 1
+        await new Promise<void>(resolve => setTimeout(resolve, TRANSPORT_RETRY_DELAY_MS))
+      }
+    }
+  }
+
   private async request<T>(
     endpoint: string,
     options: {
@@ -167,11 +325,12 @@ export class GitHubApiClient {
       headers['content-type'] = 'application/json'
     }
 
-    const response = await this.boundedFetch(url, {
-      method: options.method ?? 'GET',
+    const method = options.method ?? 'GET'
+    const response = await this.fetchWithRetry(url, {
+      method,
       headers,
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    })
+    }, endpoint, isIdempotentMethod(method))
 
     if (!response.ok) {
       let errorDetail = response.statusText
