@@ -50,7 +50,6 @@ function hostState(overrides: Record<string, unknown> = {}): ControllerSnapshot[
     scheduler: { timeZone: 'UTC' },
     power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
     sessionDefaultPermission: 'read-only',
-    teamRunAvailable: true,
     goalRunEnabled: true,
     ...overrides,
   } as ControllerSnapshot['host']
@@ -310,7 +309,6 @@ describe('folded execution column', () => {
     expect(right.textContent).not.toContain(t('exec.reuseSessionHint'))
     expect(right.textContent).not.toContain(t('exec.goalRunHint'))
     expect(right.textContent).not.toContain(t('exec.skipVerificationHint'))
-    expect(right.textContent).not.toContain(t('exec.teamRunHint'))
   })
 
   it('user reading a closed fold sees which switches are on, in the short form the view allows', () => {
@@ -324,40 +322,28 @@ describe('folded execution column', () => {
     expect(summary).toContain(t('detail.settings.summary.reuseSession'))
     expect(summary).toContain(t('detail.settings.summary.goal'))
     expect(summary).toContain(t('detail.settings.summary.skipVerification'))
-    expect(summary).not.toContain(t('detail.settings.summary.teamRun'))
 
     // And every short explanation the panel shows stays inside one meta line
-    for (const key of ['exec.hint.short', 'exec.reuseSessionHint.short', 'exec.goalRunHint.short', 'exec.skipVerificationHint.short', 'exec.teamRunHint.short', 'exec.teamRunUnavailable.short', 'exec.goalRunGlobalOff'] as const) {
+    for (const key of ['exec.hint.short', 'exec.reuseSessionHint.short', 'exec.goalRunHint.short', 'exec.skipVerificationHint.short', 'exec.goalRunGlobalOff'] as const) {
       expect([...zh[key]].length).toBeLessThanOrEqual(30)
     }
   })
 
-  it('user on a deployment without Agent Teams never sees a team run echoed in the summary', () => {
-    // Given a card that stored the team opt-in and a deployment without the service
-    const { container } = renderDetail(card({ teamRun: true }), { teamRunAvailable: false })
-
-    // When the closed region renders
-    const summary = foldHeader(container, t('detail.settings.advanced')).textContent ?? ''
-
-    // Then the unavailable option is not claimed, and the region says so plainly
-    expect(summary).toContain(t('detail.settings.summary.none'))
-    expect(summary).not.toContain(t('detail.settings.summary.teamRun'))
-  })
-
-  it('user opening the advanced fold reaches the same four switches and they still save immediately', () => {
+  it('user opening the advanced fold reaches the same three switches and they still save immediately', () => {
     // Given a card with nothing switched on
     const { container, controller: board } = renderDetail(card())
 
     // When the reader opens the advanced region
     const header = openFormSection(container, t('detail.settings.advanced'))
 
-    // Then the four switches and their one-line explanations are there
+    // Then the three switches and their one-line explanations are there, and the
+    // retired team-run option is not one of them
     expect(header.getAttribute('aria-expanded')).toBe('true')
     expect(document.getElementById(header.getAttribute('aria-controls') ?? '')?.id).toBe(header.getAttribute('aria-controls'))
     const boxes = [...rightColumn(container).querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-    expect(boxes).toHaveLength(4)
+    expect(boxes).toHaveLength(3)
     expect(container.textContent).toContain(t('exec.reuseSessionHint.short'))
-    expect(container.textContent).toContain(t('exec.teamRunHint.short'))
+    expect(container.textContent).toContain(t('exec.skipVerificationHint.short'))
 
     // And toggling one writes through the controller exactly as before
     act(() => { boxes[0]!.click() })

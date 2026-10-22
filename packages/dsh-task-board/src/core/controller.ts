@@ -152,7 +152,7 @@ export interface ExecutionOptionsSnapshot {
  * (revision/scheduler/power); a full snapshot also carries the deployment
  * constants the UI reads (session default permission, subtask depth).
  */
-export type HostMirror = Pick<TaskBoardSnapshot, 'revision' | 'scheduler' | 'power' | 'sessionDefaultPermission' | 'maxSubtaskDepth' | 'teamRunAvailable' | 'goalRunEnabled' | 'cardDefaults' | 'extensions'>
+export type HostMirror = Pick<TaskBoardSnapshot, 'revision' | 'scheduler' | 'power' | 'sessionDefaultPermission' | 'maxSubtaskDepth' | 'goalRunEnabled' | 'cardDefaults' | 'extensions'>
 
 /** Immutable controller snapshot for UI subscriptions. */
 export interface ControllerSnapshot {
@@ -842,7 +842,6 @@ export class BoardController {
   private mirrorOf(snapshot: TaskBoardSnapshot): HostMirror {
     const sessionDefaultPermission = snapshot.sessionDefaultPermission ?? this.hostState?.sessionDefaultPermission
     const maxSubtaskDepth = snapshot.maxSubtaskDepth ?? this.hostState?.maxSubtaskDepth
-    const teamRunAvailable = snapshot.teamRunAvailable ?? this.hostState?.teamRunAvailable
     const goalRunEnabled = snapshot.goalRunEnabled ?? this.hostState?.goalRunEnabled
     // The new-card defaults are NOT carried over: the Host publishes a target
     // nothing configures by omitting it (protocol.ts states that explicitly), so
@@ -857,7 +856,6 @@ export class BoardController {
       power: snapshot.power,
       ...(sessionDefaultPermission === undefined ? {} : { sessionDefaultPermission }),
       ...(maxSubtaskDepth === undefined ? {} : { maxSubtaskDepth }),
-      ...(teamRunAvailable === undefined ? {} : { teamRunAvailable }),
       ...(goalRunEnabled === undefined ? {} : { goalRunEnabled }),
       ...(cardDefaults === undefined ? {} : { cardDefaults }),
       ...(extensions === undefined ? {} : { extensions }),

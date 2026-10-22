@@ -40,7 +40,6 @@ export class FakeBoard implements BoardFace {
   readonly meta = {
     sessionDefaultPermission: 'read-only',
     maxSubtaskDepth: 1,
-    teamRunAvailable: false,
     goalRunEnabled: false,
   }
 

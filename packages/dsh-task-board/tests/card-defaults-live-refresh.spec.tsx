@@ -89,7 +89,6 @@ function hostedSnapshot(cardDefaults?: Record<string, string>): Record<string, u
     power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
     sessionDefaultPermission: 'read-only',
     maxSubtaskDepth: 1,
-    teamRunAvailable: false,
     goalRunEnabled: false,
     ...(cardDefaults === undefined ? {} : { cardDefaults }),
   }

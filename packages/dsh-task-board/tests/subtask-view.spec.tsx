@@ -34,6 +34,8 @@ interface FakeController {
   controller: BoardController
   links: Array<{ id: string; parentId: string | null }>
   created: Array<Record<string, unknown>>
+  /** Every card write the surface performed, in order. */
+  patches: Array<{ id: string; patch: Record<string, unknown> }>
   tasks: TaskRecord[]
 }
 
@@ -56,6 +58,7 @@ function fakeController(tasks: TaskRecord[], options: { maxSubtaskDepth?: number
   }
   const links: FakeController['links'] = []
   const created: FakeController['created'] = []
+  const patches: FakeController['patches'] = []
   const controller = {
     getSnapshot: () => state,
     subscribe: () => () => {},
@@ -69,14 +72,14 @@ function fakeController(tasks: TaskRecord[], options: { maxSubtaskDepth?: number
     archiveTask: () => false,
     restoreTask: () => false,
     deleteTask: () => {},
-    updateTask: async () => true,
+    updateTask: async (id: string, patch: Record<string, unknown>) => { patches.push({ id, patch }); return true },
     setSchedule: () => true,
     retryHostSync: async () => true,
     confirmPermission: async () => true,
     setParent: async (id: string, parentId: string | null) => { links.push({ id, parentId }); return true },
     createTaskConfirmed: async (input: Record<string, unknown>) => { created.push(input); return { id: 'created-task' } as TaskRecord },
   } as unknown as BoardController
-  return { controller, links, created, tasks }
+  return { controller, links, created, patches, tasks }
 }
 
 function render(element: React.ReactElement): HTMLElement {
@@ -134,7 +137,7 @@ describe('task detail subtask block', () => {
     expect(section?.textContent).toContain(t('detail.subtasks.runHintSettled'))
   })
 
-  it('user opening a parent with one unfinished subtask is told which runs are opened', () => {
+  it('user opening a parent with one unfinished subtask is told what the run will do', () => {
     // Given a root with one finished and one unfinished subtask
     const parent = task('parent')
     const done = task('done-child', { parentId: 'parent', status: 'done' })
@@ -144,9 +147,44 @@ describe('task detail subtask block', () => {
     // When the user opens the parent detail
     const container = render(<TaskDetail controller={controller} task={parent} />)
 
-    // Then the hint counts the unfinished subtask alone
+    // Then the note counts the unfinished subtask alone
     const section = container.querySelector('[data-dsh-part="subtasks"]')
     expect(section?.textContent).toContain(t('detail.subtasks.runHint', { count: '1' }))
+  })
+
+  it('user opening a parent with unfinished descendants is told what the run does and which preset it is fixed to', () => {
+    // Given a three-level board where the child and its own subtask are both open
+    const parent = task('parent')
+    const child = task('child', { parentId: 'parent' })
+    const grandchild = task('grandchild', { parentId: 'child' })
+    const { controller } = fakeController([parent, child, grandchild], { maxSubtaskDepth: 3 })
+
+    // When the user opens the root detail
+    const container = render(<TaskDetail controller={controller} task={parent} />)
+
+    // Then the note counts every unfinished descendant, states the single
+    // session this card opens, and names the preset that run is fixed to
+    const section = container.querySelector('[data-dsh-part="subtasks"]')
+    expect(section?.textContent).toContain(t('detail.subtasks.runHint', { count: '2' }))
+    expect(section?.textContent).toContain('liangshen')
+
+    // And it is a sentence, never a control: the card stores no such field
+    expect(section?.querySelector('input')).toBeNull()
+  })
+
+  it('user opening a card with no subtasks gets no run note', () => {
+    // Given a lone card on the board
+    const parent = task('parent')
+    const { controller } = fakeController([parent])
+
+    // When the user opens it
+    const container = render(<TaskDetail controller={controller} task={parent} />)
+
+    // Then the block says it has none and explains nothing about a run
+    const section = container.querySelector('[data-dsh-part="subtasks"]')
+    expect(section?.textContent).toContain(t('detail.subtasks.empty'))
+    expect(section?.textContent).not.toContain(t('detail.subtasks.runHintSettled'))
+    expect(section?.textContent).not.toContain('liangshen')
   })
 
   it('user opening a subtask at the depth limit sees the limit instead of the add controls', () => {
@@ -233,6 +271,22 @@ describe('execution history provenance', () => {
 })
 
 describe('linking an existing task', () => {
+  it('user linking a free task leaves the parent card itself untouched', async () => {
+    // Given an open parent and one free on-board task
+    const parent = task('parent')
+    const free = task('free')
+    const { controller, patches } = fakeController([parent, free])
+
+    // When the user links the free task under the parent
+    const container = render(<LinkSubtaskModal controller={controller} parent={parent} onClose={() => {}} />)
+    await act(async () => {
+      button(container, t('link.subtask.confirm')).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    // Then the join is the only write: nothing is set on the parent alongside it
+    expect(patches).toEqual([])
+  })
+
   it('user picking a free task in the linker records it under the open parent', () => {
     // Given an open parent and one free on-board task
     const parent = task('parent')
@@ -310,6 +364,23 @@ describe('new subtask form', () => {
       model: 'p/m',
       schedule: undefined,
     }])
+  })
+
+  it('user creating a subtask writes nothing onto the parent card', async () => {
+    // Given a parent pinned to a workspace and a preset
+    const parent = task('parent', { workspaceId: 'ws-1', mode: 'preset-1' })
+    const { controller, created, patches } = fakeController([parent])
+
+    // When the user submits the subtask form created from the parent
+    const container = render(<NewTaskModal controller={controller} parentTask={parent} onClose={() => {}} />)
+    const form = container.querySelector('form')
+    if (form === null) throw new Error('no modal form')
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+
+    // Then the link rides on the new card and the parent keeps exactly what the
+    // user pinned on it
+    expect(created[0]?.parentId).toBe('parent')
+    expect(patches).toEqual([])
   })
 
   it('user creating a subtask of a confirmed elevated parent sees the inherited binding', () => {

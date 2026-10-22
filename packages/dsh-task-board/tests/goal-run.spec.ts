@@ -165,8 +165,8 @@ describe('goal run arming', () => {
   })
 
   it('user running a tagged card arms the goal with the whole composed prompt', async () => {
-    // Given a card whose prompt carries a tag hint, a run that names a peer, and
-    // the global switch ON
+    // Given a card whose prompt carries a tag hint, a run that names an
+    // outstanding subtask, and the global switch ON
     const order: string[] = []
     const commands = { execute: vi.fn(async (_sessionId: string, line: string) => { order.push(goalLine(line)); return { kind: 'success' as const } }) }
     const task: TaskRecord = {
@@ -175,7 +175,7 @@ describe('goal run arming', () => {
 
     // When the card runs
     await new HostExecutionRunner(launchGateway(order), commands, fixtureWorkspaces())
-      .launch(task, { promptContext: { peers: [{ id: 'child', title: 'Child' }] }, goalEnabled: true })
+      .launch(task, { promptContext: { descendants: [{ id: 'child', title: 'Child', status: 'todo' }] }, goalEnabled: true })
 
     // Then the objective is exactly what the session received
     expect(order.at(-1)).toContain('标签提示')

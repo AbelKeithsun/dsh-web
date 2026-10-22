@@ -24,7 +24,7 @@
 | 方法 | 请求 `p` | 响应 `r` |
 | --- | --- | --- |
 | `board.snapshot` | `{}` 或 `{since}` | `{mode:"reset", token, snapshot, revision, tasks}`——宿主快照逐字转发外加增量键——或 `{mode:"delta", token, revision, changed, removed}` |
-| `board.options` | `{}` | `{verification:{settings,contract,catalog}, meta:{sessionDefaultPermission?, cardDefaults?, maxSubtaskDepth?, teamRunAvailable?, goalRunEnabled?}}` |
+| `board.options` | `{}` | `{verification:{settings,contract,catalog}, meta:{sessionDefaultPermission?, cardDefaults?, maxSubtaskDepth?, goalRunEnabled?}}` |
 | `board.apply` | `{requestId, action}` | `{snapshot, revision}` |
 
 客户端在 `hello` 的 `cap` 数组里声明 `board.v1`。未声明时三个方法回 `unknown-method`——方法对它而言不属于协议——主题也永不到达它。

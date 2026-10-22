@@ -19,7 +19,6 @@ import { readParseModelPreference, writeParseModelPreference } from './parse-mod
 import { inheritPresetLabel, presetChoiceRows, presetLabel } from './preset-label.ts'
 import { ReasoningEffortField } from './ReasoningEffortField.tsx'
 import { reconcileReasoningEffort } from './model-options.ts'
-import { parentAwaitsTeamRunPromotion, promoteParentForTeamRun } from './team-run-promotion.ts'
 import css from '../board.module.css'
 
 export interface NewTaskModalProps {
@@ -273,11 +272,6 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
       setError(controller.getSnapshot().transportError ?? t('new.required'))
       return
     }
-    // The join is confirmed, so a parent that just gained a subtask is opted in
-    // where Agent Teams are served. The write is a convenience, not part of the
-    // creation: a refused one (the card was archived meanwhile) already
-    // surfaced through the snapshot and never fails the created task.
-    await promoteParentForTeamRun(controller, parentTask)
     if (isDuplicate && archiveOriginal && initialTask !== undefined) {
       if (onDuplicateSuccess !== undefined) {
         await onDuplicateSuccess(initialTask.id)
@@ -444,9 +438,6 @@ export function NewTaskModal({ controller, onClose, initialTask, defaultWorkspac
           <p className={css.detailText} data-dsh-part="subtask-inherit">
             {t('detail.parent')}: {parentTask.title} · {t('new.subtaskInherit')}
           </p>
-          {parentAwaitsTeamRunPromotion(controller, parentTask) && (
-            <p className={css.detailText}>{t('exec.teamRunAutoHint')}</p>
-          )}
         </>
       )}
 

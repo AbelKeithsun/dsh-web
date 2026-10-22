@@ -83,7 +83,6 @@ describe('board.options', () => {
         meta: {
           sessionDefaultPermission: 'read-only',
           maxSubtaskDepth: 1,
-          teamRunAvailable: false,
           goalRunEnabled: false,
         },
       },

@@ -8,7 +8,7 @@
  * field and not the run), and the settlement paths (plain, cascade fold, and the
  * board snapshot the phone reads).
  */
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TypertGateway } from '@deepseek-ai/dsh-api-gateway'
@@ -17,6 +17,7 @@ import { EXECUTION_SUMMARY_LIMIT, createTask, startExecution, type ExecutionSumm
 import { executionSummaryOf, normalizeExecutionSummary, truncateExecutionSummary } from '../src/core/execution-summary.ts'
 import { parseLedger } from '../src/core/store.ts'
 import { HostTaskLedger } from '../src/host-ledger.ts'
+import { TASK_BOARD_SCHEMA_VERSION } from '../src/protocol.ts'
 import { TaskBoardHostService } from '../src/host-service.ts'
 import { PowerInhibitor } from '../src/power-inhibitor.ts'
 
@@ -202,19 +203,25 @@ describe('settling with what a run left behind', () => {
     expect(Object.hasOwn(execution, 'summary')).toBe(false)
   })
 
-  it('operator sees a cascade parent keep its own summary when the tree settles', () => {
-    // Given a root whose subtask is still running while its own turn settled
-    const ledger = new HostTaskLedger(tempRoot(), () => NOW)
-    ledger.applyRequest('create-root', { kind: 'create', id: 'root', input: { title: 'root', description: '', prompt: 'root' } })
-    ledger.applyRequest('create-a', { kind: 'create', id: 'a', input: { title: 'a', description: '', prompt: 'a', parentId: 'root' } })
-    const runs = ledger.applyRequest('run-1', { kind: 'run', taskId: 'root' }).runs ?? []
-    const rootExecution = runs.find(run => run.task.id === 'root')?.execution.id
-    const childExecution = runs.find(run => run.task.id === 'a')?.execution.id
-    if (rootExecution === undefined || childExecution === undefined) throw new Error('cascade did not open both executions')
-    ledger.settle('root', rootExecution, 'succeeded', undefined, { text: 'root turn finished', seq: 11 })
+  it('operator sees a historical run group keep the parent own summary when the tree settles', () => {
+    // Given a stored run group whose parent turn settled with its closing text
+    // while its member is still open: a group the Host opened before it stopped
+    // spreading one run across a subtree
+    const dir = tempRoot()
+    writeFileSync(join(dir, 'ledger-v2.json'), JSON.stringify({
+      schemaVersion: TASK_BOARD_SCHEMA_VERSION,
+      revision: 1,
+      tasks: [
+        { id: 'root', title: 'root', description: '', prompt: 'root', status: 'running', createdAt: NOW, updatedAt: NOW, executions: [{ id: 'root-run', sessionId: 'session-root', startedAt: NOW, runGroupId: 'g-old', ownResult: 'succeeded', summary: { text: 'root turn finished', seq: 11 } }] },
+        { id: 'a', title: 'a', description: '', prompt: 'a', status: 'running', createdAt: NOW, updatedAt: NOW, executions: [{ id: 'a-run', sessionId: 'session-a', startedAt: NOW, runGroupId: 'g-old' }] },
+      ],
+      scheduler: { timeZone: 'UTC' },
+      recentRequests: [],
+    }, null, 2))
+    const ledger = new HostTaskLedger(dir, () => NOW)
 
-    // When the last subtask settles and the fold finalizes the parent
-    ledger.settle('a', childExecution, 'succeeded')
+    // When the last member settles and the fold finalizes the parent
+    ledger.settle('a', 'a-run', 'succeeded')
 
     // Then the parent is settled with the group verdict and keeps what its own turn said
     const settled = ledger.state().tasks.find(task => task.id === 'root')?.executions[0]

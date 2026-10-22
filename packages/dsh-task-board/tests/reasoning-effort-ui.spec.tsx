@@ -62,7 +62,6 @@ function detailSnapshot(taskRecord: TaskRecord, pendingTaskIds: string[] = []): 
       scheduler: { timeZone: 'UTC' },
       power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
       sessionDefaultPermission: 'read-only',
-      teamRunAvailable: true,
       goalRunEnabled: true,
     },
   }

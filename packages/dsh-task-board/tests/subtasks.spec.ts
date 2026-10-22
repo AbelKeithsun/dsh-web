@@ -1,22 +1,26 @@
 /**
  * Subtask lineage: the depth gate, the inheritance a subtask resolves at run
- * time, the subtree archive/restore/delete rules, and the cascade participant
- * set one run opens.
+ * time, the subtree archive/restore/delete rules, and the one card a run opens
+ * plus the outstanding descendants its own session dispatches.
  */
 import { describe, expect, it } from 'vitest'
 import { parseActionEnvelope } from '../src/protocol.ts'
 import {
   DEFAULT_SUBTASK_DEPTH,
+  LIANGSHEN_PRESET_ID,
   SUBTASK_DEPTH_MAX,
   ancestorChain,
   cascadeTargets,
   checkParentLink,
   combineCascadeOutcome,
   directSubtasks,
+  hasOutstandingDescendants,
   joinsCascadeRun,
   normalizeSubtaskDepth,
+  outstandingDescendants,
   resolveExecutionTargets,
   subtreeHeight,
+  subtreeTasks,
   taskDepth,
 } from '../src/core/subtask.ts'
 import { createTask, type ExecutionRecord, type TaskRecord } from '../src/core/tasks.ts'
@@ -343,8 +347,8 @@ describe('hand-edited lineage safety', () => {
   })
 })
 
-describe('cascade participant set', () => {
-  it('operator cascading a run covers the whole tree breadth-first', () => {
+describe('the run a card request opens', () => {
+  it('operator running a parent opens a run for that card alone, never for its tree', () => {
     // Given a three-level tree
     const tasks = [
       task('root'),
@@ -354,25 +358,65 @@ describe('cascade participant set', () => {
     ]
 
     // When the operator opens a run for the root at depth three
-    const participants = cascadeTargets(tasks, 'root', SUBTASK_DEPTH_MAX)
+    const participants = cascadeTargets(tasks, 'root')
 
-    // Then the root comes first and then each level
-    expect(participants.map(entry => entry.id)).toEqual(['root', 'a', 'b', 'a1'])
+    // Then only the requested card is opened; its subtasks are dispatched from
+    // inside its own session
+    expect(participants.map(entry => entry.id)).toEqual(['root'])
   })
 
-  it('operator running a parent again leaves a finished subtask out of the new run', () => {
-    // Given a finished subtask and an untouched one
-    const root = task('root')
-    const done = task('a', { parentId: 'root', status: 'done' })
-    const todo = task('b', { parentId: 'root', status: 'todo' })
-    const tree = [root, done, todo]
+  it('operator running a subtask gets that subtask as the run root, without its own descendants', () => {
+    // Given a three-level tree
+    const tasks = [
+      task('root'),
+      task('a', { parentId: 'root' }),
+      task('a1', { parentId: 'a' }),
+    ]
 
-    // When the run picks its members
-    const participants = tree.filter(entry => joinsCascadeRun(entry, 'root'))
+    // When the operator runs a subtask directly
+    // Then that card is the whole run, and its own child is not opened either
+    expect(cascadeTargets(tasks, 'a').map(entry => entry.id)).toEqual(['a'])
+    expect(cascadeTargets(tasks, 'missing')).toEqual([])
+  })
 
-    // Then the tree still holds both subtasks while only the unfinished one joins
-    expect(cascadeTargets(tree, 'root', SUBTASK_DEPTH_MAX).map(entry => entry.id)).toEqual(['root', 'a', 'b'])
-    expect(participants.map(entry => entry.id)).toEqual(['root', 'b'])
+  it('operator reading a tree sees the subtree the lineage gates walk', () => {
+    // Given a three-level tree under the widest depth
+    const tasks = [
+      task('root'),
+      task('a', { parentId: 'root' }),
+      task('b', { parentId: 'root' }),
+      task('a1', { parentId: 'a' }),
+    ]
+
+    // When the subtree is read for a gate
+    // Then the card and every descendant are covered, breadth-first
+    expect(subtreeTasks(tasks, 'root', SUBTASK_DEPTH_MAX).map(entry => entry.id)).toEqual(['root', 'a', 'b', 'a1'])
+  })
+
+  it('operator sees only the unfinished descendants a card still has to dispatch', () => {
+    // Given a root whose descendants sit in mixed columns, one of them archived
+    const tasks = [
+      task('root', { status: 'done' }),
+      task('a', { parentId: 'root', status: 'todo' }),
+      task('b', { parentId: 'root', status: 'done' }),
+      task('c', { parentId: 'root', status: 'failed' }),
+      task('d', { parentId: 'root', status: 'todo', archivedAt: NOW }),
+    ]
+
+    // When the dispatch set is read
+    // Then a finished card is left alone, an archived one cannot be dispatched,
+    // and the card's own column never decides it
+    expect(outstandingDescendants(tasks, 'root', SUBTASK_DEPTH_MAX).map(entry => entry.id)).toEqual(['a', 'c'])
+    expect(hasOutstandingDescendants(tasks, 'root', SUBTASK_DEPTH_MAX)).toBe(true)
+    expect(outstandingDescendants([task('root'), task('done', { parentId: 'root', status: 'done' })], 'root', SUBTASK_DEPTH_MAX)).toEqual([])
+    expect(hasOutstandingDescendants([task('root')], 'root', SUBTASK_DEPTH_MAX)).toBe(false)
+  })
+
+  it('operator sees the dispatch preset name the package that ships it', () => {
+    // Given the preset id packages/dsh-liangshen declares for its dispatcher
+    // When the board's forced dispatch preset constant is read
+    // Then it is that same id, so a forced run composes the preset that package ships
+    expect(LIANGSHEN_PRESET_ID).toBe('liangshen')
   })
 
   it('operator running a parent whose own column is done still runs that parent', () => {
@@ -382,7 +426,7 @@ describe('cascade participant set', () => {
     const failed = task('failed-child', { parentId: 'root', status: 'failed' })
     const finished = task('done-child', { parentId: 'root', status: 'done' })
 
-    // When the run picks its members
+    // When the dispatch set is read
     // Then the requested task always joins, and among the descendants only the
     // finished one is left alone
     expect(joinsCascadeRun(requested, 'root')).toBe(true)

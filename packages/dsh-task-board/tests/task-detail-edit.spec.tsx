@@ -36,7 +36,6 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
 function controllerFake(
   taskRecord: TaskRecord,
   updateTask: (id: string, patch: TaskUpdatePatch) => Promise<boolean> = async () => true,
-  teamRunAvailable = true,
   goalRunEnabled = true,
 ): { controller: BoardController; snapshot: ControllerSnapshot } {
   const snapshot: ControllerSnapshot = {
@@ -51,7 +50,6 @@ function controllerFake(
       scheduler: { timeZone: 'UTC' },
       power: { platform: 'linux', phase: 'unsupported', enabled: false, runningSessions: 0, armedSchedules: 0, sessionStateKnown: true },
       sessionDefaultPermission: 'read-only',
-      teamRunAvailable,
       goalRunEnabled,
     },
   }
@@ -76,7 +74,6 @@ function controllerFake(
 async function renderDetail(
   taskRecord: TaskRecord,
   updateTask?: (id: string, patch: TaskUpdatePatch) => Promise<boolean>,
-  teamRunAvailable = true,
   /**
    * The live GLOBAL native-/goal switch. It defaults to ON because most cases
    * here are about the task-level preference taking effect; the cases that must
@@ -85,7 +82,7 @@ async function renderDetail(
    */
   goalRunEnabled = true,
 ): Promise<{ container: HTMLElement; controller: BoardController; snapshot: ControllerSnapshot }> {
-  const { controller, snapshot } = controllerFake(taskRecord, updateTask, teamRunAvailable, goalRunEnabled)
+  const { controller, snapshot } = controllerFake(taskRecord, updateTask, goalRunEnabled)
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -98,11 +95,6 @@ function editButtonOf(container: HTMLElement): HTMLButtonElement | undefined {
   return [...container.querySelectorAll('button')].find(button => button.textContent === '编辑')
 }
 
-function teamToggleOf(container: HTMLElement): HTMLInputElement | undefined {
-  const boxes = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
-  return boxes.find(input => input.closest('label')?.textContent?.includes('Agent Team'))
-}
-
 function setFieldValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const prototype = element instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
@@ -111,37 +103,6 @@ function setFieldValue(element: HTMLInputElement | HTMLTextAreaElement, value: s
 }
 
 
-describe('Agent Team opt-in in the execution settings', () => {
-  it('user enabling team execution on a served deployment saves the opt-in', async () => {
-    // Given a task on a deployment that serves Agent Teams
-    const updates: TaskUpdatePatch[] = []
-    const { container } = await renderDetail(task(), async (id, patch) => { updates.push(patch); return true })
-    openFormSection(container, '高级设置')
-    const toggle = teamToggleOf(container)
-    if (toggle === undefined) throw new Error('no Agent Team toggle')
-
-    // When the user ticks it
-    expect(toggle.disabled).toBe(false)
-    await act(async () => { toggle.click() })
-
-    // Then the opt-in is written through the controller
-    expect(updates).toEqual([{ teamRun: true }])
-  })
-
-  it('operator on a deployment without Agent Teams sees the toggle disabled with the reason', async () => {
-    // Given a task on a deployment that serves no Agent Teams service
-    const { container } = await renderDetail(task(), undefined, false)
-    openFormSection(container, '高级设置')
-    const toggle = teamToggleOf(container)
-
-    // When the user inspects the execution settings
-    // Then the opt-in is offered read-only, the one-line reason is on the
-    // surface, and the full reason stays on the switch's own title
-    expect(toggle?.disabled).toBe(true)
-    expect(container.textContent).toContain(t('exec.teamRunUnavailable.short'))
-    expect(toggle?.closest('label')?.getAttribute('title')).toBe(t('exec.teamRunUnavailable'))
-  })
-})
 describe('task content editing before execution (issue #1110)', () => {
   it('offers the edit button for a task that has never executed', async () => {
     const { container } = await renderDetail(task())
@@ -315,7 +276,7 @@ describe('goal run toggle', () => {
   it('user with the GLOBAL native /goal switch off can still check the task option and the preference is kept', async () => {
     // Given: the master switch off and a card that never touched its option
     const updateTask = vi.fn(async () => true)
-    const { container } = await renderDetail(task(), updateTask, true, false)
+    const { container } = await renderDetail(task(), updateTask, false)
 
     // When: the detail view renders and the user checks the option anyway
     openFormSection(container, '高级设置')
@@ -338,13 +299,13 @@ describe('goal run toggle', () => {
     // Given: a card with the opt-in stored, rendered while the master switch
     // was off (the stored value is not touched), then rendered again with it on
     const optedIn = task({ goalRun: true })
-    const off = await renderDetail(optedIn, undefined, true, false)
+    const off = await renderDetail(optedIn, undefined, false)
     openFormSection(off.container, '高级设置')
     expect(goalCheckbox(off.container).checked).toBe(true)
     expect(goalCheckbox(off.container).disabled).toBe(false)
 
     // When: the master switch is turned back on
-    const on = await renderDetail(optedIn, undefined, true, true)
+    const on = await renderDetail(optedIn, undefined, true)
     openFormSection(on.container, '高级设置')
 
     // Then: the user's own stored preference is exactly what comes back

@@ -52,7 +52,9 @@ function gateway(): TypertGateway {
   let created = 0
   return {
     invoke: async (request: { namespace: string; method: string }) => {
-      if (request.namespace === 'agentPresets') return { presets: [] }
+      // A card with unfinished subtasks runs under the dispatcher preset, so a
+      // runnable deployment serves it.
+      if (request.namespace === 'agentPresets') return { presets: [{ id: 'liangshen' }] }
       // The activation tests start the real service, which polls the roster.
       if (request.method === 'list') return { items: [] }
       if (request.method === 'create') {
@@ -349,7 +351,7 @@ describe('task_board_set_parent', () => {
 })
 
 describe('task_board_run', () => {
-  it('user running a root card starts one session per subtree member', async () => {
+  it('user running a card starts a session for that card alone and names its subtasks', async () => {
     // Given a root with two subtasks
     const live = harness()
     await call(live, 'task_board_create', { title: 'root', prompt: 'do root' })
@@ -360,17 +362,18 @@ describe('task_board_run', () => {
     // When the user runs the root
     const run = await call(live, 'task_board_run', { taskId: rootId })
 
-    // Then every member is reported as started and the root is a cascade parent
+    // Then only the root is reported as started, in a run group of its own, and
+    // the card keeps counting the subtasks its own session has to dispatch
     expect(run.ok).toBe(true)
-    expect((run.started as unknown[]).length).toBe(3)
+    expect((run.started as unknown[]).length).toBe(1)
     const detail = await call(live, 'task_board_get', { taskId: rootId })
     const task = detail.task as { latestExecution?: { cascade?: boolean }; subtaskCount?: number }
     expect(task.subtaskCount).toBe(2)
     expect(task.latestExecution?.cascade).toBe(true)
   })
 
-  it('user reading the running cards back sees each session attached', async () => {
-    // Given a running cascade
+  it('user reading the running card back sees its own session attached', async () => {
+    // Given a running card that still has an unfinished subtask
     const live = harness()
     await call(live, 'task_board_create', { title: 'root', prompt: 'do root' })
     const rootId = await onlyTaskId(live)
@@ -378,13 +381,16 @@ describe('task_board_run', () => {
     await call(live, 'task_board_run', { taskId: rootId })
 
     // When the user lists the running column
-    // Then every member has a real session id
+    // Then it holds exactly the card that was run, with a real session id, and
+    // the subtask is still waiting for that session to dispatch it
     await vi.waitFor(async () => {
       const running = await call(live, 'task_board_list', { status: 'running' })
       const tasks = running.tasks as Array<{ latestExecution?: { sessionId?: string } }>
-      expect(tasks.length).toBe(2)
-      expect(tasks.every(task => typeof task.latestExecution?.sessionId === 'string')).toBe(true)
+      expect(tasks.length).toBe(1)
+      expect(typeof tasks[0].latestExecution?.sessionId).toBe('string')
     })
+    const todo = await call(live, 'task_board_list', { status: 'todo' })
+    expect((todo.tasks as Array<{ title: string }>).map(task => task.title)).toEqual(['a'])
   })
 
   it('user asking to run an unconfirmed elevated card is refused with confirmation-required', async () => {
@@ -803,35 +809,38 @@ describe('task registration rebinding', () => {
     expect(live.registered).toHaveLength(registered)
   })
 })
-describe('team-run opt-in through the tools', () => {
-  it('user opting a card into an Agent Team sees the mode and a refused run without the service', async () => {
-    // Given a fresh board in a deployment that serves no Agent Teams service
+describe('team runs are gone from the tool surface', () => {
+  it('user creating a card never gets a team opt-in even when the argument is sent', async () => {
+    // Given a fresh board
     const live = harness()
 
-    // When the model opts a card into team execution
+    // When a caller still sends the retired argument
     const created = await call(live, 'task_board_create', { title: 'root', teamRun: true })
+
+    // Then the card carries no team opt-in, and the tool surface advertises none
+    expect(created.ok).toBe(true)
     const task = created.task as { id: string; teamRun?: boolean }
-
-    // Then the card records the opt-in
-    expect(task.teamRun).toBe(true)
-
-    // And running it is refused by name instead of opening sessions silently
-    const refused = await call(live, 'task_board_run', { taskId: task.id })
-    expect(refused.ok).toBe(false)
-    expect(String(refused.message)).toContain('Agent Teams is unavailable')
+    expect(task.teamRun).toBeUndefined()
+    const run = await call(live, 'task_board_run', { taskId: task.id })
+    expect(run.ok).toBe(true)
   })
 
-  it('user switching a card back to a plain cascade clears the opt-in', async () => {
-    // Given a team-mode card
+  it('user reading the tool definitions finds no teamRun parameter and no team wording', () => {
+    // Given a live board service
     const live = harness()
-    const created = await call(live, 'task_board_create', { title: 'root', teamRun: true })
-    const taskId = (created.task as { id: string }).id
 
-    // When the model clears the opt-in
-    const updated = await call(live, 'task_board_update', { taskId, teamRun: false })
-
-    // Then the card runs as a plain cascade again
-    expect((updated.task as { teamRun?: boolean }).teamRun).toBeUndefined()
+    // When the whole surface is read
+    // Then no tool offers the retired team opt-in, and the run tool states the
+    // single-session shape and the write-back instead
+    for (const definition of live.tools) {
+      expect(JSON.stringify(definition.parameters ?? {})).not.toContain('teamRun')
+      expect(definition.description).not.toContain('Agent Team')
+    }
+    const run = live.tools.find(definition => definition.name === 'task_board_run')
+    expect(run?.description).toContain('ONE session')
+    expect(run?.description).toContain('subagent')
+    const manage = live.tools.find(definition => definition.name === 'task_board_manage')
+    expect(manage?.description).toContain('backfill every subtask card')
   })
 })
 

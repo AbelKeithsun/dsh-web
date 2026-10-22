@@ -36,7 +36,7 @@ interface BoardTaskRow extends DeltaRowFace {
  * forwarded only when the host set it, so "this deployment configures nothing"
  * stays distinguishable from a configured blank value.
  */
-const META_KEYS = ['sessionDefaultPermission', 'cardDefaults', 'maxSubtaskDepth', 'teamRunAvailable', 'goalRunEnabled'] as const
+const META_KEYS = ['sessionDefaultPermission', 'cardDefaults', 'maxSubtaskDepth', 'goalRunEnabled'] as const
 
 /** Where the host face is read from for one call. */
 export interface BoardMethodsOptions {

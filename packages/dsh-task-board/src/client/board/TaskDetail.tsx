@@ -12,7 +12,7 @@ import { isValidCron } from '../../core/schedule.ts'
 import { MANUAL_STATUSES, TASK_PERMISSIONS, canMoveTask, hasOpenExecution, tagTone, type ScheduleMode, type TaskPermission, type TaskRecord } from '../../core/tasks.ts'
 import { canEditTaskContent } from '../../core/use-cases/task-update.ts'
 import { requiresPermissionConfirmation } from '../../core/handover.ts'
-import { DEFAULT_SUBTASK_DEPTH, directSubtasks, joinsCascadeRun, taskDepth } from '../../core/subtask.ts'
+import { DEFAULT_SUBTASK_DEPTH, descendantTasks, directSubtasks, joinsCascadeRun, taskDepth } from '../../core/subtask.ts'
 import { t, type TaskBoardKey } from '../locales.ts'
 import { SCHEDULE_PRESETS } from '../schedule-presets.ts'
 import { budgetLabel, defaultZonedInputValue, endedLabel, nextRunLabel, parseZonedInput, runCapOption, skippedLabel, zonedInputValue, zoneChoices } from '../schedule-zone.ts'
@@ -192,14 +192,12 @@ function FoldSection({ title, summary, hint, children }: {
 }
 
 /** The execution-target editor: workspace / mode / permission pickers. */
-function ExecutionSettingsSection({ controller, task, pending, executionOptions, teamRunAvailable, goalRunEnabled }: {
+function ExecutionSettingsSection({ controller, task, pending, executionOptions, goalRunEnabled }: {
   controller: BoardController
   task: TaskRecord
   pending: boolean
   /** Picker option sets, owned by the detail overlay's snapshot. */
   executionOptions: ControllerSnapshot['executionOptions']
-  /** Whether this deployment serves the Agent Teams service. */
-  teamRunAvailable: boolean
   /**
    * Live GLOBAL native-/goal switch. It only decides whether the card's own
    * preference takes effect: the option stays operable while it is off, the
@@ -220,13 +218,11 @@ function ExecutionSettingsSection({ controller, task, pending, executionOptions,
   const workspaceKnown = workspaceId === '' || options.workspaces.some(item => item.workspaceId === workspaceId)
   const modeKnown = mode === '' || options.presets.some(item => item.id === mode)
   const modelKnown = model === '' || models.some(item => item.id === model)
-  // One line for the closed fold: what is switched on, and never an option the
-  // deployment cannot serve (an unavailable team run is not claimed).
+  // One line for the closed fold: which switches are on.
   const advancedOn: string[] = []
   if (task.reuseSession === true) advancedOn.push(t('detail.settings.summary.reuseSession'))
   if (task.goalRun === true) advancedOn.push(t('detail.settings.summary.goal'))
   if (task.skipVerification === true) advancedOn.push(t('detail.settings.summary.skipVerification'))
-  if (task.teamRun === true && teamRunAvailable) advancedOn.push(t('detail.settings.summary.teamRun'))
   const advancedSummary = advancedOn.length === 0 ? t('detail.settings.summary.none') : advancedOn.join(' · ')
   return (
     <section className={css.detailSection}>
@@ -352,16 +348,6 @@ function ExecutionSettingsSection({ controller, task, pending, executionOptions,
           <span>{t('exec.skipVerification')}</span>
         </label>
         <p className={css.detailMeta}>{t('exec.skipVerificationHint.short')}</p>
-        <label className={css.scheduleToggle} title={teamRunAvailable ? t('exec.teamRunHint') : t('exec.teamRunUnavailable')}>
-          <input
-            type="checkbox"
-            checked={task.teamRun === true}
-            disabled={pending || !teamRunAvailable}
-            onChange={event => { controller.updateTask(task.id, { teamRun: event.target.checked }) }}
-          />
-          <span>{t('exec.teamRun')}</span>
-        </label>
-        <p className={css.detailMeta}>{teamRunAvailable ? t('exec.teamRunHint.short') : t('exec.teamRunUnavailable.short')}</p>
       </FoldSection>
     </section>
   )
@@ -713,14 +699,18 @@ function ScheduleSection({ controller, task, pending }: { controller: BoardContr
 }
 
 /**
- * The run hint of one card: how many subtasks a run opens, counting the same
- * members the Host will launch (`joinsCascadeRun` leaves a finished subtask
- * alone), or why it opens none even though the card has subtasks.
+ * The read-only note under the subtask list. A card with unfinished descendants
+ * runs as ONE session — that card's own — which reads the subtasks and hands
+ * them off in dependency order, so the note states what the run does instead of
+ * promising a session per member. It counts the same members the run hands off
+ * (`joinsCascadeRun` leaves a finished subtask alone, and an archived card never
+ * runs at all), and stays a sentence: nothing here is a card field.
  */
-function subtaskRunHint(parentId: string, children: readonly TaskRecord[]): string {
-  const runnable = children.filter(child => joinsCascadeRun(child, parentId))
-  return runnable.length > 0
-    ? t('detail.subtasks.runHint', { count: String(runnable.length) })
+function subtaskDispatchNote(task: TaskRecord, tasks: readonly TaskRecord[], maxSubtaskDepth: number): string {
+  const pending = descendantTasks(tasks, task.id, maxSubtaskDepth)
+    .filter(descendant => descendant.archivedAt === undefined && joinsCascadeRun(descendant, task.id))
+  return pending.length > 0
+    ? t('detail.subtasks.runHint', { count: String(pending.length) })
     : t('detail.subtasks.runHintSettled')
 }
 
@@ -794,7 +784,7 @@ function SubtaskSection({ controller, task, pending, archived, snapshot }: {
           </ul>
         )}
       {children.length > 0 && (
-        <p className={css.detailText}>{subtaskRunHint(task.id, children)}</p>
+        <p className={css.detailText}>{subtaskDispatchNote(task, tasks, limit)}</p>
       )}
       {!archived && (canAddChild
         ? (controller.isHostBacked()
@@ -854,6 +844,7 @@ export function TaskDetail({ controller, task, phase = 'open' }: { controller: B
   const timeZone = snapshot.host?.scheduler.timeZone
   const permissionPending = requiresPermissionConfirmation(current, snapshot.host?.sessionDefaultPermission)
   const subtaskChildren = directSubtasks(snapshot.tasks, current.id)
+  const subtaskDepthLimit = snapshot.host?.maxSubtaskDepth ?? DEFAULT_SUBTASK_DEPTH
   const dialog = useDialog<HTMLDivElement>(() => { controller.closeTask() }, phase)
   // One presence per nested overlay: the detail view sits under up to four of
   // them, and each has to run its own exit leg instead of the surface being
@@ -1032,7 +1023,6 @@ export function TaskDetail({ controller, task, phase = 'open' }: { controller: B
                       task={current}
                       pending={pending}
                       executionOptions={snapshot.executionOptions}
-                      teamRunAvailable={snapshot.host?.teamRunAvailable === true}
                       goalRunEnabled={snapshot.host?.goalRunEnabled === true}
                     />
                     <ScheduleSection controller={controller} task={current} pending={pending} />
@@ -1099,7 +1089,7 @@ export function TaskDetail({ controller, task, phase = 'open' }: { controller: B
               className={css.primaryButton}
               disabled={busy || pending}
               title={subtaskChildren.length > 0
-                ? subtaskRunHint(current.id, subtaskChildren)
+                ? subtaskDispatchNote(current, snapshot.tasks, subtaskDepthLimit)
                 : undefined}
               onClick={() => {
                 void controller.rerunTask(current.id).then(() => {

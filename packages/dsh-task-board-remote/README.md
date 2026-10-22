@@ -24,7 +24,7 @@ Neither is a hard dependency. With either one absent the row registers nothing, 
 | method | request `p` | response `r` |
 | --- | --- | --- |
 | `board.snapshot` | `{}` or `{since}` | `{mode:"reset", token, snapshot, revision, tasks}` — the Host snapshot verbatim plus the incremental keys — or `{mode:"delta", token, revision, changed, removed}` |
-| `board.options` | `{}` | `{verification:{settings,contract,catalog}, meta:{sessionDefaultPermission?, cardDefaults?, maxSubtaskDepth?, teamRunAvailable?, goalRunEnabled?}}` |
+| `board.options` | `{}` | `{verification:{settings,contract,catalog}, meta:{sessionDefaultPermission?, cardDefaults?, maxSubtaskDepth?, goalRunEnabled?}}` |
 | `board.apply` | `{requestId, action}` | `{snapshot, revision}` |
 
 A client declares `board.v1` in `hello`'s `cap` array. Without it the three methods answer `unknown-method` — the method is not part of that client's protocol — and the topic never reaches it.

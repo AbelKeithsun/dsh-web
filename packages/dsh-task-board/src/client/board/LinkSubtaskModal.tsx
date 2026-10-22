@@ -12,7 +12,6 @@ import { t } from '../locales.ts'
 import css from '../board.module.css'
 import { useDialog, type OverlayPhase } from './overlay.tsx'
 import { STATUS_KEY } from './status-key.ts'
-import { parentAwaitsTeamRunPromotion, promoteParentForTeamRun } from './team-run-promotion.ts'
 
 /** Link-subtask overlay props. */
 export interface LinkSubtaskModalProps {
@@ -57,10 +56,6 @@ export function LinkSubtaskModal({ controller, parent, onClose, phase = 'open' }
     setPending(true)
     setError(undefined)
     if (await controller.setParent(taskId, parent.id)) {
-      // The link is confirmed, so a parent that just gained a subtask is opted
-      // in where Agent Teams are served; a refused opt-in never undoes a link
-      // the Host already committed.
-      await promoteParentForTeamRun(controller, parent)
       onClose()
       return
     }
@@ -72,9 +67,6 @@ export function LinkSubtaskModal({ controller, parent, onClose, phase = 'open' }
       <div ref={dialog.attach} className={css.modal} role="dialog" aria-modal="true" aria-label={t('link.subtask.title')} tabIndex={-1}>
         <h2 className={css.modalTitle}>{t('link.subtask.title')}</h2>
         <p className={css.fieldHint}>{t('link.subtask.hint')}</p>
-        {parentAwaitsTeamRunPromotion(controller, parent) && (
-          <p className={css.fieldHint}>{t('exec.teamRunAutoHint')}</p>
-        )}
         {candidates.length === 0
           ? <p className={css.detailText}>{t('link.subtask.empty')}</p>
           : (
