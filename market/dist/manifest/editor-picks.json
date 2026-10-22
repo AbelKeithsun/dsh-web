@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-21",
+  "generated": "2026-10-22",
   "items": [
     {
       "kind": "skin",
@@ -14,8 +14,8 @@
       "id": "dsh-chatgpt-subscription"
     },
     {
-      "kind": "plugin",
-      "id": "dsh-free-search"
+      "kind": "skin",
+      "id": "diy-journal"
     },
     {
       "kind": "plugin",
