@@ -484,6 +484,14 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 18 when one card learned to lay out several sessions (§30 of
+ * `docs/protocol-v1.md` in the iphone_remote_use_dsh repository): `content-state`
+ * gains the optional `rows` key, so a phone reads up to three sessions off one
+ * lock-screen card instead of having to hold one card per session. It is a pure
+ * addition — no new method, no new capability name, no existing key or topic
+ * changes shape — so the minor counts the key alone, and a client that reads 18
+ * knows the order of the rows it is handed is the bridge's rather than one it
+ * has to derive.
  * 17 when the live-activity channel shipped (§29.2): this bridge now sends the
  * lock-screen card a suspended app cannot update itself, addressed to the
  * per-card APNs tokens {@link METHOD_PUSH_REGISTER} already carries and projected
@@ -562,7 +570,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 17
+export const MINOR = 18
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.

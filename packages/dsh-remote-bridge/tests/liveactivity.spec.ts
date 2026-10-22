@@ -8,8 +8,11 @@ import {
   APPLE_REFERENCE_OFFSET_SECONDS,
   LIVE_ACTIVITY_INTERVAL_MS,
   LIVE_ACTIVITY_PER_MINUTE,
+  LIVE_ACTIVITY_ROW_LIMIT,
+  LIVE_ACTIVITY_ROW_NAME_MAX,
   LiveActivityNotifier,
   buildLiveActivityNotification,
+  normalizeActivityRowName,
   type LiveActivityAddress,
   type LiveActivityNotification,
   type LiveActivitySender,
@@ -650,7 +653,7 @@ describe('live activity: the state the bridge projects', () => {
     expect(sink.sent).toHaveLength(1)
     expect(sink.sent[0]?.notification.aps['content-state']).toMatchObject({ phase: 'waitingForAnswer', statusLine: '有待确认的审批' })
     // And it carries no question keys at all, and no reason text
-    expect(Object.keys(sink.sent[0]?.notification.aps['content-state'] ?? {})).toEqual(['phase', 'statusLine', 'asOf', 'runningCount'])
+    expect(Object.keys(sink.sent[0]?.notification.aps['content-state'] ?? {})).toEqual(['phase', 'statusLine', 'asOf', 'runningCount', 'rows'])
     const wire = JSON.stringify(sink.sent[0]?.notification)
     expect(wire).not.toContain('bash')
     expect(wire).not.toContain('删除构建目录')
@@ -719,5 +722,218 @@ describe('live activity: the state the bridge projects', () => {
     expect(attempted).toEqual(['act-1'])
     release({ ok: true, status: 200 })
     await settle()
+  })
+})
+
+describe('live activity: the rows one card lays out', () => {
+  it('operator reads a row name with the path, the brackets and the dangling tail gone', () => {
+    // Given the host titles a roster really carries, including the one a phone
+    // saw on a real device: the first message plus the absolute path it ran in
+    const titles = [
+      '你是本仓 (/Users/zcl/code/iphone_remote_use_dsh)',
+      '你是本仓（/Users/zcl/code/x）',
+      'Ship the deck ()',
+      'Ship the deck (   )',
+      '  Draft   the copy  ',
+      '你是本仓 (/Users/zcl/code/x) - ',
+      'Fix the bug .',
+    ]
+    // When each is normalized
+    const names = titles.map(normalizeActivityRowName)
+    // Then what is left is the name alone: no path, no bracket, no separator
+    expect(names).toEqual([
+      '你是本仓',
+      '你是本仓',
+      'Ship the deck',
+      'Ship the deck',
+      'Draft the copy',
+      '你是本仓',
+      'Fix the bug',
+    ])
+  })
+
+  it('operator never gets a name that ends on a bracket, a separator or a cut', () => {
+    // Given one title per tail a host title can end on, and one longer than a row
+    const titles = [
+      'Tail (/a)',
+      'Tail（/a）',
+      'Tail ()',
+      'Tail - ',
+      'Tail ·(/a)',
+      'x'.repeat(120) + ' (/a)',
+      'Fix it (beta)',
+    ]
+    // When each is normalized and cut to the row budget
+    const names = titles.map(normalizeActivityRowName)
+    // Then no name ends on a bracket, a path separator, the middle dot or a dash
+    for (const name of names) expect(name).not.toMatch(/[(（)）·/\\-]$/u)
+    // And a name longer than the budget is cut rather than left to push the card
+    expect(Array.from(names[5] ?? '')).toHaveLength(LIVE_ACTIVITY_ROW_NAME_MAX)
+    // And a trailing group is not the name, whatever it holds
+    expect(names[6]).toBe('Fix it')
+  })
+
+  it('operator reads the frozen keys first and the rows last', () => {
+    // Given one card built with four rows, one more than a card can lay out
+    const rows = [1, 2, 3, 4].map(index => ({ name: 'Session ' + String(index), status: ACTIVITY_STATUS_LINE.running, phase: 'running' as const }))
+    // When it is built
+    const notification = buildLiveActivityNotification({
+      event: 'update',
+      phase: 'running',
+      statusLine: ACTIVITY_STATUS_LINE.running,
+      runningCount: 4,
+      rows,
+      now: CLOCK_START,
+    })
+    // Then the six frozen keys keep their order and the rows are appended last
+    expect(Object.keys(notification.aps['content-state'])).toEqual(['phase', 'statusLine', 'asOf', 'runningCount', 'rows'])
+    // And the fourth row is dropped, never wrapped or paged
+    expect(notification.aps['content-state'].rows).toHaveLength(LIVE_ACTIVITY_ROW_LIMIT)
+    expect(notification.aps['content-state'].rows?.map(row => row.name)).toEqual(['Session 1', 'Session 2', 'Session 3'])
+    // And a card built without rows carries no such key at all: that is the
+    // shape an old bridge sends, and the App lays out one row of its own
+    expect(buildLiveActivityNotification({
+      event: 'update',
+      phase: 'running',
+      statusLine: ACTIVITY_STATUS_LINE.running,
+      runningCount: 1,
+      now: CLOCK_START,
+    }).aps['content-state']).not.toHaveProperty('rows')
+  })
+
+  it('operator reads the waiting sessions first and the running ones by recency', async () => {
+    // Given three running sessions and two sessions that are listed but idle
+    const clock = { now: CLOCK_START }
+    const cards = ['s-1', 's-2', 's-3', 's-8', 's-9'].map((id, index) => cardOf(id, index + 1))
+    const sink = recorder()
+    const notifier = notifierAt(sink.sender, clock, { targets: cards })
+    notifier.noteRoster([
+      { id: 's-1', title: 'First (/Users/zcl/code/one)', updatedAt: 10, agentRunning: true },
+      { id: 's-2', title: 'Second', updatedAt: 20, agentRunning: true },
+      { id: 's-3', title: 'Third', updatedAt: 30, agentRunning: true },
+      { id: 's-8', title: 'Question later', updatedAt: 5, agentRunning: false },
+      { id: 's-9', title: 'Question first', updatedAt: 6, agentRunning: false },
+    ])
+    await settle()
+    // Then every card lays the running sessions out most recently updated first
+    expect(sentTo(sink, 'act-1')[0]?.aps['content-state'].rows).toEqual([
+      { name: 'Third', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+      { name: 'Second', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+      { name: 'First', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+    ])
+    // When the idle session s-9 asks a question
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteQuestion('s-9', { header: 'Deck' })
+    await settle()
+    // Then the question leads the card and the fourth session is dropped
+    expect(sentTo(sink, 'act-5')[0]?.aps['content-state'].rows).toEqual([
+      { name: 'Question first', status: ACTIVITY_STATUS_LINE.question, phase: 'waitingForAnswer' },
+      { name: 'Third', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+      { name: 'Second', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+    ])
+    // When a second session asks later
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteQuestion('s-8', { header: 'Deck' })
+    await settle()
+    // Then the two questions keep the order they arrived in, ahead of the work
+    expect(sentTo(sink, 'act-4')[0]?.aps['content-state'].rows).toEqual([
+      { name: 'Question first', status: ACTIVITY_STATUS_LINE.question, phase: 'waitingForAnswer' },
+      { name: 'Question later', status: ACTIVITY_STATUS_LINE.question, phase: 'waitingForAnswer' },
+      { name: 'Third', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+    ])
+  })
+
+  it('operator reads all four phases on the card of one session', async () => {
+    // Given two running sessions, both titled
+    const clock = { now: CLOCK_START }
+    const cards = [cardOf('s-1', 1), cardOf('s-2', 2)]
+    const sink = recorder()
+    const notifier = notifierAt(sink.sender, clock, { targets: cards })
+    notifier.noteRoster([
+      { id: 's-1', title: 'Only', updatedAt: 10, agentRunning: true },
+      { id: 's-2', title: 'Other', updatedAt: 20, agentRunning: true },
+    ])
+    await settle()
+    // Then both rows are running
+    expect(sentTo(sink, 'act-1')[0]?.aps['content-state'].rows?.map(row => row.phase)).toEqual(['running', 'running'])
+    // When s-1 asks a question
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteQuestion('s-1', { header: 'Deck' })
+    await settle()
+    // Then its own row is the waiting one
+    expect(sentTo(sink, 'act-1')[1]?.aps['content-state'].rows?.[0]).toEqual({
+      name: 'Only',
+      status: ACTIVITY_STATUS_LINE.question,
+      phase: 'waitingForAnswer',
+    })
+    // When that question settles and the turn then ends abnormally
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteSettled('s-1')
+    await settle()
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteTurnEnd('s-1', 'error')
+    await settle()
+    // Then the card it is leaving says so in its own last row
+    expect(sentTo(sink, 'act-1').at(-1)?.aps['content-state'].rows).toEqual([
+      { name: 'Other', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+      { name: 'Only', status: ACTIVITY_STATUS_LINE.failed, phase: 'failed' },
+    ])
+    // When the turn ends normally instead
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteTurnEnd('s-1', 'completed')
+    await settle()
+    // Then the same row is the ended phase
+    expect(sentTo(sink, 'act-1').at(-1)?.aps['content-state'].rows).toEqual([
+      { name: 'Other', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+      { name: 'Only', status: ACTIVITY_STATUS_LINE.ended, phase: 'ended' },
+    ])
+  })
+
+  it('operator is not sent a card twice, but a renamed row is something new to say', async () => {
+    // Given one card whose session runs under a title
+    const clock = { now: CLOCK_START }
+    const sink = recorder()
+    const notifier = notifierAt(sink.sender, clock)
+    notifier.noteRoster([{ id: 's-1', title: 'Draft the copy', updatedAt: 10, agentRunning: true }])
+    await settle()
+    expect(sink.sent).toHaveLength(1)
+    // When the next listing says exactly the same thing
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteRoster([{ id: 's-1', title: 'Draft the copy', updatedAt: 10, agentRunning: true }])
+    await settle()
+    // Then nothing is sent: the card already says it
+    expect(sink.sent).toHaveLength(1)
+    // When the host appends the path it runs in, which the row may not carry
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteRoster([{ id: 's-1', title: 'Draft the copy (/Users/zcl/code/x)', updatedAt: 10, agentRunning: true }])
+    await settle()
+    // Then the card reads the same, so it is not sent again either
+    expect(sink.sent).toHaveLength(1)
+    // When the name itself changes
+    clock.now += LIVE_ACTIVITY_INTERVAL_MS
+    notifier.noteRoster([{ id: 's-1', title: 'Draft the final copy', updatedAt: 10, agentRunning: true }])
+    await settle()
+    // Then that is a new thing to say, and the rows carry it
+    expect(sink.sent).toHaveLength(2)
+    expect(sink.sent[1]?.notification.aps['content-state'].rows).toEqual([
+      { name: 'Draft the final copy', status: ACTIVITY_STATUS_LINE.running, phase: 'running' },
+    ])
+  })
+
+  it('operator sees no rows at all when the host never titled the session', async () => {
+    // Given a roster row with a blank title, as a session that just started has
+    const clock = { now: CLOCK_START }
+    const sink = recorder()
+    const notifier = notifierAt(sink.sender, clock)
+    // When that roster is served
+    notifier.noteRoster([{ id: 's-1', title: '   ', updatedAt: 1, agentRunning: true }])
+    await settle()
+    // Then the key is still on the wire, because this bridge speaks the rows
+    // protocol, and it is empty because a row without a name is no row (§30.4)
+    expect(sink.sent).toHaveLength(1)
+    expect(sink.sent[0]?.notification.aps['content-state']).toHaveProperty('rows')
+    expect(sink.sent[0]?.notification.aps['content-state'].rows).toEqual([])
+    // And the single-session keys are exactly what they were
+    expect(sink.sent[0]?.notification.aps['content-state']).toMatchObject({ phase: 'running', statusLine: ACTIVITY_STATUS_LINE.running, runningCount: 1 })
   })
 })

@@ -18,6 +18,12 @@
  *   session it is about — never to "all cards", because that is how one session's
  *   question ends up on another session's lock screen (§29.9). `runningCount` is
  *   the one bridge-wide number on a card, and it stays the total on purpose;
+ * - one card lays out at most three rows (§30). The address is still one session
+ *   per card — rows say what that card has to tell, not who it is sent to — and
+ *   every card is given them the same way: the sessions waiting on the user
+ *   first, in the order their questions arrived, then the sessions running now,
+ *   most recently updated first. A row's name is the host's own title with its
+ *   trailing path group taken off, because §29.5 keeps paths off a lock screen;
  * - a card that would say what the card before it already said is not sent, one
  *   activity takes at most one update per `LIVE_ACTIVITY_INTERVAL_MS`, and
  *   the whole bridge at most `LIVE_ACTIVITY_PER_MINUTE` a minute. What does
@@ -59,6 +65,17 @@ export const LIVE_ACTIVITY_PER_MINUTE = 30
 /** Longest option list a card carries; the App shows them as the answer choices. */
 export const LIVE_ACTIVITY_OPTION_LIMIT = 2
 
+/** Most rows one card lays out; a fourth is dropped, never wrapped or paged (§30.2). */
+export const LIVE_ACTIVITY_ROW_LIMIT = 3
+
+/**
+ * Longest row name a card carries, in characters.
+ *
+ * A row is one line under a status phrase, so a name longer than this is cut
+ * rather than allowed to push the rest of the card off the glass.
+ */
+export const LIVE_ACTIVITY_ROW_NAME_MAX = 48
+
 /** Activity ids whose last content is remembered before the oldest is forgotten. */
 export const LIVE_ACTIVITY_TRACKED = 64
 
@@ -92,6 +109,19 @@ const RELEVANCE_SCORE: Readonly<Record<SessionActivityPhase, number>> = {
 }
 
 /**
+ * One row of the multi-session card (§30.2).
+ *
+ * Exactly three keys, all non-empty: the host's own name for the session, the
+ * same status phrase that session's own card would carry, and its phase. There
+ * is no id, no url and no count — a row is a line on a card, not a record.
+ */
+export interface ActivityRow {
+  readonly name: string
+  readonly status: string
+  readonly phase: SessionActivityPhase
+}
+
+/**
  * One card's state, as the App's own `SessionActivityState` decodes it.
  *
  * The key set is frozen (§29): no field may be added or renamed, because the
@@ -107,6 +137,12 @@ export interface SessionActivityState {
   readonly asOf: number
   /** Sessions running right now across the whole bridge, never below 1. */
   readonly runningCount: number
+  /**
+   * The sessions this card lays out, most urgent first, at most
+   * {@link LIVE_ACTIVITY_ROW_LIMIT} of them (§30). Absent and empty mean the
+   * same thing to the App: it lays out one row out of the single-session keys.
+   */
+  readonly rows?: readonly ActivityRow[]
 }
 
 /** The request body one Live Activity delivery carries (protocol §29). */
@@ -132,6 +168,8 @@ export interface LiveActivityStateInput {
   readonly questionHeader?: string
   readonly optionLabels?: readonly string[]
   readonly runningCount: number
+  /** The rows this card lays out, already chosen, ordered and capped by the notifier. */
+  readonly rows?: readonly ActivityRow[]
   /** Delivery moment, in milliseconds since the Unix epoch. */
   readonly now: number
   /** Dismiss the card the moment it is delivered, instead of letting it expire. */
@@ -161,6 +199,10 @@ function contentStateOf(input: LiveActivityStateInput): SessionActivityState {
     // Apple's reference date, so this is not `now / 1000`.
     asOf: input.now / 1000 - APPLE_REFERENCE_OFFSET_SECONDS,
     runningCount: Math.max(1, Math.trunc(input.runningCount)),
+    // Appended last so the six frozen keys keep their names, their order and
+    // their meaning (§29.3): a client that never reads `rows` decodes exactly
+    // the state it decoded before this key existed.
+    ...(input.rows === undefined ? {} : { rows: input.rows.slice(0, LIVE_ACTIVITY_ROW_LIMIT) }),
   }
 }
 
@@ -213,6 +255,10 @@ export interface LiveActivitySender {
 export interface ActivityRosterRow {
   readonly id: string
   readonly agentRunning?: boolean
+  /** The host's own title for that session, the name a row carries (§26, §30.2). */
+  readonly title?: string
+  /** When the host last updated the session, in milliseconds; 0 when it names none. */
+  readonly updatedAt?: number
 }
 
 /** The question or approval one session's card is waiting on. */
@@ -258,6 +304,10 @@ export class LiveActivityNotifier {
   #listed = new Set<string>()
   /** Session ids any roster ever named, so "left the roster" is not "never listed". */
   #known = new Set<string>()
+  /** The host's own title of each session the last roster named (§26). */
+  #titles = new Map<string, string>()
+  /** When the host last updated each session the last roster named, in milliseconds. */
+  #sessionUpdatedAt = new Map<string, number>()
   /** The question or approval each session's card is waiting on, one entry per session. */
   readonly #waiting = new Map<string, Waiting>()
   /** Content last admitted per activity id. */
@@ -295,9 +345,17 @@ export class LiveActivityNotifier {
     try {
       this.#listed = new Set()
       this.#running = new Set()
+      // The roster is the only place a row's name and its recency come from, so
+      // both are replaced wholesale with it: a renamed session must not keep
+      // describing itself under the name it was listed under before, and a
+      // session this roster does not name has no recency to be ordered by.
+      this.#titles = new Map()
+      this.#sessionUpdatedAt = new Map()
       for (const row of rows) {
         this.#listed.add(row.id)
         this.#known.add(row.id)
+        if (row.title !== undefined) this.#titles.set(row.id, row.title)
+        this.#sessionUpdatedAt.set(row.id, row.updatedAt ?? 0)
         if (row.agentRunning === true) this.#running.add(row.id)
       }
       const runningCount = this.#running.size
@@ -447,6 +505,72 @@ export class LiveActivityNotifier {
     return matched
   }
 
+  /**
+   * The rows one card lays out (§30).
+   *
+   * The order is the whole of the bridge-side priority §30.6 leaves open: a
+   * session waiting on the user outranks one that is merely working, so the
+   * questions come first in the order they arrived (the waiting map remembers
+   * that order), then the running sessions by how recently the host touched
+   * them. Which sessions run is read from the same set the single-session state
+   * is built from, so a card and its rows can never disagree about that.
+   *
+   * A card's own session is named once more at the end when it is the reason for
+   * this delivery and is neither waiting nor running any more — an ended or
+   * failed turn is exactly the state no earlier rule reaches.
+   * @param sessionId - the session this delivery is about.
+   * @param state - that session's own phase and status line.
+   * @returns at most {@link LIVE_ACTIVITY_ROW_LIMIT} rows, most urgent first.
+   */
+  #rowsFor(sessionId: string, state: { readonly phase: SessionActivityPhase; readonly statusLine: string }): readonly ActivityRow[] {
+    const rows: ActivityRow[] = []
+    const room = (): boolean => rows.length < LIVE_ACTIVITY_ROW_LIMIT
+    for (const [id, waiting] of this.#waiting) {
+      if (!room()) return rows
+      this.#appendRow(rows, id, waiting.statusLine, 'waitingForAnswer')
+    }
+    for (const id of this.#runningByRecency()) {
+      if (!room()) return rows
+      if (this.#waiting.has(id)) continue
+      this.#appendRow(rows, id, ACTIVITY_STATUS_LINE.running, 'running')
+    }
+    const terminal = state.phase === 'failed' || state.phase === 'ended'
+    if (terminal && room() && !this.#waiting.has(sessionId) && !this.#running.has(sessionId)) {
+      this.#appendRow(rows, sessionId, state.statusLine, state.phase)
+    }
+    return rows
+  }
+
+  /**
+   * Add one row, unless that session has no usable name.
+   *
+   * §30.2 makes all three keys non-empty and §30.4 drops a row it cannot name,
+   * so a session the host never titled is left out here instead of on a lock
+   * screen — an empty list is the same card as no list at all.
+   * @param rows - the row list being built.
+   * @param sessionId - the session the row would name.
+   * @param status - that session's status line.
+   * @param phase - that session's phase.
+   */
+  #appendRow(rows: ActivityRow[], sessionId: string, status: string, phase: SessionActivityPhase): void {
+    const name = this.#nameOf(sessionId)
+    if (name === '') return
+    rows.push({ name, status, phase })
+  }
+
+  /** @returns the running session ids, most recently updated first. */
+  #runningByRecency(): readonly string[] {
+    return [...this.#running].sort((left, right) => {
+      const recency = (this.#sessionUpdatedAt.get(right) ?? 0) - (this.#sessionUpdatedAt.get(left) ?? 0)
+      return recency !== 0 ? recency : (left < right ? -1 : left > right ? 1 : 0)
+    })
+  }
+
+  /** @returns the normalized name of one session, or an empty string. */
+  #nameOf(sessionId: string): string {
+    return normalizeActivityRowName(this.#titles.get(sessionId) ?? '')
+  }
+
   /** Build one session's delivery and start it, or drop it. */
   #emit(sessionId: string, state: {
     readonly event: LiveActivityEvent
@@ -462,7 +586,10 @@ export class LiveActivityNotifier {
     const targets = this.#targetsFor(sessionId)
     if (targets.length === 0) return
     const now = this.#now()
-    const notification = buildLiveActivityNotification({ ...state, now })
+    // Every delivery carries the rows, even an `end`: the list is what the card
+    // says about the bridge, and a key that appears and disappears would make a
+    // client choose between two pictures of the same moment (§30.2).
+    const notification = buildLiveActivityNotification({ ...state, rows: this.#rowsFor(sessionId, state), now })
     const content = contentKeyOf(notification.aps['content-state'])
     for (const target of targets) {
       if (!this.#admits(target.activityId, content, state.event, now)) continue
@@ -528,7 +655,8 @@ export class LiveActivityNotifier {
  * `asOf` is left out on purpose: it is the delivery moment, so it differs on
  * every build, and including it would make "the same content was sent" impossible
  * to observe — a card is a duplicate exactly when everything a user can read on
- * it is unchanged.
+ * it is unchanged. The rows are part of what a user reads (§30), so a card whose
+ * list of sessions reordered, was renamed or lost a row says something new.
  * @param state - the content state of one delivery.
  * @returns a stable key for the readable part of it.
  */
@@ -539,5 +667,70 @@ export function contentKeyOf(state: SessionActivityState): string {
     state.questionHeader ?? null,
     state.optionLabels ?? null,
     state.runningCount,
+    state.rows ?? null,
   ])
+}
+
+/** The separator punctuation a row name may not end on (§30.2). */
+const TRAILING_SEPARATOR = /[\s·\-–—.,，、;；:：!！?？…~～]+$/u
+
+/**
+ * A trailing bracket group, the shape a host title ends on when it names the
+ * directory the session runs in: `... (/Users/zcl/code/x)`.
+ *
+ * Anchored at the end and its body may hold no bracket of its own, so a match is
+ * always one whole group at the very tail rather than the front half of one.
+ */
+const TRAILING_GROUP = /[(（][^()（）]*[)）]$/u
+
+/** What may still hang on a tail once the group came off: a bracket or a path separator. */
+const TRAILING_RESIDUE = /[()（）/\\]+$/u
+
+/**
+ * One pass of the tail cleanup, in the order that keeps a group whole.
+ *
+ * The separator comes off first, because it is what hides the group at the tail
+ * (`Name - (/path)`); only then does the group come off, brackets included; only
+ * then a bracket or a path separator left over on its own. Peeling a bracket
+ * before its group is reached is how `Name (/path) -` turns into a name still
+ * holding half a path.
+ * @param text - one already whitespace-collapsed tail.
+ * @returns the same text with nothing hanging on its end.
+ */
+function trimRowNameTail(text: string): string {
+  let next = text.replace(TRAILING_SEPARATOR, '').trim()
+  while (TRAILING_GROUP.test(next)) next = next.replace(TRAILING_GROUP, '').trim()
+  return next.replace(TRAILING_RESIDUE, '').trim()
+}
+
+/**
+ * The host's own title, as one row may carry it (§30.2).
+ *
+ * A roster title is usually the session's first message, and those end on the
+ * absolute path the session was started in — `你是本仓 (/Users/zcl/code/x)`. §29.5
+ * keeps paths off a lock screen, so a trailing bracket group comes off, and so
+ * does whatever removing it exposed: the separator before it (`名字 - (/path)`)
+ * or the bracket of the group before it (`A (b) (/path)`). Every trailing group
+ * goes, whatever its body — a name may not end on a bracket either way, and a
+ * group that is not a path is a display suffix rather than the name itself. What
+ * is left is whitespace-collapsed, trimmed, cut back to the punctuation its tail
+ * hangs on, and cut to {@link LIVE_ACTIVITY_ROW_NAME_MAX}.
+ *
+ * The rule lives here and nowhere else, so there is one answer to "which words of
+ * a host title may reach a lock screen".
+ * @param title - the title the roster carried for that session, possibly empty.
+ * @returns a name a row can carry, and an empty string when the title held nothing else.
+ */
+export function normalizeActivityRowName(title: string): string {
+  let text = title
+  for (let round = 0; round < 4; round += 1) {
+    const before = text
+    text = trimRowNameTail(text.replace(/\s+/gu, ' ').trim())
+    if (text === before) break
+  }
+  const points = Array.from(text)
+  if (points.length <= LIVE_ACTIVITY_ROW_NAME_MAX) return text
+  // A cut can land on a character a name may not end on, so the tail is cleaned
+  // once more after it.
+  return trimRowNameTail(points.slice(0, LIVE_ACTIVITY_ROW_NAME_MAX).join(''))
 }
