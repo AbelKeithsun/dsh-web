@@ -44,38 +44,28 @@ function secondGranularStartMs(pid: number): number | undefined {
 }
 
 /**
- * Try to leave a short-lived orphan behind whose exit is not reaped, so it
- * occupies the PID table as a zombie (`process.kill(pid, 0)` then reports it
- * alive). Works on Linux where PID 1 does not reap promptly (containers, some
- * CI inits); returns undefined where init reaps orphans immediately, so
- * callers skip rather than flake.
+ * Leave a child of this process behind that has exited but was never waited
+ * on, so it occupies the PID table as a zombie (`process.kill(pid, 0)` then
+ * reports it alive). The zombie has to be our own child: an orphan adopted by
+ * PID 1 is reaped whenever init next runs, which lost the kill(0) probe the
+ * race intermittently on CI, whereas only this process's event loop can reap
+ * a child, and every caller stays synchronous from the spawn to its
+ * assertions. Returns undefined where the state probe is unavailable or the
+ * child was reaped after all, so callers skip rather than flake.
  */
 function spawnZombie(): number | undefined {
   if (process.platform !== 'linux') return undefined
   try {
-    const probeFile = join(tmpdir(), `dsh-task-board-zombie-${process.pid}-${Math.random().toString(36).slice(2)}`)
-    const shell = spawn('sh', ['-c', `sleep 0.2 & echo $! > "${probeFile}"`], { stdio: 'ignore' })
-    shell.unref()
-    const deadline = Date.now() + 3000
-    let pid: number | undefined
-    while (Date.now() < deadline) {
-      try {
-        const raw = readFileSync(probeFile, 'utf8').trim()
-        if (raw !== '') {
-          const parsed = Number(raw)
-          if (Number.isSafeInteger(parsed)) pid = parsed
-          break
-        }
-      } catch { /* shell still starting */ }
-      sleepSync(50)
-    }
+    const child = spawn('sh', ['-c', 'exit 0'], { stdio: 'ignore' })
+    const pid = child.pid
+    child.unref()
     if (pid === undefined) return undefined
-    const zombieDeadline = Date.now() + 2500
-    while (Date.now() < zombieDeadline) {
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline) {
       if (processState(pid) === 'Z') return pid
-      sleepSync(50)
+      sleepSync(20)
     }
-    return undefined // init reaped it before we could observe the zombie
+    return undefined // reaped before the state became observable
   } catch {
     return undefined
   }
