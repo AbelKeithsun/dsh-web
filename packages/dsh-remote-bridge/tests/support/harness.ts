@@ -285,6 +285,8 @@ export interface HarnessOptions {
   readonly push?: PushNotifier
   /** The lock-screen card path; the default models a bridge that sends no card. */
   readonly liveActivity?: LiveActivityNotifier
+  /** The roster-change hook the standing watchers are armed from. */
+  readonly onPushRegistered?: () => void
 }
 
 /** Session metadata for a host whose session services are all present. */
@@ -367,6 +369,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     ...(options.squads === undefined ? {} : { squads: options.squads }),
     ...(options.push === undefined ? {} : { push: options.push }),
     ...(options.liveActivity === undefined ? {} : { liveActivity: options.liveActivity }),
+    ...(options.onPushRegistered === undefined ? {} : { onPushRegistered: options.onPushRegistered }),
     now: () => Date.now(),
     clientTimeZone: () => 'Asia/Shanghai',
     log: (message: string) => { logs.push(message) },
@@ -473,6 +476,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     ...(options.squads === undefined ? {} : { squads: options.squads }),
     ...(options.push === undefined ? {} : { push: options.push }),
     ...(options.liveActivity === undefined ? {} : { liveActivity: options.liveActivity }),
+    ...(options.onPushRegistered === undefined ? {} : { onPushRegistered: options.onPushRegistered }),
     now: () => Date.now(),
     clientTimeZone: () => undefined,
     log: (message: string) => { logs.push(message) },

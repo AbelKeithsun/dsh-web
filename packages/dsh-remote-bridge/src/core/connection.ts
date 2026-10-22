@@ -227,6 +227,16 @@ export interface BridgeConnectionOptions {
    * (§28.3, §29).
    */
   readonly liveActivity?: LiveActivityNotifier
+  /**
+   * Called after a registration changed the device table.
+   *
+   * A session's first live-activity token is what asks this bridge to keep a
+   * follow stream of its own open for that session (`host/watchers.ts`), so the
+   * roster is the trigger. The hook is guarded at the call site: a standing
+   * watcher is this bridge's own background work and may never turn a
+   * `push.register` into a failure.
+   */
+  readonly onPushRegistered?: () => void
 }
 
 /** A device the connection proved itself to be, resolved from the upgrade request. */
@@ -2092,6 +2102,14 @@ export class BridgeConnection {
     try {
       const stored = await this.#options.roster.registerPush(deviceId, registration)
       if (!stored) return refusal(CODE_INTERNAL, 'this connection names no paired device')
+      // The roster is the only place a standing watcher is armed from: the
+      // session a card names gets a follow stream of this bridge's own, and it
+      // keeps it until the last token for that session is gone.
+      try {
+        this.#options.onPushRegistered?.()
+      } catch (error) {
+        this.#options.log(`standing watchers could not be reconciled: ${failureText(error)}`)
+      }
     } catch (error) {
       // Registration failing has to reach the client: it decides whether to
       // retry, and a token that never reached the disk is a device that will

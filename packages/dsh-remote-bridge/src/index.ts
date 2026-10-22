@@ -51,6 +51,7 @@ import { SessionMeta, type SessionStoreFace, type SessionTitleFace, type Workspa
 import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
 import { dshHome } from './host/dsh-home.ts'
 import { ApnsSender, apnsConfigFromEnv } from './host/apns.ts'
+import { StandingWatchers } from './host/watchers.ts'
 import { LoopbackSquads } from './host/squads.ts'
 import { mountOnce } from './mount-once.ts'
 import { makePairTokenRoute } from './host/routes.ts'
@@ -242,7 +243,33 @@ function applyImpl(ctx: Context): void {
     ...(apnsSender === undefined ? {} : { sender: apnsSender }),
     now: () => Date.now(),
     log,
-    retire: async (activityId, token) => await roster.removeLiveActivityToken(activityId, token),
+    retire: async (activityId, token) => {
+      const dropped = await roster.removeLiveActivityToken(activityId, token)
+      // A dead token is a roster change like any other: the session it named may
+      // have just lost its last card, and a watcher for it must close.
+      if (dropped) watchers.sync()
+      return dropped
+    },
+  })
+  // The bridge's own follow streams (§28/§29): a suspended phone has no socket,
+  // so the turn end its card has to show would otherwise be seen by nobody. One
+  // watcher per session that still holds a card token, armed from the roster and
+  // never from a client frame.
+  const watchedSessions = (): readonly string[] => {
+    const sessions = new Set<string>()
+    for (const { push: registration } of roster.pushTargets()) {
+      for (const token of registration.liveActivityTokens ?? []) {
+        if (token.sessionId !== undefined) sessions.add(token.sessionId)
+      }
+    }
+    return [...sessions]
+  }
+  const watchers = new StandingWatchers({
+    gateway: ctx.typertGateway,
+    peer: ownerPeer,
+    sessions: watchedSessions,
+    ...(apnsSender === undefined ? {} : { liveActivity, push }),
+    log,
   })
   const permissions = new SessionPermissions(() => permissionFaces(ctx), log)
   // The extension seam publishes no protocol vocabulary of its own: another
@@ -279,6 +306,7 @@ function applyImpl(ctx: Context): void {
     squads,
     push,
     liveActivity,
+    onPushRegistered: () => { watchers.sync() },
     now: () => Date.now(),
     clientTimeZone: localTimeZone,
     log,
@@ -292,7 +320,10 @@ function applyImpl(ctx: Context): void {
   }
 
   ctx.effect(() => {
-    void roster.load()
+    // A registration that arrived before this row mounted is still on disk: the
+    // watchers are reconciled from what the roster holds, not from what a live
+    // connection happened to send.
+    void roster.load().then(() => { watchers.sync() }).catch(() => undefined)
     const disposeUpgrade = ctx.webServer.registerUpgrade({
       path: WS_PATH,
       handler: makeUpgradeHandler(hub, roster, log),
@@ -305,6 +336,7 @@ function applyImpl(ctx: Context): void {
     return () => {
       disposeUpgrade()
       disposeRoute()
+      watchers.dispose()
       hub.dispose()
       jobs.dispose()
     }
