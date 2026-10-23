@@ -70,6 +70,10 @@ Keepalive rides WebSocket protocol-level ping rather than application frames, be
 
 The bridge socket is authenticated before the upgrade with the same id/secret check the registration endpoint uses (hash comparison, per-IP and per-id windows, origin restriction); only after it passes does the Worker forward that Upgrade request to the instance's object. The object therefore only ever sees a connection the Worker already accepted, and the object name is derived from the id alone, so it is unreachable across instances. Every phone-side credential (the pairing cookie) crosses the bridge end to end and is never touched by the object, exactly as the Worker forwarding path treats it today: the trust boundary does not move, because Cloudflare already terminates the phone's TLS and sees the request.
 
+**Non-negotiable: the connector never rewrites `Host`.** The bridge must deliver the phone's `Host` to the host verbatim, as the public origin literal. The host builds its local control plane on two conditions — the socket address and `Host` both naming this machine — and a tunneled request already arrives from loopback, so that header is the only discriminator left. The shadow flight measured it: with the connector rewriting `Host` to `127.0.0.1:55220`, `/remote-bridge/pair/token` answered `200` with a usable 30-second pairing token from the public origin, while the production relay answers `403` on the same path (`the request names a Host that is not this machine`); forwarding the header unchanged restored `403`. That gate covers more than the token endpoint — it covers the whole local control plane: `/remote-bridge/pair/token`, `/api/pair/*`, `/api/update/*`, `/api/plugin-manager`. "The trust boundary does not move" therefore holds only while the connector leaves `Host` alone, which makes this an implementation constraint rather than an implementation detail.
+
+**The shape of the reconnect credential must be named here, not left to the implementation.** If the bridge socket upgrade uses a one-time ticket and the object writes "ticket spent" into its own durable storage, then one reconnect needs a fresh ticket **and** a fresh object (a new instance id): the shadow-flight probe found exactly that, a new ticket alone was not enough and the instance had to change too. That conflicts head on with "a release means every socket reconnects". The design has two options: mint a ticket per connect (decoupling the ticket from the instance lifetime, which needs an issuance channel before every reconnect), or upgrade with a long-lived credential and replace the old socket object-side (the same object accepts the new connection and closes the old one). Neither has been verified, and the shadow flight **did not measure reconnection**: that is this design's open gap.
+
 Fallback has three layers, all one instance wide: the same request falls back to quick when the object has no socket; flipping `mode` sends a whole instance back to quick; and a plugin without the bridge, or whose bridge cannot connect, keeps running the quick connector, because both connectors coexist during the migration.
 
 ### Observability
@@ -92,6 +96,7 @@ Only read-only queries were used, with commands and results in section 8; the fo
 | Object wake time per request | 0.20 s (two edge-to-plugin round trips) | Phase 3 measures it with `wrangler tail` and in-object timing |
 | Inbound WS messages per request | 3 frames (`res` plus two `chunk` plus `fin`, rounded) | Same probe as above |
 | Average response bytes | 20 KB (assets already carry the Worker's immutable cache stamp) | A sampled response-size distribution |
+| Throughput cost of one extra hop on large responses | Every bridged response takes one more hop (object to connector): a 300 KB response measured +345 ms (457 to 803 ms) | That instance's response-size distribution; if asset caching keeps large bodies in the Worker, the term only applies to large `/ios/v1` frames |
 
 ### Two Traffic Bands
 
@@ -104,6 +109,8 @@ Only read-only queries were used, with commands and results in section 8; the fo
 
 For comparison, the previous note's ticket-purchase variant needs 5,641 extra tunnels for 6,641 active instances, so $4.50 times 5,641 is **$25,385 per month**, and counting all 12,215 historical instances it is **$50,468 per month**. The bridge's incremental cost at Band A ($83.55 per month) is therefore about 300 times cheaper than buying tunnel capacity, and its Band B increment ($17.06 per month) about 1,500 times cheaper.
 
+Both bands above model "requests times wake time", and that model covers latency but not throughput: every bridged response takes one more hop than the quick path (object to connector), and the cost lands on moving the body rather than on the round trip. In the shadow flight, same hour and same tool, pure round trips differed by 7 to 11 ms (hello 151.6 against 144 ms, `session.titles` 150.3 against 139.6 ms), while a roughly 300 KB text `session.list` went from 457 ms to 803 ms (+345 ms). So besides the Band A/B bill there is a throughput term — one extra hop on large responses — that changes no object request count or duration but decides user-visible latency on large frames (session baselines, the roster), and both the compression ratio and asset caching move it.
+
 ### The First Ceiling Hit
 
 The object count equals the migrated instance count: 6,641 instances active in 7 days map to at most 6,641 objects and objects per account are unlimited, so one object per instance puts no pressure on that dimension. After sharding, the 500-class cap uses 1 class, the 1,000 requests/s soft per object is untouched at 70 rps, 10 GB per object stores a few hundred bytes, the 32 MiB frame limit sits far above a 256 KiB chunk and the 6 outbound connections per request use 1, so **the first thing actually hit is no hard quota at all but the duration bill**: it grows linearly with requests times wake time, and Band A's duration line already costs about seven cents an hour. The second is the Worker request fee, which the fleet pays today and which is therefore not new. The one thing phase 3 must measure is the **sockets-per-object ceiling**, a soft constraint with no documented number: this design holds one plugin socket plus a few phone sockets per object, and if two sockets already flap, that is what bites first.
@@ -113,7 +120,7 @@ The object count equals the migrated instance count: 6,641 instances active in 7
 ### Cutover Order
 
 1. Deploy additively: the object namespace, the `/api/relay/bridge` upgrade endpoint, and a `mode` column on `relay_registrations` defaulting to `quick`. The Worker's request path reads one more column and behaves byte for byte as it does today.
-2. Publish the plugin with the bridge connector: it opens one outbound WebSocket and still starts the quick connector; the server only records that the bridge exists and switches no instance.
+2. Publish the plugin with the bridge connector: it opens one outbound WebSocket and still starts the quick connector; the server only records that the bridge exists and switches no instance. If this step uses a one-time ticket whose spent mark the object keeps in storage, the first release after it loses every connection with no way back (see Fallback and Authentication), so the shape of the reconnect credential has to be settled before step 1.
 3. Flip `mode` per instance (1% first, then in batches by `last_seen_at`); the Worker takes the bridge when `mode=bridge` and the object holds a socket, and takes quick otherwise. Each batch is one D1 UPDATE that takes effect in seconds.
 4. New plugin versions stop opening a quick tunnel by default and only start it on demand when the bridge is unavailable; instances on older plugin versions are untouched and keep using the quick path indefinitely.
 5. An optional and last-possible cleanup: delete the quick path, meaning the `relay_registrations` rows, the proxy branch in `relay.js`, the `--http-host-header` wiring and the plugin's quick connector.
@@ -159,7 +166,22 @@ This step proves the mechanism, not edge behaviour: frame limits, wake time and 
 | The bridge changes no route | `GET /zones/{zone_id}/workers/routes` | Still exactly one `*.dsh-market.com/*` |
 | The bridge writes no DNS record or certificate | `GET /zones/{zone_id}/dns_records?type=CNAME&name=<id>.dsh-market.com` | No per-instance record under relay hostnames |
 
-### Phase 3: Non-Production Shadow Flight (Needs Approval, Not Done Here)
+### Phase 3: Non-Production Shadow Flight (Already Run, 2026-10-23)
+
+Zero production writes: one probe Worker on `*.workers.dev`, one object sharded by instance id and a local connector, code in `probe/relay-bridge/` (branch `probe/relay-bridge-shadow`, commit `a453b6118`), removed with `wrangler delete` when the flight ended. The phone was an iPhone 17, same build, same DEBUG driver and same hour against the production path.
+
+| Reading | Collection | Value | What it settled |
+| --- | --- | --- | --- |
+| Host gate | `GET /remote-bridge/pair/token` after the connector rewrote `Host` to a loopback literal | `200` plus a usable token; the production relay `403` on the same path | The connector must forward `Host` unchanged |
+| Large-response throughput | Phone and desktop `session.list` (about 300 KB of text) | 457 to 803 ms | The extra hop costs throughput, not round trips |
+| Streaming | `curl -N` against `/_probe/stream` | 5 chunks, 121 ms apart | The object does not buffer the response |
+| Phone round trip | DEBUG driver | dial 763 ms, hello 200 ms, request rtt median 152.5 ms (production 1176 / 152 / 147) | At parity with the production path at the same caliber |
+| Sockets per object | One object holding one connector and one phone socket | Steady for 95 s, largest single frame 1.45 MB, no eviction | Two sockets did not flap |
+| First request 409 | The first `GET /` after a deployment | One `409 no-connector`, then 5/5 `401` | Unexplained; see Risks |
+| Release reconnection | Not measurable in this flight | Not measured | A gap: the one-time ticket blocks reconnect, see Fallback and Authentication |
+| The 32 MiB frame boundary | Largest observed frame 1.45 MB | Not approached | Still open |
+
+The table below is what the design requires and its thresholds; the four items above are now readings and the rest still gate on it.
 
 | Metric | Collection | Expected reading | Failure meaning |
 | --- | --- | --- | --- |
@@ -194,6 +216,7 @@ This step proves the mechanism, not edge behaviour: frame limits, wake time and 
 - The object duration bill grows linearly with traffic, and Band A is about five times Band B; there is no automatic brake, only the `mode` rollback and alerting. The metric to watch first is wake time per request, not request count.
 - The sockets-per-object ceiling has no official number; if the real edge allows fewer than one plugin plus a few phone sockets, the sharding strategy changes, and that change reaches into the Worker's routing logic.
 - The bridge requires the plugin to keep one outbound WebSocket open for a long time, so a corporate network that blocks WSS can only fall back to quick; that is a risk and also the reason this design is safer than the previous one.
+- The first request after a deployment answered `409 no-connector` while the object demonstrably held the connector socket (the request before it was answered by the host and the four after it were served normally). The same-request quick fallback covers the outcome, but the cause is unexplained: object recreation at the edge while the socket survives is the leading suspicion, so it stays a measurement item rather than a resolved behaviour.
 
 ## Production Changes That Need Approval
 
