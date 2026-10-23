@@ -2,6 +2,8 @@
 
 Status: proposed
 
+> The transport choice has been superseded by [relay transport v2](2026-10-23-relay-bridge-transport.md); three production readings on 2026-10-23 overturned this note's premises, and the conclusions below stand as a historical record.
+
 ## Problem
 
 A paired phone reaches its DSH instance at `https://<id>.dsh-market.com`, and every byte of that origin is served by the market Worker (`market/worker/src/relay.js`): the Worker reads one D1 row holding the instance's current `*.trycloudflare.com` quick-tunnel hostname and forwards the request through the quick tunnel. That makes the market Worker a hop in the data plane, and the quick tunnel the origin transport, while the plugin — the only component that can start, supervise, restart and reap a connector on the user's machine — owns neither of them today.

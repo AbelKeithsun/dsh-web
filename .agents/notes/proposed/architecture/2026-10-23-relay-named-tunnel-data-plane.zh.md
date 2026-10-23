@@ -2,6 +2,8 @@
 
 Status: proposed
 
+> 传输选型已由[中继传输 v2](2026-10-23-relay-bridge-transport.zh.md)取代；2026-10-23 的三条生产读数推翻了本文的前提，以下结论保留为历史记录。
+
 ## 问题
 
 已配对的手机通过 `https://<id>.dsh-market.com` 访问自己的 DSH 实例，而这个源上的每一个字节都由 market Worker 送出（`market/worker/src/relay.js`）：Worker 读一行 D1 拿到该实例当前的 `*.trycloudflare.com` quick tunnel 主机名，再把请求转发过去。market Worker 因此是数据面上的一跳，quick tunnel 则是回源传输，而唯一能在用户机器上启动、监督、重启与回收连接器的那一端（插件）今天两样都不拥有。
