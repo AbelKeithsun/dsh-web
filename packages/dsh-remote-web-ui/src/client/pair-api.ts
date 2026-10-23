@@ -107,6 +107,8 @@ export interface DeviceFrame {
   lastSeenAt: number
   online: boolean
   userAgent?: string
+  /** User-defined label; the panel falls back to the UA-derived name. */
+  name?: string
 }
 
 /**
@@ -173,6 +175,43 @@ export async function revokePair(deviceId: string): Promise<void> {
   })
   if (response.status === 404) return
   if (!response.ok) throw new Error(`remote-web-ui: revoke failed with ${String(response.status)}`)
+}
+
+/**
+ * Set or clear one device's panel label. An empty name clears it and restores
+ * the User-Agent-derived fallback.
+ * @param deviceId - the session id of the row to rename.
+ * @param name - the new label ('' clears it).
+ * @returns true when the host stored the label; false for an unknown row.
+ */
+export async function renamePair(deviceId: string, name: string): Promise<boolean> {
+  const response = await fetch('api/pair/rename', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId, name }),
+  })
+  if (response.status === 404) return false
+  if (!response.ok) throw new Error(`remote-web-ui: rename failed with ${String(response.status)}`)
+  return true
+}
+
+/**
+ * Collapse duplicate pairing rows the operator grouped as one device. The host
+ * keeps the most recently active row and revokes the rest.
+ * @param deviceIds - the grouped session ids (two or more).
+ * @returns the surviving device id, or undefined when the host refused the
+ *   group (unknown row, or not one User-Agent).
+ */
+export async function mergePairDevices(deviceIds: readonly string[]): Promise<string | undefined> {
+  const response = await fetch('api/pair/merge', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceIds }),
+  })
+  if (response.status === 404 || response.status === 409) return undefined
+  if (!response.ok) throw new Error(`remote-web-ui: merge failed with ${String(response.status)}`)
+  const value = await response.json() as { deviceId?: unknown }
+  return typeof value.deviceId === 'string' ? value.deviceId : undefined
 }
 
 /**

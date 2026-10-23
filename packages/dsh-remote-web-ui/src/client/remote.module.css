@@ -676,6 +676,98 @@
   box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-2), 0 0 0 4px var(--dsw-alias-brand-primary);
 }
 
+/* One roster row: the identity/presence line plus, beneath it, the duplicate
+   hint for a same-User-Agent group. */
+.deviceEntry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.deviceActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.deviceRename,
+.deviceMerge {
+  flex: none;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.deviceRename:hover:not(:disabled),
+.deviceMerge:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.deviceRename:focus-visible,
+.deviceMerge:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-2), 0 0 0 4px var(--dsw-alias-brand-primary);
+}
+
+.deviceRename:disabled,
+.deviceMerge:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.deviceNameForm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.deviceNameInput {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.deviceNameInput:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-2), 0 0 0 4px var(--dsw-alias-brand-primary);
+}
+
+.deviceDuplicate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.deviceDuplicateText {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.deviceError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+}
+
 /* Accessibility: collapse the interaction transitions for reduced-motion
    users. The panel chrome is already static; this just disables the
    hover/active/focus cross-fades added above. */
@@ -683,7 +775,9 @@
   .trigger,
   .close,
   .action,
-  .deviceRevoke {
+  .deviceRevoke,
+  .deviceRename,
+  .deviceMerge {
     transition: none;
   }
 }

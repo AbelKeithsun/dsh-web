@@ -45,7 +45,7 @@ type MockIssue = {
 }
 
 /** fetch stub answering the pair endpoints; a list answers issue() in order. */
-function mockFetch(issue: MockIssue | MockIssue[]) {
+function mockFetch(issue: MockIssue | MockIssue[], options: { mergeDeviceId?: string } = {}) {
   const issues = Array.isArray(issue) ? [...issue] : [issue]
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -62,13 +62,18 @@ function mockFetch(issue: MockIssue | MockIssue[]) {
         }
       : url === 'api/pair/issue'
         ? { ok: false, code: current.code }
-        : { ok: true }
+        : url === 'api/pair/merge'
+          ? { ok: true, deviceId: options.mergeDeviceId ?? 'tok-1' }
+          : { ok: true }
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
   })
 }
 
-function mount(issue: MockIssue | MockIssue[] = { ok: true, url: 'http://192.168.1.5:3080/pair-accept?pair=tok-1', token: 'tok-1', expiresAt: Date.now() + 60_000, lanAddresses: ['192.168.1.5'] }) {
-  const fetch = mockFetch(issue)
+function mount(
+  issue: MockIssue | MockIssue[] = { ok: true, url: 'http://192.168.1.5:3080/pair-accept?pair=tok-1', token: 'tok-1', expiresAt: Date.now() + 60_000, lanAddresses: ['192.168.1.5'] },
+  options: { mergeDeviceId?: string } = {},
+) {
+  const fetch = mockFetch(issue, options)
   vi.stubGlobal('fetch', fetch)
   vi.stubGlobal('EventSource', FakeEventSource)
   const view = render(
@@ -93,6 +98,9 @@ describe('RemoteEntry', () => {
     const trigger = screen.getByRole('button', { name: 'Remote access' })
     expect(screen.queryByText('Remote access')).toBeNull()
     expect(trigger.querySelector('svg')).not.toBeNull()
+    // A stable hook for third-party plugins: the panel root also carries the
+    // human-readable `aria-label`, so integrations must not select on it.
+    expect(trigger.getAttribute('data-testid')).toBe('remote-trigger')
   })
 
   it('opens the panel on trigger click: title, subtitle, QR card, hint, actions', async () => {
@@ -325,6 +333,80 @@ describe('RemoteEntry', () => {
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Unpair this device' }).length).toBe(1))
     // The roster still holds exactly the one live row.
     expect(screen.getAllByRole('listitem').length).toBe(1)
+  })
+
+  it('operator renames a device inline and keeps the custom name over the UA label', async () => {
+    // Given an open panel with one paired Android phone.
+    const { fetch } = mount()
+    fireEvent.click(screen.getByRole('button', { name: 'Remote access' }))
+    await waitFor(() => { expect(screen.getAllByRole('button', { name: 'Stop' })).toHaveLength(1) })
+    FakeEventSource.instances[0]?.emit({
+      type: 'state',
+      phase: 'connected',
+      lanAvailable: true,
+      tokenId: 'tok-1',
+      tokenExpiresAt: Date.now() + 60_000,
+      deviceCount: 1,
+      onlineCount: 1,
+      devices: [{
+        id: 'dev-live',
+        createdAt: Date.now() - 10_000,
+        lastSeenAt: Date.now(),
+        online: true,
+        userAgent: 'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/151.0.0.0 Mobile Safari/537.36',
+      }],
+    })
+    expect((await screen.findByText('Android · Chrome')).textContent).toBe('Android · Chrome')
+    // When the operator opens the rename editor...
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
+    const input = screen.getByRole('textbox', { name: 'Rename this device' })
+    // The UA-derived name is the placeholder, so an empty submit clears the label.
+    expect(input.getAttribute('placeholder')).toBe('Android · Chrome')
+    fireEvent.change(input, { target: { value: 'My phone' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    // Then the label is stored on the host and rendered instead of the UA name.
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('api/pair/rename', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ deviceId: 'dev-live', name: 'My phone' }),
+    })))
+    await waitFor(() => { expect(screen.getByText('My phone').textContent).toBe('My phone') })
+    expect(screen.queryByText('Android · Chrome')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'Rename this device' })).toBeNull()
+  })
+
+  it('operator merges same-browser duplicate rows into the most recently active one', async () => {
+    // Given an open panel with two pairing rows from the same browser.
+    const { fetch } = mount(undefined, { mergeDeviceId: 'dev-b' })
+    fireEvent.click(screen.getByRole('button', { name: 'Remote access' }))
+    await waitFor(() => { expect(screen.getAllByRole('button', { name: 'Stop' })).toHaveLength(1) })
+    const browser = 'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/151.0.0.0 Mobile Safari/537.36'
+    FakeEventSource.instances[0]?.emit({
+      type: 'state',
+      phase: 'connected',
+      lanAvailable: true,
+      tokenId: 'tok-1',
+      tokenExpiresAt: Date.now() + 60_000,
+      deviceCount: 2,
+      onlineCount: 1,
+      devices: [
+        { id: 'dev-a', createdAt: Date.now() - 20_000, lastSeenAt: Date.now() - 10_000, online: false, userAgent: browser },
+        { id: 'dev-b', createdAt: Date.now() - 5_000, lastSeenAt: Date.now(), online: true, userAgent: browser, name: 'My phone' },
+      ],
+    })
+    // Then the panel flags the pair as a possible one-device duplicate group.
+    const hint = '2 records share this browser — they may be the same device'
+    expect((await screen.findByText(hint)).textContent).toBe(hint)
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    // When the operator merges the group...
+    fireEvent.click(screen.getByRole('button', { name: 'Merge' }))
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('api/pair/merge', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ deviceIds: ['dev-a', 'dev-b'] }),
+    })))
+    // Then only the surviving row remains and the hint is gone.
+    await waitFor(() => { expect(screen.getAllByRole('listitem')).toHaveLength(1) })
+    expect(screen.getByText('My phone').textContent).toBe('My phone')
+    expect(screen.queryByText(/records share this browser/)).toBeNull()
   })
 
   it('stop posts the revocation; refresh mints a new QR; the link copies once', async () => {

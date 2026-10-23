@@ -1084,6 +1084,77 @@ describe('/api/pair routes', () => {
     expect(flooded.has(`host-${String(MAX_DYNAMIC_TRUSTED_HOSTS * 4 - 1)}.lan`)).toBe(true)
   })
 
+  it('operator renames and merges duplicate devices from loopback and is refused from LAN', async () => {
+    let serial = 0
+    const service = new PairingService({
+      tokenTtlMs: 60_000,
+      offlineAfterMs: 10_000,
+      maxDevices: 4,
+      cookieName: 'dsh_pair',
+    }, {
+      now: () => 1_000_000 + serial,
+      randomToken: () => `tok-${String(++serial)}`,
+    })
+    service.setLanBases([{ address: '192.168.1.5', base: 'http://192.168.1.5:3080' }])
+    const { port, close } = await serve(makeRoutes({ service }))
+    const userAgent = 'Mozilla/5.0 (Linux; Android 16) Chrome/151.0.0.0 Mobile Safari/537.36'
+    try {
+      // Given two accepts from the same browser: the documented mobile
+      // cookie-context split mints two rows carrying the same User-Agent.
+      await call(port, 'POST', '/api/pair/issue', {})
+      await call(port, 'POST', '/api/pair/accept', {
+        host: '192.168.1.5:3080',
+        body: { token: 'tok-1' },
+        headers: { 'user-agent': userAgent },
+      })
+      await call(port, 'POST', '/api/pair/issue', {})
+      const accepted = await call(port, 'POST', '/api/pair/accept', {
+        host: '192.168.1.5:3080',
+        body: { token: 'tok-3' },
+        headers: { 'user-agent': userAgent },
+      })
+      const newer = String(accepted.body.deviceId)
+      const older = service.snapshot().devices[0]?.id ?? ''
+      expect(service.deviceCount()).toBe(2)
+
+      // When both endpoints are called from a LAN origin...
+      // Then they are loopback-only, like revoke.
+      const lanRename = await call(port, 'POST', '/api/pair/rename', {
+        host: '192.168.1.5:3080',
+        body: { deviceId: older, name: 'x' },
+      })
+      expect(lanRename.status).toBe(403)
+      const lanMerge = await call(port, 'POST', '/api/pair/merge', {
+        host: '192.168.1.5:3080',
+        body: { deviceIds: [older, newer] },
+      })
+      expect(lanMerge.status).toBe(403)
+      expect(service.deviceCount()).toBe(2)
+
+      // When the operator renames the row from loopback...
+      // Then the label reaches the snapshot.
+      const renamed = await call(port, 'POST', '/api/pair/rename', { body: { deviceId: older, name: 'My phone' } })
+      expect(renamed.status).toBe(200)
+      expect(service.snapshot().devices.find(device => device.id === older)?.name).toBe('My phone')
+      // A body missing the name is a bad payload, not a blank rename.
+      const malformed = await call(port, 'POST', '/api/pair/rename', { body: { deviceId: older } })
+      expect(malformed.status).toBe(400)
+
+      // When the operator merges the group from loopback...
+      // Then the most recently active row survives.
+      const merged = await call(port, 'POST', '/api/pair/merge', { body: { deviceIds: [older, newer] } })
+      expect(merged.status).toBe(200)
+      expect(merged.body).toEqual({ ok: true, deviceId: newer })
+      expect(service.hasDevice(older)).toBe(false)
+      expect(service.deviceCount()).toBe(1)
+      // An unknown row is a 404 on both endpoints.
+      expect((await call(port, 'POST', '/api/pair/rename', { body: { deviceId: 'missing', name: 'x' } })).status).toBe(404)
+      expect((await call(port, 'POST', '/api/pair/merge', { body: { deviceIds: [newer, 'missing'] } })).status).toBe(404)
+    } finally {
+      await close()
+    }
+  })
+
   it('revokes one device from loopback and refuses LAN revoke', async () => {
     const service = makeService()
     const { port, close } = await serve(makeRoutes({ service }))

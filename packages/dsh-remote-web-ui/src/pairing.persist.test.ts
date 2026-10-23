@@ -246,6 +246,46 @@ describe('PairingService device persistence', () => {
     expect(saved[deviceId]?.userAgent).toBe('Mozilla/5.0 TestPhone')
   })
 
+  it('operator sees a device name survive a restart and clears it again', () => {
+    // Given a paired device the operator names.
+    const file = join(dir, 'devices.json')
+    const first = new PairingService({ ...BASE_CONFIG, devicesFile: file }, makeClock())
+    const deviceId = pairDevice(first)
+    expect(first.rename(deviceId, 'My phone')).toBe(true)
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as Record<string, { name?: string }>
+    expect(saved[deviceId]?.name).toBe('My phone')
+
+    // When the process restarts, the label comes back attached to the session.
+    const second = new PairingService({ ...BASE_CONFIG, devicesFile: file }, makeClock())
+    expect(second.snapshot().devices[0]?.name).toBe('My phone')
+    // Then a blank rename clears the stored label as well.
+    expect(second.rename(deviceId, '')).toBe(true)
+    const cleared = JSON.parse(readFileSync(file, 'utf8')) as Record<string, { name?: string }>
+    expect(cleared[deviceId]?.name).toBeUndefined()
+  })
+
+  it('operator sees a duplicate merge stay dropped after a restart', () => {
+    // Given two persisted rows sharing one User-Agent.
+    const file = join(dir, 'devices.json')
+    const first = new PairingService({ ...BASE_CONFIG, devicesFile: file }, makeClock())
+    first.setPublicBaseUrl('https://pairing.example.trycloudflare.com')
+    const pair = (): string => {
+      const { token } = first.issue()
+      const result = first.accept(token, 'Mozilla/5.0 Android Chrome')
+      if (!result.ok) throw new Error(`pair failed: ${result.code}`)
+      return result.deviceId
+    }
+    const older = pair()
+    const newer = pair()
+    // When the operator merges the group.
+    expect(first.mergeDuplicates([older, newer])).toEqual({ ok: true, deviceId: newer })
+    // Then a restart restores only the survivor.
+    const second = new PairingService({ ...BASE_CONFIG, devicesFile: file }, makeClock())
+    expect(second.hasDevice(newer)).toBe(true)
+    expect(second.hasDevice(older)).toBe(false)
+    expect(second.snapshot().deviceCount).toBe(1)
+  })
+
   it('operator is not left with a revocation that a restart silently undoes', () => {
     // Given a device store that cannot be written (its parent path is a file)
     // while a stale, readable store sits beside it.
