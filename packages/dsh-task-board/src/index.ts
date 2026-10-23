@@ -39,7 +39,7 @@ import { DEFAULT_SESSION_PERMISSION } from './core/handover.ts'
 import type { CardDefaults } from './core/card-defaults.ts'
 import { buildTaskBoardTools, TASK_BOARD_TOOL_NAMES } from './host/agent-tools.ts'
 import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
-import { makeTaskBoardRoutes } from './host-routes.ts'
+import { makeTaskBoardRoutes, type TaskBoardConnectionTrust } from './host-routes.ts'
 import { TASK_BOARD_SERVICE_NAME, type TaskBoardExtension } from './core/extension.ts'
 import type { TaskBoardAction } from './protocol.ts'
 import { mountOnce } from './mount-once.ts'
@@ -363,6 +363,33 @@ export function resolveProxyAccess(config: Config | undefined, env: NodeJS.Proce
     throw new Error(`task-board: trustedProxyHosts requires a non-empty ${proxyTokenEnv} environment variable`)
   }
   return { trustedProxyHosts, proxyToken }
+}
+
+/**
+ * Resolve the composition's optional `connection` service.
+ *
+ * The service is the Host's own browser-session authority: it fronts every
+ * `/api` request with the Host/Origin fence and the signed `dsh-auth-*` cookie,
+ * which is what a deployment behind a reverse proxy or ingress validates on the
+ * same authority the GUI is served from. The board bridges it instead of
+ * repeating that check, so a proxy request the Host already authenticated is
+ * admitted without a board-specific host allowlist (issue #1930). It is
+ * deliberately resolved like the agent-tool registry rather than injected:
+ * a composition that serves no connection keeps mounting the board on the
+ * pre-existing loopback fence, and one that mounts the service later is picked
+ * up on the next request because the fence asks this resolver each time.
+ * @param ctx - the plugin context.
+ * @returns the trust face, or undefined when this deployment serves none.
+ */
+export function resolveConnectionTrust(ctx: Context): TaskBoardConnectionTrust | undefined {
+  try {
+    const connection = ctx.get('connection') as Partial<TaskBoardConnectionTrust> | undefined
+    return connection !== undefined && typeof connection.requestRejection === 'function'
+      ? connection as TaskBoardConnectionTrust
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** The registry face the agent tools register into. */
@@ -832,7 +859,10 @@ function applyImpl(ctx: Context, config?: Config): void {
         const handle = offGate as { dispose(): void }
         disposers.push(() => { handle.dispose() })
       }
-      const routes = makeTaskBoardRoutes(host, resolveProxyAccess(config), {
+      const routes = makeTaskBoardRoutes(host, {
+        ...resolveProxyAccess(config),
+        connection: () => resolveConnectionTrust(ctx),
+      }, {
         parseTask: async (request, signal) => {
           const llm = resolveLlmRuntime(ctx)
           if (llm === undefined) throw new TaskParseError('no-model', 'this deployment serves no llm service')
