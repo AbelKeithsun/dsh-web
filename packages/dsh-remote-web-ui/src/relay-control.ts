@@ -1,7 +1,9 @@
 /**
  * Relay control-plane client: the lease claim that turns one relay identity
- * into a named-tunnel lease (tunnel, ingress, CNAME and the per-instance
- * connector token) plus the release bookkeeping.
+ * into a lease row (the tunnel transports get a tunnel, its ingress, a CNAME
+ * and the per-instance connector token; the bridge transport gets neither
+ * block, because its data plane owns no Cloudflare object) plus the release
+ * bookkeeping.
  *
  * Claiming is best-effort and additive. Every failure is graded into a retry
  * decision instead of breaking the quick tunnel that already serves the phone:
@@ -32,9 +34,12 @@ export interface RelayBridgeGrant {
 /** One accepted lease, as the control plane answers it. */
 export interface RelayClaim {
   mode: RelayConnectorMode
-  tunnel: { id: string; token: string }
+  /** The instance's own tunnel. Absent for a bridged lease: there is nothing
+   * to run and no token to run it with. */
+  tunnel?: { id: string; token: string }
   hostname: string
-  dns: { target: string }
+  /** The CNAME target behind the hostname; absent for a bridged lease too. */
+  dns?: { target: string }
   /** Present when the control plane can route this instance over the bridge. */
   bridge?: RelayBridgeGrant
 }
@@ -71,26 +76,41 @@ export function relayClaimBody(request: RelayClaimRequest): string {
   })
 }
 
+/** The tunnel of one accepted claim, or undefined when it carries none. */
+function relayTunnelOf(value: unknown): { id: string; token: string } | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const tunnel = value as { id?: unknown; token?: unknown }
+  if (typeof tunnel.id !== 'string' || tunnel.id === '') return undefined
+  if (typeof tunnel.token !== 'string' || tunnel.token === '') return undefined
+  return { id: tunnel.id, token: tunnel.token }
+}
+
+/** The CNAME target of one accepted claim, or undefined when it carries none. */
+function relayDnsTargetOf(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const target = (value as { target?: unknown }).target
+  return typeof target === 'string' && target !== '' ? target : undefined
+}
+
 /** One lease read back from an accepted claim, or undefined for a bad shape. */
 export function relayClaimOf(value: unknown): RelayClaim | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const body = value as { mode?: unknown; tunnel?: unknown; hostname?: unknown; dns?: unknown; bridge?: unknown }
   const mode = body.mode
   if (mode !== 'named' && mode !== 'quick' && mode !== 'bridge') return undefined
-  if (typeof body.tunnel !== 'object' || body.tunnel === null) return undefined
-  const tunnel = body.tunnel as { id?: unknown; token?: unknown }
-  if (typeof tunnel.id !== 'string' || tunnel.id === '') return undefined
-  if (typeof tunnel.token !== 'string' || tunnel.token === '') return undefined
   if (typeof body.hostname !== 'string' || body.hostname === '') return undefined
-  if (typeof body.dns !== 'object' || body.dns === null) return undefined
-  const target = (body.dns as { target?: unknown }).target
-  if (typeof target !== 'string' || target === '') return undefined
+  const tunnel = relayTunnelOf(body.tunnel)
+  const target = relayDnsTargetOf(body.dns)
+  // The tunnel transports are served by that tunnel, so a reply without both
+  // halves is a protocol error. The bridge is the one transport whose lease
+  // owns no Cloudflare object, and its claim carries neither half.
+  if (mode !== 'bridge' && (tunnel === undefined || target === undefined)) return undefined
   const bridge = relayBridgeGrantOf(body.bridge)
   return {
     mode,
-    tunnel: { id: tunnel.id, token: tunnel.token },
+    ...(tunnel === undefined ? {} : { tunnel }),
     hostname: body.hostname,
-    dns: { target },
+    ...(target === undefined ? {} : { dns: { target } }),
     ...(bridge === undefined ? {} : { bridge }),
   }
 }

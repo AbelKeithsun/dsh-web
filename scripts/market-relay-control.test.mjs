@@ -2,7 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import worker from '../market/worker/src/index.js'
-import { CF_RETRY_AFTER_MS, LEASE_TTL_MS, leaseIngress, pruneRelayLeases } from '../market/worker/src/relay-control.js'
+import {
+  CF_RETRY_AFTER_MS,
+  LEASE_TTL_MS,
+  RELAY_BRIDGE_CREDENTIAL,
+  RELAY_BRIDGE_ENDPOINT,
+  leaseIngress,
+  pruneRelayLeases,
+} from '../market/worker/src/relay-control.js'
 
 const ID = 'abcd1234abcd1234'
 const HOST = ID + '.dsh-market.com'
@@ -32,6 +39,9 @@ function leaseDb(seed = {}) {
       origin_port: args[4],
       plugin_version: args[5],
       state: 'active',
+      // The upsert never names the column, so an operator's flip survives a
+      // claim and a fresh row takes the migration's 'quick' default.
+      mode: previous ? previous.mode : 'quick',
       created_at: previous ? previous.created_at : args[6],
       last_seen_at: args[6],
       released_at: undefined,
@@ -192,6 +202,59 @@ test('claim creates the tunnel, its ingress, the CNAME and answers the lease', a
   assert.equal(row.origin_port, 3080)
   assert.equal(row.plugin_version, '0.4.8')
   assert.equal(row.state, 'active')
+})
+
+test('a bridged lease claims without touching the cloudflare account', async () => {
+  // A row an operator flipped to the bridge transport, whose data plane is the
+  // instance's Durable Object and which therefore owns no Cloudflare object.
+  const db = leaseDb({ leases: {
+    [ID]: {
+      id: ID,
+      secret_hash: await secretHashOf(SECRET),
+      tunnel_id: '',
+      hostname: HOST,
+      origin_port: 3080,
+      plugin_version: '0.4.8',
+      state: 'active',
+      mode: 'bridge',
+      created_at: 1,
+      last_seen_at: 1,
+    },
+  } })
+  const api = cloudflare()
+  const env = { DB: db, CF_RELAY_API: api }
+  const claimedAt = Date.now()
+  const response = await claim(env)
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    mode: 'bridge',
+    hostname: HOST,
+    bridge: { endpoint: RELAY_BRIDGE_ENDPOINT, instance: ID, credential: RELAY_BRIDGE_CREDENTIAL },
+  }, 'the answer keeps the hostname and the bridge grant, and carries no tunnel block')
+  assert.equal(api.calls.length, 0, 'a bridged claim sends no cloudflare call at all')
+  const row = db.leases.get(ID)
+  assert.equal(row.state, 'active', 'the lease is renewed as usual')
+  assert.equal(row.tunnel_id, '', 'a bridged lease points at no tunnel')
+  assert.equal(row.last_seen_at >= claimedAt, true, 'the row is seen now, inside the cron GC TTL')
+
+  const again = await claim(env, { new_secret: undefined })
+  assert.equal(again.status, 200)
+  assert.equal(api.calls.length, 0, 'the next claim does not create the idle tunnel back')
+  assert.equal(db.leases.get(ID).mode, 'bridge', 'a claim never undoes the operator flip')
+})
+
+test('a quick claim still converges the tunnel, its ingress, the CNAME and the token', async () => {
+  const api = cloudflare()
+  const response = await claim({ DB: leaseDb(), CF_RELAY_API: api })
+  assert.equal(response.status, 200)
+  assert.deepEqual(api.names(), [
+    'findTunnel',
+    'createTunnel',
+    'putTunnelConfiguration',
+    'findDnsRecord',
+    'createDnsRecord',
+    'getTunnelToken',
+  ], 'the tunnel transport keeps its exact convergence order')
 })
 
 test('claim answers the named mode when the control plane flips the switch', async () => {

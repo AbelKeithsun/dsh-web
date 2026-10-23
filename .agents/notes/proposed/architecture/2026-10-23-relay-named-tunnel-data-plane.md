@@ -62,7 +62,7 @@ The Worker keeps its endpoints on the market apex (`https://dsh-market.com/api/r
 
 | Endpoint | Method | Request | Response | Side effects |
 | --- | --- | --- | --- | --- |
-| `/api/relay/claim` | `PUT` | `id`, `secret`, optional `new_secret`, `origin.port`, `plugin.version` | `mode` (`named` or `quick`), `tunnel.id`, `tunnel.token`, `hostname`, `dns.target` | Finds or creates the tunnel named `dsh-relay-<id>`, writes its ingress, finds or creates the CNAME, upserts the row |
+| `/api/relay/claim` | `PUT` | `id`, `secret`, optional `new_secret`, `origin.port`, `plugin.version` | `mode` (`named` or `quick`), `tunnel.id`, `tunnel.token`, `hostname`, `dns.target`; a `bridge`-mode lease answers neither `tunnel` nor `dns` | Finds or creates the tunnel named `dsh-relay-<id>`, writes its ingress, finds or creates the CNAME, upserts the row |
 | `/api/relay/release` | `POST` | `id`, `secret` | `ok` | Marks the row released; the tunnel and the DNS record survive so a re-enable is instant |
 | `/api/relay/retire` | `POST` | `id`, `secret` | `ok` | Deletes the DNS record, then the tunnel, then the row; this is the only path that removes an origin |
 
@@ -73,7 +73,8 @@ The lease runs entirely against the Cloudflare API with a Worker secret: `PUT /a
 - Authentication and abuse control stay as shipped: the secret is compared as a SHA-256 hash in constant time, the first claim must carry `new_secret` equal to `secret`, and both the per-IP and per-id rate-limit windows ride the same D1 batch as the mutation.
 - `400 invalid-params`, `403 auth-failed`, `404 unknown-id` and `429 rate-limited` mean what they mean today; the plugin's existing capped backoff and its one-shot re-claim on `invalid-params` carry over unchanged.
 - `502 cf-api-unavailable` is new and carries `retryAfterMs`; the plugin treats it like a network failure, keeps the previous connector running, and retries with backoff.
-- Every claim reconciles all three pieces — tunnel, ingress, record — by name before answering, so a claim that died halfway converges on the next attempt instead of leaving a half-built instance.
+- Every claim of a tunnel transport reconciles all three pieces — tunnel, ingress, record — by name before answering, so a claim that died halfway converges on the next attempt instead of leaving a half-built instance.
+- A `bridge`-mode lease is the exception, and [the transport v2 proposal](2026-10-23-relay-bridge-transport.md) owns it: its data plane is the instance's Durable Object, so its claim reconciles nothing in the account — no tunnel, no ingress, no CNAME, not even a token fetch — and answers the hostname and the bridge grant alone.
 - While the quick-tunnel path still ships, a claim failure is not fatal: the response mode stays `quick` and the phone keeps the origin the registry already gives it.
 
 ### Teardown and reclaim

@@ -63,7 +63,7 @@ Worker 的端点留在 market 顶点（`https://dsh-market.com/api/relay/...`）
 
 | 端点 | 方法 | 请求 | 响应 | 副作用 |
 | --- | --- | --- | --- | --- |
-| `/api/relay/claim` | `PUT` | `id`、`secret`、可选 `new_secret`、`origin.port`、`plugin.version` | `mode`（`named` 或 `quick`）、`tunnel.id`、`tunnel.token`、`hostname`、`dns.target` | 找到或创建名为 `dsh-relay-<id>` 的隧道、写 ingress、找到或创建 CNAME、upsert 行 |
+| `/api/relay/claim` | `PUT` | `id`、`secret`、可选 `new_secret`、`origin.port`、`plugin.version` | `mode`（`named` 或 `quick`）、`tunnel.id`、`tunnel.token`、`hostname`、`dns.target`；`bridge` 模式的租约应答既没有 `tunnel` 也没有 `dns` | 找到或创建名为 `dsh-relay-<id>` 的隧道、写 ingress、找到或创建 CNAME、upsert 行 |
 | `/api/relay/release` | `POST` | `id`、`secret` | `ok` | 把行标为 released；隧道与 DNS 记录保留，以便重新启用是瞬时的 |
 | `/api/relay/retire` | `POST` | `id`、`secret` | `ok` | 先删 DNS 记录、再删隧道、最后删行；这是唯一会移除源的路径 |
 
@@ -74,7 +74,8 @@ Worker 的端点留在 market 顶点（`https://dsh-market.com/api/relay/...`）
 - 鉴权与滥用控制沿用已交付的实现：secret 以 SHA-256 哈希做常量时间比较，首次 claim 必须带等于 `secret` 的 `new_secret`，按 IP 与按 id 的两个限流窗口与写入走同一个 D1 批次。
 - `400 invalid-params`、`403 auth-failed`、`404 unknown-id`、`429 rate-limited` 的语义与今天一致；插件现成的封顶退避与在 `invalid-params` 上的一次性重认领原样沿用。
 - `502 cf-api-unavailable` 是新错误，带 `retryAfterMs`；插件按网络故障处理，保持上一个连接器继续运行并退避重试。
-- 每次 claim 在应答前按名字对三件套（隧道、ingress、记录）做一次收敛，所以中途死掉的 claim 会在下一次尝试上收敛，而不是留下半建的实例。
+- 每次隧道传输的 claim 在应答前按名字对三件套（隧道、ingress、记录）做一次收敛，所以中途死掉的 claim 会在下一次尝试上收敛，而不是留下半建的实例。
+- `bridge` 模式的租约是例外，这条归[传输 v2 提案](2026-10-23-relay-bridge-transport.zh.md) 所有：它的数据面是实例自己的 Durable Object，因此它的 claim 在账户里不收敛任何东西——不建隧道、不写 ingress、不碰 CNAME、连 token 都不取——只回主机名与桥接授权。
 - 在 quick tunnel 路径仍然保留的期间，claim 失败不是致命的：响应 mode 留在 `quick`，手机继续用登记表已经给它的源。
 
 ### 下线与回收

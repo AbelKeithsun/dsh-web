@@ -87,6 +87,34 @@ describe('claiming one relay lease', () => {
     expect(outcome).toEqual({ ok: false, status: 200, error: 'invalid-response' })
   })
 
+  it('operator reads a bridged lease that carries no tunnel', async () => {
+    // Given the control plane serving this instance over the bridge, whose
+    // data plane owns no Cloudflare object and therefore no tunnel
+    // When the client parses the reply
+    // Then the hostname and the bridge grant land and the tunnel half is
+    // simply absent instead of a protocol error
+    const bridged = {
+      mode: 'bridge',
+      hostname: LEASE.hostname,
+      bridge: { endpoint: 'wss://dsh-market.com/api/relay/bridge', instance: 'abcd1234abcd1234', credential: 'lease-secret' },
+    }
+    const { fetchFn } = fakeFetch(() => new Response(JSON.stringify(bridged), { status: 200 }))
+    const outcome = await claimRelayLease({ id: 'abcd1234abcd1234', secret: 'A'.repeat(43), port: 3080 }, { fetchFn })
+    expect(outcome).toEqual({ ok: true, claim: bridged })
+  })
+
+  it('operator keeps refusing a tunnel-transport lease without a tunnel', async () => {
+    // Given a quick-mode reply, whose transport is the instance's own tunnel
+    // When it arrives with no tunnel block at all
+    // Then it is still a protocol error: only a bridged lease may omit it
+    const { fetchFn } = fakeFetch(() => new Response(
+      JSON.stringify({ mode: 'quick', hostname: LEASE.hostname, dns: LEASE.dns }),
+      { status: 200 },
+    ))
+    const outcome = await claimRelayLease({ id: 'abcd1234abcd1234', secret: 'A'.repeat(43), port: 3080 }, { fetchFn })
+    expect(outcome).toEqual({ ok: false, status: 200, error: 'invalid-response' })
+  })
+
   it('operator gets the retry hint of an unavailable control plane', async () => {
     // Given the control plane lost its upstream Cloudflare API
     // When the plugin claims

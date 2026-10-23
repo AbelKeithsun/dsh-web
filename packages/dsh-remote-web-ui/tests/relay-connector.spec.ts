@@ -10,6 +10,7 @@ import {
   namedTunnelChildRecordFile,
   readPluginVersion,
   relayClaimKeyOf,
+  type RelayBridgeStart,
   type RelayPairState,
 } from '../src/relay-connector.ts'
 import type { RelayClaim, RelayClaimOutcome, RelayClaimRequest } from '../src/relay-control.ts'
@@ -28,6 +29,15 @@ function lease(mode: 'named' | 'quick'): RelayClaim {
     tunnel: { id: 'tunnel-uuid-1', token: 'per-instance-tunnel-token' },
     hostname: HOSTNAME,
     dns: { target: 'tunnel-uuid-1.cfargotunnel.com' },
+  }
+}
+
+/** A bridged lease: the hostname and the grant, with no tunnel half at all. */
+function bridgedLease(): RelayClaim {
+  return {
+    mode: 'bridge',
+    hostname: HOSTNAME,
+    bridge: { endpoint: 'wss://dsh-market.com/api/relay/bridge', instance: ID, credential: 'lease-secret' },
   }
 }
 
@@ -104,7 +114,7 @@ describe('claiming a lease beside the quick connector', () => {
     const pair = new RelayConnectorPair(identity(), { claim: script.claim, ...connectorSeams().seams })
     await pair.start({ port: 3080 })
     expect(pair.served).toBe('named')
-    expect(pair.lease?.dns.target).toBe('tunnel-uuid-1.cfargotunnel.com')
+    expect(pair.lease?.dns?.target).toBe('tunnel-uuid-1.cfargotunnel.com')
   })
 
   it('operator keeps the quick origin when the claim is refused and retries after the hint', async () => {
@@ -146,6 +156,29 @@ describe('claiming a lease beside the quick connector', () => {
     await pair.start({ port: 3080 })
     expect(pair.state).toEqual({ state: 'failed', error: 'auth-failed' })
     expect(timer.scheduled).toEqual([])
+  })
+
+  it('operator gets a bridged lease with no tunnel and starts no second connector', async () => {
+    // Given a control plane that serves this instance over the bridge, whose
+    // claim carries the hostname and the grant and no tunnel at all
+    // When the plugin claims on tunnel start
+    // Then the bridge connector starts, the named one does not, and the
+    // accepted lease still lands with the mode the phone is served from
+    const script = scriptedClaim([{ ok: true, claim: bridgedLease() }])
+    const connector = connectorSeams()
+    const bridged: RelayBridgeStart[] = []
+    const pair = new RelayConnectorPair(identity(), {
+      claim: script.claim,
+      ...connector.seams,
+      startBridge: (start) => { bridged.push(start) },
+    })
+    const claim = await pair.start({ port: 3080 })
+    expect(claim).toEqual(bridgedLease())
+    expect(pair.served).toBe('bridge')
+    expect(connector.started).toEqual([])
+    expect(pair.lease?.tunnel).toBeUndefined()
+    expect(bridged[0].claim.hostname).toBe(HOSTNAME)
+    expect(bridged[0].port).toBe(3080)
   })
 
   it('operator re-claims the id when the control plane lost the row', async () => {

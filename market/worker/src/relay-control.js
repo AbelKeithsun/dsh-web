@@ -4,11 +4,14 @@
  * proxy path and the registration endpoints keep working untouched, so every
  * instance that has not migrated still rides its quick tunnel.
  *
- * One lease owns three Cloudflare objects for one instance: a remote-managed
- * tunnel named `dsh-relay-<id>`, that tunnel's ingress (the instance hostname
- * plus the catch-all rule remote-managed tunnels require), and an exact
- * proxied CNAME `<id>.dsh-market.com -> <tunnel-id>.cfargotunnel.com`. The
- * lease row in D1 points at them so release/retire/GC can settle them later.
+ * The tunnel transports (quick, named) converge three Cloudflare objects for
+ * one instance: a remote-managed tunnel named `dsh-relay-<id>`, that tunnel's
+ * ingress (the instance hostname plus the catch-all rule remote-managed tunnels
+ * require), and an exact proxied CNAME `<id>.dsh-market.com ->
+ * <tunnel-id>.cfargotunnel.com`. The lease row in D1 points at them so
+ * release/retire/GC can settle them later. The bridge transport owns none of
+ * them: its data plane is the instance's Durable Object, so a bridged claim
+ * sends no account call at all and keeps only the hostname.
  *
  * Trust model: a lease is secret-authenticated exactly like a registration
  * (SHA-256 hash, constant-time compare, `new_secret` on the first claim) and
@@ -257,6 +260,18 @@ async function convergeLease(api, id, port) {
 }
 
 /**
+ * The lease of a bridged instance: the hostname it keeps and nothing in the
+ * account. A bridge's data plane is its Durable Object, so this claim sends no
+ * Cloudflare call at all -- not even a token fetch -- and the row's tunnel id
+ * stays empty, which is exactly what the cron GC reads as "owns no account
+ * resource" when it reclaims the row later.
+ * @returns the hostname alone; no tunnel id, no CNAME target, no token.
+ */
+function bridgedLease(id) {
+  return { tunnelId: '', hostname: relayHostname(id) }
+}
+
+/**
  * Remove one lease's public source in the order the design fixes: the DNS
  * record first, then the tunnel, so there is never a window in which the
  * hostname still resolves and points at a tunnel that is already gone.
@@ -281,10 +296,11 @@ function cfUnavailable(detail) {
 }
 
 /**
- * Claim one lease: find-or-create the tunnel, converge its ingress and its
- * CNAME, read the connector token, then upsert the row. The row is written
- * once the account half exists, so a failed claim leaves no half-written
- * lease behind and the next attempt converges by name.
+ * Claim one lease: for the tunnel transports, find-or-create the tunnel,
+ * converge its ingress and its CNAME and read the connector token; for the
+ * bridge transport, converge nothing in the account. Either way the row is
+ * upserted afterwards, so a failed claim leaves no half-written lease behind
+ * and the next attempt converges by name.
  */
 export async function handleRelayClaim(request, env) {
   if (request.method !== 'PUT') return json({ ok: false, error: 'method-not-allowed' }, 405)
@@ -332,9 +348,14 @@ export async function handleRelayClaim(request, env) {
     return json({ ok: false, error: 'rate-limited' }, 429)
   }
 
+  // The row's own mode decides the whole account half of this claim, so it is
+  // read before anything is created: a bridged instance owns no Cloudflare
+  // object and must not be given one back on every claim.
+  const mode = relayModeOf(env, existing)
+
   let lease
   try {
-    lease = await convergeLease(api, id, port)
+    lease = mode === 'bridge' ? bridgedLease(id) : await convergeLease(api, id, port)
   } catch (error) {
     // The attempt still costs a window: a caller holding a valid secret must
     // not be able to loop upstream failures at the account API for free.
@@ -360,14 +381,19 @@ export async function handleRelayClaim(request, env) {
   } catch {
     return json({ ok: false, error: 'storage-unavailable' }, 503)
   }
+  // A bridged claim carries neither half of the tunnel contract: the caller
+  // reads the hostname and the bridge grant and must tolerate their absence,
+  // which is what keeps it from starting a connector with nothing to run.
+  const tunnelHalf = mode === 'bridge' ? {} : { tunnel: { id: lease.tunnelId, token: lease.token } }
+  const dnsHalf = mode === 'bridge' ? {} : { dns: { target: lease.target } }
   return json({
     // The row's own mode, so a flip reaches the plugin on its next claim
     // without a redeploy; the upsert above never writes the column, so a claim
     // cannot undo an operator's flip.
-    mode: relayModeOf(env, existing),
-    tunnel: { id: lease.tunnelId, token: lease.token },
+    mode,
+    ...tunnelHalf,
     hostname: lease.hostname,
-    dns: { target: lease.target },
+    ...dnsHalf,
     // Everything a bridge connector needs to dial and authenticate; nothing
     // secret travels here (see RELAY_BRIDGE_CREDENTIAL).
     bridge: {
@@ -397,7 +423,7 @@ async function authenticatedLease(env, id, secret) {
 /**
  * Release one lease: mark the row released and touch nothing in the account.
  * The tunnel and the CNAME stay, so re-enabling an instance is a claim that
- * creates nothing and only reads one token.
+ * creates nothing and only reads one token (a bridged lease reads nothing).
  */
 export async function handleRelayRelease(request, env) {
   if (request.method !== 'POST') return json({ ok: false, error: 'method-not-allowed' }, 405)

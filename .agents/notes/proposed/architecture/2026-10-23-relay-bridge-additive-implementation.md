@@ -11,7 +11,7 @@ This is the implementation record of the [relay transport v2 proposal](2026-10-2
 | `market/worker/migrations/0010_relay_lease_mode.sql` | `relay_leases.mode`, default `quick`; flipping one instance is one UPDATE |
 | `market/worker/src/relay-bridge.js` | `RelayBridge` (the object) and the `/api/relay/bridge` door (credential, windows, attach marker) |
 | `market/worker/src/relay.js` | `bridgeModeOf` and the data-plane split; the quick branch gains two lines at its end |
-| `market/worker/src/relay-control.js` | the claim reply carries that instance's `mode` and the bridge endpoint |
+| `market/worker/src/relay-control.js` | the claim reply carries that instance's `mode` and the bridge endpoint; a bridged claim converges no tunnel, ingress or CNAME and sends no Cloudflare call |
 | `market/worker/wrangler.jsonc` | the `RELAY_BRIDGE` namespace and the `v1` class migration tag |
 | `packages/dsh-remote-web-ui/src/relay-bridge-connector.ts` | the plugin connector, grown from `probe/relay-bridge/connector.mjs`, beside the quick connector |
 | `packages/dsh-remote-web-ui/src/relay-connector.ts` | starts the bridge after a claim, stops it on release and teardown |
@@ -36,6 +36,7 @@ This is the implementation record of the [relay transport v2 proposal](2026-10-2
 - A quick instance still rides `*.trycloudflare.com` and never touches an object (the existing suites stay green, and the proxy branch gains two lines).
 - A bridge instance is served by that instance's object, carries `x-relay-transport: bridge`, and never dials the quick tunnel.
 - With no socket the object answers `409 no-connector`, the Worker falls back to quick inside the same request, and the response carries `x-relay-fallback: no-connector`.
+- A bridged claim sends no Cloudflare call at all and answers no `tunnel` block, while a quick claim keeps its exact tunnel-plus-CNAME convergence order.
 - A lease table that cannot answer the mode keeps the instance on quick instead of answering 503.
 - A downstream request cannot present itself as a connector attach (the marker header is stripped on the proxy path).
 - The door: a plain request is 426, an unknown id and a wrong secret answer 403 alike, a spent window answers 429, and only then is the object named by id.

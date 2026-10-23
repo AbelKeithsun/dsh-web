@@ -239,7 +239,9 @@ export class RelayConnectorPair {
 
   private startNamed(claim: RelayClaim): void {
     const startNamed = this.options.startNamed
-    if (startNamed === undefined) return
+    // A bridged lease carries no tunnel: there is no token to run, and the
+    // transport is the bridge connector, so no second cloudflared starts.
+    if (startNamed === undefined || claim.tunnel === undefined) return
     try {
       startNamed(claim.tunnel.token, claim.hostname)
     } catch (error) {

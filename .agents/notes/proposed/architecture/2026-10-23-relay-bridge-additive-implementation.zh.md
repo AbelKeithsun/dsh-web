@@ -11,7 +11,7 @@ Status: proposed（已实现并有测试，尚未部署）
 | `market/worker/migrations/0010_relay_lease_mode.sql` | `relay_leases.mode`，缺省 `quick`，翻转一个实例就是一行 UPDATE |
 | `market/worker/src/relay-bridge.js` | `RelayBridge`（对象）与 `/api/relay/bridge` 的门（凭据校验、窗口限流、attach 标记） |
 | `market/worker/src/relay.js` | `bridgeModeOf` 与数据面分流；quick 分支只在末尾多了回退标记两行 |
-| `market/worker/src/relay-control.js` | claim 应答带该实例的 `mode` 与桥端点 |
+| `market/worker/src/relay-control.js` | claim 应答带该实例的 `mode` 与桥端点；bridge 模式的 claim 不收敛隧道、ingress 与 CNAME，一次 Cloudflare 调用都不发 |
 | `market/worker/wrangler.jsonc` | `RELAY_BRIDGE` 命名空间与 `v1` 类迁移标记 |
 | `packages/dsh-remote-web-ui/src/relay-bridge-connector.ts` | 插件侧连接器，从 `probe/relay-bridge/connector.mjs` 长出，与 quick 连接器并存 |
 | `packages/dsh-remote-web-ui/src/relay-connector.ts` | claim 成功后启动桥、释放与销毁时停止 |
@@ -36,6 +36,7 @@ Status: proposed（已实现并有测试，尚未部署）
 - quick 实例照旧走 `*.trycloudflare.com`，且一次也不碰对象（现有测试全绿 + 代理分支只多两行）。
 - bridge 实例由该实例的对象应答，响应带 `x-relay-transport: bridge`，quick 隧道一次也不拨。
 - 对象在无 socket 时回 `409 no-connector`，Worker 在同一次请求里退回 quick，并给响应打 `x-relay-fallback: no-connector`。
+- bridge 模式的 claim 一次 Cloudflare 调用都不发、应答里没有 `tunnel` 块；quick 的 claim 仍保持它原本的隧道加 CNAME 收敛顺序。
 - 租约表读不出 mode（迁移未上）时留在 quick，不 503。
 - 下游请求无法把自己伪装成连接器 attach（标记头在代理路径被剥掉）。
 - 桥的门：非升级 426、未知 id 与错误 secret 一律 403、窗口超限 429，通过后才按 id 命名对象。
