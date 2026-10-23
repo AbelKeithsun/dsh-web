@@ -67,6 +67,9 @@ export const DEFAULT_IDLE_EXPIRE_MS = 30 * 24 * 60 * 60 * 1000
 /** Cap on the persisted/displayed User-Agent string. */
 const MAX_USER_AGENT_CHARS = 180
 
+/** Cap on a user-defined device name. */
+const MAX_DEVICE_NAME_CHARS = 64
+
 /** One paired device session, keyed by the device id stored in its cookie. */
 export interface DeviceSession {
   /** Pairing time (ms epoch). */
@@ -75,6 +78,13 @@ export interface DeviceSession {
   lastSeenAt: number
   /** Sanitized User-Agent captured at accept (optional; missing on old files). */
   userAgent?: string
+  /**
+   * User-defined label shown instead of the User-Agent-derived name. Display
+   * metadata only: it is never read by an authorization decision, and a
+   * missing value keeps the derived-name fallback (optional; missing on old
+   * files).
+   */
+  name?: string
 }
 
 /** One device row in a loopback snapshot (ids are session credentials). */
@@ -89,6 +99,8 @@ export interface DeviceSnapshot {
   online: boolean
   /** Sanitized User-Agent captured at accept, when known. */
   userAgent?: string
+  /** User-defined label, when the operator renamed this device. */
+  name?: string
 }
 
 /** One tunnel status frame (auto-tunnel only; undefined when disabled). */
@@ -173,6 +185,15 @@ export interface PairingConfig {
 export type AcceptResult =
   | { ok: true; deviceId: string }
   | { ok: false; code: 'invalid' }
+
+/**
+ * Result of collapsing duplicate pairing records that one physical device
+ * minted by pairing repeatedly. `not-duplicates` is a refusal, not a
+ * no-op: the ids must name two or more live sessions sharing one User-Agent.
+ */
+export type MergeDevicesResult =
+  | { ok: true; deviceId: string }
+  | { ok: false; code: 'unknown-device' | 'not-duplicates' }
 
 /** Thrown by issue() for an address outside the sampled LAN literals. */
 export class UnknownLanAddressError extends Error {
@@ -266,17 +287,20 @@ export class PairingService {
       for (const [deviceId, session] of Object.entries(saved)) {
         if (typeof deviceId !== 'string') continue
         if (typeof session !== 'object' || session === null) continue
-        const { createdAt, lastSeenAt, userAgent } = session as {
+        const { createdAt, lastSeenAt, userAgent, name } = session as {
           createdAt?: unknown
           lastSeenAt?: unknown
           userAgent?: unknown
+          name?: unknown
         }
         if (typeof createdAt !== 'number' || typeof lastSeenAt !== 'number') continue
         const label = typeof userAgent === 'string' ? sanitizeUserAgent(userAgent) : undefined
+        const customName = typeof name === 'string' ? sanitizeDeviceName(name) : undefined
         this.devices.set(deviceId, {
           createdAt,
           lastSeenAt,
           ...(label !== undefined ? { userAgent: label } : {}),
+          ...(customName !== undefined ? { name: customName } : {}),
         })
       }
       if (this.evictIdle()) this.persistRevocation()
@@ -513,6 +537,81 @@ export class PairingService {
   }
 
   /**
+   * Set or clear one device's user-defined name. The label is display
+   * metadata only — the device id stays the sole credential — so renaming
+   * never widens or narrows what that cookie can reach. A blank name clears
+   * the label and restores the User-Agent-derived fallback.
+   * @param deviceId - the cookie value of the device to rename.
+   * @param name - the new label (cleared when blank after sanitizing).
+   * @returns true when a live session was renamed.
+   */
+  rename(deviceId: string, name: string): boolean {
+    const session = this.liveSession(deviceId)
+    if (session === undefined) return false
+    const cleaned = sanitizeDeviceName(name)
+    if (cleaned === undefined) delete session.name
+    else session.name = cleaned
+    this.persist()
+    this.notify()
+    return true
+  }
+
+  /**
+   * Collapse pairing records the operator identifies as one physical device:
+   * keep the most recently active session and revoke the rest, so repeated
+   * scans stop consuming `maxDevices` slots. The survivor keeps its own
+   * name when it has one; otherwise it adopts a name from the records being
+   * dropped, so collapsing never loses a label the operator typed.
+   *
+   * Pairing deliberately mints a session per accept (mobile cookie contexts
+   * split), so this is an explicit operator action rather than an automatic
+   * merge at accept: two different phones can present the same User-Agent,
+   * and silently dropping one session would revoke a credential the user
+   * never revoked.
+   * @param deviceIds - the records to collapse (two or more).
+   * @returns the surviving device id, or a refusal when the ids are not a
+   *   same-User-Agent group of live sessions.
+   */
+  mergeDuplicates(deviceIds: readonly string[]): MergeDevicesResult {
+    if (this.stopped) return { ok: false, code: 'unknown-device' }
+    const ids = [...new Set(deviceIds)]
+    if (ids.length < 2) return { ok: false, code: 'not-duplicates' }
+    const sessions: DeviceSession[] = []
+    for (const id of ids) {
+      const session = this.devices.get(id)
+      if (session === undefined) return { ok: false, code: 'unknown-device' }
+      sessions.push(session)
+    }
+    // One User-Agent is the whole duplicate-group definition the panel uses;
+    // refusing a mixed set keeps this from becoming a bulk-revoke shortcut
+    // for rows the operator never grouped together.
+    if (new Set(sessions.map(session => session.userAgent ?? '')).size !== 1) {
+      return { ok: false, code: 'not-duplicates' }
+    }
+    let keep = 0
+    for (let index = 1; index < ids.length; index += 1) {
+      const candidate = sessions[index]!
+      const current = sessions[keep]!
+      if (candidate.lastSeenAt > current.lastSeenAt
+        || (candidate.lastSeenAt === current.lastSeenAt && candidate.createdAt < current.createdAt)) {
+        keep = index
+      }
+    }
+    const survivor = sessions[keep]!
+    if (survivor.name === undefined) {
+      const inherited = sessions.find(session => session.name !== undefined)?.name
+      if (inherited !== undefined) survivor.name = inherited
+    }
+    const keptId = ids[keep]!
+    for (const id of ids) {
+      if (id !== keptId) this.devices.delete(id)
+    }
+    this.persistRevocation()
+    this.notify()
+    return { ok: true, deviceId: keptId }
+  }
+
+  /**
    * The api/gate path: record activity for a device id and report whether
    * the request may proceed. Unknown or revoked ids (including any device
    * after stop() or idle expiry) are refused.
@@ -629,6 +728,7 @@ export class PairingService {
       lastSeenAt: session.lastSeenAt,
       online: this.isOnlineAt(session, now),
       ...(session.userAgent !== undefined ? { userAgent: session.userAgent } : {}),
+      ...(session.name !== undefined ? { name: session.name } : {}),
     }
   }
 
@@ -686,6 +786,7 @@ function devicesEqual(a: readonly DeviceSnapshot[], b: readonly DeviceSnapshot[]
       && device.lastSeenAt === other.lastSeenAt
       && device.online === other.online
       && device.userAgent === other.userAgent
+      && device.name === other.name
   })
 }
 
@@ -765,7 +866,22 @@ export function canonicalBaseUrl(url: string): string {
 /** Strip control characters and cap the User-Agent stored with a session. */
 export function sanitizeUserAgent(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined
+  return sanitizeLabel(raw, MAX_USER_AGENT_CHARS)
+}
+
+/**
+ * Strip control characters and cap a user-defined device name. A blank result
+ * clears the label (undefined), restoring the User-Agent-derived fallback.
+ * @param raw - the operator's input.
+ * @returns the cleaned label, or undefined when nothing visible remains.
+ */
+export function sanitizeDeviceName(raw: string): string | undefined {
+  return sanitizeLabel(raw, MAX_DEVICE_NAME_CHARS)
+}
+
+/** Shared cleaner: collapse whitespace/control characters, cap, and blank-to-undefined. */
+function sanitizeLabel(raw: string, max: number): string | undefined {
   const cleaned = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim()
   if (cleaned === '') return undefined
-  return cleaned.length <= MAX_USER_AGENT_CHARS ? cleaned : cleaned.slice(0, MAX_USER_AGENT_CHARS)
+  return cleaned.length <= max ? cleaned : cleaned.slice(0, max)
 }

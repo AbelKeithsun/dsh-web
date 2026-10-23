@@ -472,6 +472,8 @@ export const PAIR_PATHS = {
   accept: '/api/pair/accept',
   stop: '/api/pair/stop',
   revoke: '/api/pair/revoke',
+  rename: '/api/pair/rename',
+  merge: '/api/pair/merge',
   heartbeat: '/api/pair/heartbeat',
   status: '/api/pair/status',
   events: '/api/pair/events',
@@ -509,6 +511,15 @@ export const acceptPayloadSchema = z.object({
 })
 export const revokePayloadSchema = z.object({
   deviceId: z.string().min(1),
+})
+export const renamePayloadSchema = z.object({
+  deviceId: z.string().min(1),
+  /** The new label; an empty/blank string clears it (UA-derived fallback). */
+  name: z.string(),
+})
+export const mergePayloadSchema = z.object({
+  /** Two or more pairing rows the operator grouped by User-Agent. */
+  deviceIds: z.array(z.string().min(1)).min(2).max(64),
 })
 export const pairActionPayloadSchema = z.object({}).passthrough()
 
@@ -961,6 +972,56 @@ export function makeRoutes(deps: PairRoutesDeps): WebRoute[] {
     writeJson(res, 200, { ok: true })
   }
 
+  /**
+   * Rename one paired device. Loopback-only like revoke: the name is display
+   * metadata, but the route still belongs to the desktop control plane (the
+   * roster itself is only ever streamed there).
+   */
+  const handleRename = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (!requireMethod(req, res, 'POST')) return
+    if (!loopbackFence(req)) {
+      writeJson(res, 403, { ok: false, code: 'forbidden' })
+      return
+    }
+    const body = await readJsonBody(req, { maxBytes: MAX_BODY_BYTES, objectOnly: true })
+    const payload = parsePairPayload(renamePayloadSchema, body)
+    if (payload === undefined) {
+      writeJson(res, 400, { ok: false, code: 'bad-payload' })
+      return
+    }
+    if (!service.rename(payload.deviceId, payload.name)) {
+      writeJson(res, 404, { ok: false, code: 'unknown-device' })
+      return
+    }
+    writeJson(res, 200, { ok: true })
+  }
+
+  /**
+   * Collapse duplicate pairing records the operator identified as one device.
+   * The service keeps the most recently active row and revokes the rest, so
+   * a merge frees `maxDevices` slots without the panel issuing several
+   * independent revokes. The ids must name a same-User-Agent group.
+   */
+  const handleMerge = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (!requireMethod(req, res, 'POST')) return
+    if (!loopbackFence(req)) {
+      writeJson(res, 403, { ok: false, code: 'forbidden' })
+      return
+    }
+    const body = await readJsonBody(req, { maxBytes: MAX_BODY_BYTES, objectOnly: true })
+    const payload = parsePairPayload(mergePayloadSchema, body)
+    if (payload === undefined) {
+      writeJson(res, 400, { ok: false, code: 'bad-payload' })
+      return
+    }
+    const merged = service.mergeDuplicates(payload.deviceIds)
+    if (!merged.ok) {
+      writeJson(res, merged.code === 'unknown-device' ? 404 : 409, { ok: false, code: merged.code })
+      return
+    }
+    writeJson(res, 200, { ok: true, deviceId: merged.deviceId })
+  }
+
   const handleHeartbeat = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (!requireMethod(req, res, 'POST')) return
     if (!lanFence(req)) {
@@ -1227,6 +1288,8 @@ export function makeRoutes(deps: PairRoutesDeps): WebRoute[] {
     { kind: 'exact', path: PAIR_PATHS.accept, handler: handleAccept },
     { kind: 'exact', path: PAIR_PATHS.stop, handler: handleStop },
     { kind: 'exact', path: PAIR_PATHS.revoke, handler: handleRevoke },
+    { kind: 'exact', path: PAIR_PATHS.rename, handler: handleRename },
+    { kind: 'exact', path: PAIR_PATHS.merge, handler: handleMerge },
     { kind: 'exact', path: PAIR_PATHS.heartbeat, handler: handleHeartbeat },
     { kind: 'exact', path: PAIR_PATHS.status, handler: handleStatus },
     { kind: 'exact', path: PAIR_PATHS.events, handler: handleEvents },

@@ -18,6 +18,14 @@ function makeService(overrides: Partial<PairingConfig> = {}) {
   return service
 }
 
+/** Pair one device with a User-Agent and return its session id. */
+function pairWith(service: PairingService, userAgent?: string): string {
+  const { token } = service.issue()
+  const result = service.accept(token, userAgent)
+  if (!result.ok) throw new Error(`pair failed: ${result.code}`)
+  return result.deviceId
+}
+
 let now = 0
 beforeEach0()
 
@@ -311,5 +319,88 @@ describe('PairingService', () => {
     const [device] = service.snapshot().devices
     expect(device).toMatchObject({ online: true, userAgent: 'Mozilla/5.0 Phone' })
     expect(device?.id).toMatch(/^tok-/)
+  })
+
+  it('operator names a device, sees the sanitized label, and clears it with a blank name', () => {
+    // Given a paired device.
+    const service = makeService()
+    const deviceId = pairWith(service, 'Mozilla/5.0 Phone')
+    // When the operator submits a name carrying control characters and padding...
+    expect(service.rename(deviceId, '  My   phone\u0000 ')).toBe(true)
+    // Then the snapshot carries the cleaned, capped label.
+    expect(service.snapshot().devices[0]).toMatchObject({ name: 'My phone' })
+    expect(service.rename(deviceId, 'x'.repeat(80))).toBe(true)
+    expect(service.snapshot().devices[0]?.name).toHaveLength(64)
+    // When a blank name is submitted, the label clears back to the UA fallback.
+    expect(service.rename(deviceId, '   ')).toBe(true)
+    expect(service.snapshot().devices[0]?.name).toBeUndefined()
+    expect(service.rename('missing', 'nope')).toBe(false)
+  })
+
+  it('operator sees a rename broadcast immediately and survive a sweep', () => {
+    // Given a paired device and a subscribed status stream.
+    const service = makeService()
+    const deviceId = pairWith(service, 'Mozilla/5.0 Phone')
+    const labels: (string | undefined)[] = []
+    service.onState(snapshot => { labels.push(snapshot.devices[0]?.name) })
+    // When the operator renames the device.
+    expect(service.rename(deviceId, 'Desk phone')).toBe(true)
+    // Then the label arrives on one immediate frame; a sweep adds nothing.
+    service.sweep()
+    expect(labels).toEqual(['Desk phone'])
+  })
+
+  it('operator cannot rename after stop (no live sessions remain)', () => {
+    // Given a paired device.
+    const service = makeService()
+    const deviceId = pairWith(service, 'Mozilla/5.0 Phone')
+    // When remote access stops and the operator tries to rename it...
+    service.stop()
+    // Then the rename is refused because the session is gone.
+    expect(service.rename(deviceId, 'nope')).toBe(false)
+  })
+
+  it('operator merges same-User-Agent duplicates into the most recently active row', () => {
+    // Given two pairing rows carrying the same User-Agent.
+    const service = makeService({ maxDevices: 4 })
+    const older = pairWith(service, 'Mozilla/5.0 Android Chrome')
+    now += 1_000
+    const newer = pairWith(service, 'Mozilla/5.0 Android Chrome')
+    // When one row is active more recently and the operator merges the group...
+    now += 1_000
+    expect(service.touchDevice(older)).toBe(true)
+    // Then activity, not pairing time, decides the survivor and frees the slot.
+    expect(service.mergeDuplicates([older, newer])).toEqual({ ok: true, deviceId: older })
+    expect(service.hasDevice(older)).toBe(true)
+    expect(service.hasDevice(newer)).toBe(false)
+    expect(service.snapshot().deviceCount).toBe(1)
+  })
+
+  it('operator cannot merge across different User-Agents or unknown ids', () => {
+    // Given two rows from genuinely different clients.
+    const service = makeService({ maxDevices: 4 })
+    const first = pairWith(service, 'UA-A')
+    const second = pairWith(service, 'UA-B')
+    // When a merge is attempted...
+    // Then it is refused, so the route can never become a bulk revoke.
+    expect(service.mergeDuplicates([first, second])).toEqual({ ok: false, code: 'not-duplicates' })
+    expect(service.hasDevice(first)).toBe(true)
+    expect(service.hasDevice(second)).toBe(true)
+    expect(service.mergeDuplicates([first])).toEqual({ ok: false, code: 'not-duplicates' })
+    expect(service.mergeDuplicates([first, 'missing'])).toEqual({ ok: false, code: 'unknown-device' })
+  })
+
+  it('operator keeps a name typed on the duplicate a merge drops', () => {
+    // Given two same-User-Agent rows where the dropped one is named.
+    const service = makeService({ maxDevices: 4 })
+    const survivor = pairWith(service, 'Mozilla/5.0 Android Chrome')
+    const dropped = pairWith(service, 'Mozilla/5.0 Android Chrome')
+    expect(service.rename(dropped, 'My phone')).toBe(true)
+    // When the survivor is the active row and the operator merges them...
+    now += 1_000
+    expect(service.touchDevice(survivor)).toBe(true)
+    // Then the survivor inherits the typed name instead of losing it.
+    expect(service.mergeDuplicates([survivor, dropped])).toEqual({ ok: true, deviceId: survivor })
+    expect(service.snapshot().devices[0]?.name).toBe('My phone')
   })
 })
