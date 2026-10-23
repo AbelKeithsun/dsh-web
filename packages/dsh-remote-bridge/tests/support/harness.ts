@@ -22,6 +22,7 @@ import { SessionPermissions } from '../../src/core/session-permissions.ts'
 import type { LiveActivityNotifier } from '../../src/core/liveactivity.ts'
 import type { PushNotifier } from '../../src/core/push.ts'
 import type { SquadTransport } from '../../src/core/squads.ts'
+import { UsageService, type UsageFaces } from '../../src/core/usage.ts'
 import type { BridgeGateway, GatewayInvokeRequest, GatewayPeer } from '../../src/core/wire.ts'
 
 /** One frame as it crossed the wire. */
@@ -270,6 +271,8 @@ export interface HarnessOptions {
   readonly permissions?: SessionPermissions
   /** Job registry source; the default models a host with no job plugin mounted. */
   readonly jobs?: JobRegistryFace
+  /** 用量读数源；默认是一个宿主服务一个都没挂载、也从未观察过任何会话的服务。 */
+  readonly usage?: UsageService
   /** Coalescing window of the job roster; the default is the production one. */
   readonly jobsFlushMs?: number
   readonly heartbeatMs?: number
@@ -328,6 +331,17 @@ export function titlesDouble(table: Record<string, string>, live: readonly strin
   }
 }
 
+/**
+ * 用量服务一个 harness 挂的那一份。
+ *
+ * 没挂任何宿主服务、也没观察过任何会话：`usage.session` 因此只会对活会话存储
+ * 里有的会话作答，`usage.balance` 只会回 `no-credential`。需要别的读数的套件
+ * 自己构造一份传进来。
+ */
+export function usageOf(options: HarnessOptions, log: (message: string) => void, faces: () => UsageFaces = () => ({})): UsageService {
+  return options.usage ?? new UsageService({ faces, now: () => Date.now(), log })
+}
+
 /** The job roster one harness mounts, over the registry the caller supplied (or none). */
 function jobsOf(options: HarnessOptions, log: (message: string) => void): JobRoster {
   const registry = options.jobs
@@ -365,6 +379,7 @@ export function makeConnection(options: HarnessOptions = {}): ConnectionHarness 
     sessionMeta: metaOf(options, message => { logs.push(message) }),
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
     jobs: jobsOf(options, message => { logs.push(message) }),
+    usage: usageOf(options, message => { logs.push(message) }),
     ownerPeer,
     ...(options.squads === undefined ? {} : { squads: options.squads }),
     ...(options.push === undefined ? {} : { push: options.push }),
@@ -472,6 +487,7 @@ export function makeBareHub(options: HarnessOptions = {}): BareHubHarness {
     sessionMeta: metaOf(options, message => { logs.push(message) }),
     permissions: options.permissions ?? new SessionPermissions(() => ({}), message => { logs.push(message) }),
     jobs: jobsOf(options, message => { logs.push(message) }),
+    usage: usageOf(options, message => { logs.push(message) }),
     ownerPeer,
     ...(options.squads === undefined ? {} : { squads: options.squads }),
     ...(options.push === undefined ? {} : { push: options.push }),

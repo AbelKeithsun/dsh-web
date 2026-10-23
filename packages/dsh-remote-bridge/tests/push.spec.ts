@@ -507,7 +507,7 @@ describe('push channel: the payload carries no session content', () => {
     // Given the handshake a client of this channel reads
     // When it reads the minor and the capability name
     // Then both are the published ones
-    expect(MINOR).toBe(18)
+    expect(MINOR).toBe(19)
     expect(CAP_PUSH).toBe('push.v1')
   })
 })

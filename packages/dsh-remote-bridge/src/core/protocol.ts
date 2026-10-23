@@ -41,6 +41,8 @@ export const METHOD_SQUADS_RUNS = 'squads.runs'
 export const METHOD_SQUADS_RUN_MEMBER = 'squads.runMember'
 export const METHOD_SQUADS_RUN_SQUAD = 'squads.runSquad'
 export const METHOD_PUSH_REGISTER = 'push.register'
+export const METHOD_USAGE_SESSION = 'usage.session'
+export const METHOD_USAGE_BALANCE = 'usage.balance'
 
 /** Server-pushed topics of protocol v1. */
 export const TOPIC_SESSION_DELTA = 'session.delta'
@@ -214,6 +216,22 @@ export const CAP_SQUADS = 'squads.v1'
  * protocol's §28).
  */
 export const CAP_PUSH = 'push.v1'
+
+/**
+ * 客户端在 `hello` 的 `cap` 数组里宣告它要读本桥自己的用量读数。
+ *
+ * 宣告它是 `usage.session` 与 `usage.balance` 进入这个客户端协议的唯一前提：
+ * 不宣告的客户端——包括这个通道出现之前写下的每一个客户端——收到的是与从前
+ * 逐字一样的 `unknown-method`，本桥也不会替它读一条会话、更不会替它打一次
+ * 上游余额端点。
+ *
+ * 一个能力名带两个方法，因为它们读的是同一件事的两面：一条会话下一次请求由
+ * 什么组成（上下文窗口取宿主自己广播的值，组成由本桥按文本长度估算并恒标
+ * `estimated: true`），以及某条 provider 路由背后账户的余额（DeepSeek 官方
+ * 口径，只在路由确实指向 `api.deepseek.com` 且凭据拿得到时才查官方端点，宿主
+ * 侧同一 provider + 凭据 60 秒最多一次上游请求）。
+ */
+export const CAP_USAGE = 'usage.v1'
 
 /**
  * Capability a client declares in `hello`'s `cap` array to be answered with
@@ -413,12 +431,20 @@ export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   METHOD_SQUADS_RUN_MEMBER,
   METHOD_SQUADS_RUN_SQUAD,
   METHOD_PUSH_REGISTER,
+  METHOD_USAGE_SESSION,
+  METHOD_USAGE_BALANCE,
 ])
 
 /** Refusal codes the bridge itself raises (DSH failures cross as their own code). */
 export const CODE_UNPAIRED = 'unpaired'
 export const CODE_UNKNOWN_METHOD = 'unknown-method'
 export const CODE_INVALID_ARGS = 'invalid-args'
+/**
+ * `usage.session` 点名的会话在这个宿主上不存在：活会话存储里没有它，本进程
+ * 也从未观察过它的任何事件。它与「会话存在但两项读数都取不到」是两个答案，
+ * 后者回的是空对象——一条刚刚开始、还什么都没广播的会话就在那个状态里。
+ */
+export const CODE_UNKNOWN_SESSION = 'unknown-session'
 export const CODE_PROTO_UNSUPPORTED = 'proto-unsupported'
 export const CODE_TOKEN_INVALID = 'token-invalid'
 export const CODE_NONCE_INVALID = 'nonce-invalid'
@@ -484,6 +510,13 @@ export const PROTO = 1
 /**
  * Minor version this package speaks.
  *
+ * 19 when the usage channel shipped: behind {@link CAP_USAGE} a client may call
+ * {@link METHOD_USAGE_SESSION} and read one session's context window and its
+ * request's estimated composition, and {@link METHOD_USAGE_BALANCE} and read the
+ * account behind one provider route, so it reads two new reply bodies off the
+ * wire and has to read the name before it asks — a bridge below this one answers
+ * `unknown-method` for both. No frame, no topic and no existing method changes
+ * shape.
  * 18 when one card learned to lay out several sessions (§30 of
  * `docs/protocol-v1.md` in the iphone_remote_use_dsh repository): `content-state`
  * gains the optional `rows` key, so a phone reads up to three sessions off one
@@ -570,7 +603,7 @@ export const PROTO = 1
  * declares the capability that plugin requires. No addition changed the major
  * version, a frozen field, or an existing method or topic name.
  */
-export const MINOR = 18
+export const MINOR = 19
 
 /**
  * The capabilities this bridge itself serves, as `hello` advertises them.
@@ -599,6 +632,7 @@ export const SERVED_CAPABILITIES: readonly string[] = [
   CAP_SESSION_ADMIN,
   CAP_SQUADS,
   CAP_PUSH,
+  CAP_USAGE,
 ]
 /** `server` field of the hello response. */
 export const SERVER_ID = 'dsh-remote-bridge'

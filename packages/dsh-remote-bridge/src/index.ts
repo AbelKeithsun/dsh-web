@@ -49,6 +49,7 @@ import { QuestionClaims } from './core/questions.ts'
 import { WS_PATH } from './core/protocol.ts'
 import { SessionMeta, type SessionStoreFace, type SessionTitleFace, type WorkspacesFace } from './core/session-meta.ts'
 import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
+import { UsageService, type CredentialStoreFace, type SettingsFace } from './core/usage.ts'
 import { dshHome } from './host/dsh-home.ts'
 import { ApnsSender, apnsConfigFromEnv } from './host/apns.ts'
 import { StandingWatchers } from './host/watchers.ts'
@@ -144,6 +145,25 @@ function sessionMetaFaces(ctx: Context) {
 }
 
 /**
+ * 解析 `usage.v1` 要读的宿主服务，现在就解析一次。
+ *
+ * 与元数据的三个 face 同一条理由：三者都不在本插件的 `inject` 里，缺一个不该
+ * 让整个桥起不来。缺活会话存储，`usage.session` 就只能靠本进程观察过的事件
+ * 判断会话是否存在；缺凭据服务，`usage.balance` 回 `no-credential`；缺设置
+ * 服务，路由的 `baseURL` 与 `apiKeyEnv` 读不到，origin 判定与凭据回退都退回
+ * 官方默认值。face 是结构化的：本包不导入这些服务自己的类型。
+ * @param ctx - 插件的上下文。
+ * @returns 这些 face 此刻的样子。
+ */
+function usageFaces(ctx: Context) {
+  return {
+    sessions: ctx.get('sessions') as SessionStoreFace | undefined,
+    credentials: ctx.get('credentials') as CredentialStoreFace | undefined,
+    settings: ctx.get('settings') as SettingsFace | undefined,
+  }
+}
+
+/**
  * Resolve the host services permission presets are read and switched through, now.
  *
  * Read per call, never captured at mount, for the reason the metadata faces are:
@@ -206,6 +226,10 @@ function applyImpl(ctx: Context): void {
   // about the host, not about the device that asked about it.
   const jobs = new JobRoster({ faces: () => jobFaces(ctx), log })
   const sessionMeta = new SessionMeta(() => sessionMetaFaces(ctx), () => Date.now(), log)
+  // 用量读数：一条会话的窗口与组成靠宿主广播的事件折出来，余额靠宿主自己的
+  // 凭据与设置查出来。一个宿主一份、所有连接共享——两台手机重复问，上游也只
+  // 该收到一次请求（core/usage.ts）。
+  const usage = new UsageService({ faces: () => usageFaces(ctx), now: () => Date.now(), log })
   // The push channel is OFF unless this machine holds an Apple signing key: no
   // key, no sender, and every notification path is a no-op — which is what keeps
   // the protocol byte-identical for every deployment that has none (§28).
@@ -301,6 +325,7 @@ function applyImpl(ctx: Context): void {
     questions,
     jobs,
     sessionMeta,
+    usage,
     permissions,
     ownerPeer,
     squads,
@@ -342,6 +367,9 @@ function applyImpl(ctx: Context): void {
     }
   }, 'remote-bridge: protocol v1 routes')
 
+  // 会话事件是 `usage.session` 唯一的来源：桥不读会话日志、也不回填历史，所以
+  // 这个监听器挂上之前广播的事件不会有读数，宿主没广播过的窗口也不会被编出来。
+  ctx.on('session/event', (session, event) => { usage.record(session.id, event) })
   ctx.on('approval/request', (request, next) => hub.approve(request, next))
   // Prepended: the host's waterfall is first-come, and the desktop client's own
   // answerer would otherwise claim every question before this listener is

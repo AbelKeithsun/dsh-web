@@ -1,0 +1,653 @@
+/**
+ * `usage.v1` 的两个读数：一条会话下一次请求由什么组成，以及某个 provider
+ * 路由背后账户的余额。
+ *
+ * 两半都是「本进程自己的事实」，所以谁都不去打断会话，也不落盘：
+ *
+ * - 会话那一半折的是宿主经 `session/event` 广播给本进程的事件。上下文窗口
+ *   只有宿主真正广播过才有（最近一次 `request/context` 的 `contextWindow`），
+ *   组成由本桥按文本长度折算，因此 `composition` 恒带 `estimated: true`：它是
+ *   估算，永不冒充宿主读数。
+ * - 余额那一半只在路由确实指向官方 origin、且凭据确实拿得到时才发一次上游
+ *   请求。同一 provider + 凭据在 {@link BALANCE_CACHE_TTL_MS} 内最多一次，
+ *   并发调用合并成一次；401、超时与形状不符都回 `probe-failed`，绝不把上一
+ *   次的旧值当成新值发出去。
+ *
+ * 宿主服务一律走结构化 face：一个服务没挂载就少一档读数，而不是让整条方法
+ * 失败（`session-meta.ts` 与 `wire.ts` 都是同一套理由）。
+ * @module dsh-remote-bridge/core/usage
+ */
+
+import { failureText } from './gateway-errors.ts'
+import { METHOD_USAGE_BALANCE, METHOD_USAGE_SESSION } from './protocol.ts'
+import type { SessionStoreFace } from './session-meta.ts'
+
+/** `usage.v1` 背后的两个方法：能力门按这一张表判定。 */
+export const USAGE_METHODS: ReadonlySet<string> = new Set([METHOD_USAGE_SESSION, METHOD_USAGE_BALANCE])
+
+/** 折算分母：一份 token 约合四个 UTF-8 字节。 */
+export const BYTES_PER_TOKEN = 4
+
+/** 会话折叠最多记住多少条会话，超出时丢最早的一条。 */
+export const USAGE_SESSIONS_MAX = 512
+
+/** 同一个 provider + 凭据在这个窗口内最多打一次上游。 */
+export const BALANCE_CACHE_TTL_MS = 60_000
+
+/** 一次上游探测的超时；超时与 401 一样是 `probe-failed`。 */
+export const BALANCE_PROBE_TIMEOUT_MS = 10_000
+
+/** 余额缓存最多记住多少个 provider + 凭据组合。 */
+export const BALANCE_CACHE_LIMIT = 64
+
+/**
+ * 官方 DeepSeek 的 API origin。
+ *
+ * 余额端点是按 origin 记账的：只有确实发往这里的路由才查得到官方账户的钱。
+ */
+export const DEEPSEEK_API_ORIGIN = 'https://api.deepseek.com'
+
+/** 官方余额端点；金额单位为元，形如 `balance_infos:[{currency,total_balance,...}]`。 */
+const DEEPSEEK_BALANCE_URL = `${DEEPSEEK_API_ORIGIN}/user/balance`
+
+/** 官方余额适配认的 provider 路由 id，与 dsh-usage 的 deepseek adapter 同一份名单。 */
+const DEEPSEEK_ROUTES: ReadonlySet<string> = new Set(['deepseek', 'deepseek-official'])
+
+/** pi-ai 凭据记录的 scope：一条记录以 `<scope>/<id>` 寻址。 */
+const PI_AI_CREDENTIAL_SCOPE = 'llm-pi-ai'
+
+/** pi-ai 适配器的设置命名空间。 */
+const PI_AI_SETTINGS_NS = 'llm-pi-ai'
+
+/** 官方 DeepSeek 适配器的设置命名空间。 */
+const DEEPSEEK_SETTINGS_NS = 'llm-deepseek'
+
+/** 官方适配器没配 `apiKeyEnv` 时读的环境变量名。 */
+const DEEPSEEK_API_KEY_ENV = 'DEEPSEEK_API_KEY'
+
+/** UTF-8 编码器：宿主与浏览器两侧都是同一个实现，所以长度口径处处一致。 */
+const encoder = new TextEncoder()
+
+/** 一条会话事件里本模块读到的字段；结构化读取，不导入 SDK 的事件类型。 */
+export interface UsageEventLike {
+  readonly type: string
+  readonly data?: unknown
+}
+
+/** 一条会话下一次请求的组成估算，单位 token，三格各自向下取整。 */
+export interface UsageComposition {
+  /** system 消息文本折算出来的分量。 */
+  readonly system: number
+  /** 最近一次 `request/header` 的 tools schema 原文折算出来的分量。 */
+  readonly tools: number
+  /** 会话里已观察到的消息文本折算出来的分量。 */
+  readonly messages: number
+  /** 恒为 true：这是本桥的估算，宿主从未广播过这个数字。 */
+  readonly estimated: true
+}
+
+/** `usage.session` 的应答体；两项都取不到时是空对象。 */
+export interface UsageSessionAnswer {
+  /** 宿主广播过的上下文窗口；没广播过就没有这个键。 */
+  readonly contextWindow?: number
+  /** 组成估算；一项都没观察到时没有这个键。 */
+  readonly composition?: UsageComposition
+}
+
+/** `usage.balance` 支持不到的情况。 */
+export type UsageUnsupported = 'no-credential' | 'not-deepseek-route' | 'probe-failed'
+
+/** `usage.balance` 的应答体：要么是一次成功读数的四个金额，要么是为什么读不到。 */
+export type UsageBalanceAnswer =
+  | {
+    readonly provider: string
+    readonly currency: string
+    readonly total: number
+    readonly toppedUp: number
+    readonly granted: number
+    readonly updatedAt: number
+  }
+  | {
+    readonly provider: string
+    readonly unsupported: UsageUnsupported
+    readonly reason?: string
+  }
+
+/** 一次成功读数里除 provider 与时间戳以外的四个字段。 */
+interface ParsedBalance {
+  readonly currency: string
+  readonly total: number
+  readonly toppedUp: number
+  readonly granted: number
+}
+
+/** 一条会话在本进程里攒下的读数。 */
+interface SessionFacts {
+  /** 最近一次 `request/context` 广播的上下文窗口。 */
+  contextWindow?: number
+  /** 最近一次 `request/header` 的 tools schema 原文长度；undefined 表示还没广播过。 */
+  toolsBytes?: number
+  /** 最近一条 system 消息文本的长度；undefined 表示还没广播过。 */
+  systemBytes?: number
+  /** 已观察到的消息文本累计长度。 */
+  messagesBytes: number
+  /** 是否已经观察过任何一条消息事件。 */
+  sawMessages: boolean
+}
+
+/**
+ * 会话事件的折叠：一条会话最近一次广播过的上下文窗口，以及它的组成原文长度。
+ *
+ * 只在事件里出现过的会话才有记录，所以「宿主没广播过」与「值恰好是 0」是
+ * 两件不同的事，应答里也就不会把没观察到的分量当成读数发出去。
+ */
+export class UsageTracker {
+  readonly #limit: number
+  readonly #facts = new Map<string, SessionFacts>()
+
+  /**
+   * @param limit - 最多记住多少条会话；默认 {@link USAGE_SESSIONS_MAX}。
+   */
+  constructor(limit = USAGE_SESSIONS_MAX) {
+    this.#limit = limit
+  }
+
+  /**
+   * 折进一条会话事件。
+   *
+   * 只认四类会改变读数的原文：`request/context` 的窗口、`request/header` 的
+   * tools schema、`system/message` 的 system 文本，以及 `user/message`、
+   * `assistant/message` 与 `tool/result` 的消息文本。其余事件一概不落记录，
+   * 所以一条只跑工具事件的会话不会凭空长出一条组成。
+   * @param sessionId - 事件所属会话。
+   * @param event - 宿主广播的事件。
+   */
+  record(sessionId: string, event: UsageEventLike): void {
+    if (sessionId === '' || typeof event?.type !== 'string') return
+    const data = event.data
+    switch (event.type) {
+      case 'request/context': {
+        const window = contextWindowOf(data)
+        if (window === undefined) return
+        this.#factsFor(sessionId).contextWindow = window
+        return
+      }
+      case 'request/header': {
+        // header 到了就算观察过：一条不带 tools 的 header 是「这次请求没有
+        // 工具」，tools 分量因此是真实的 0，而不是没观察到。
+        const header = isRecord(data) ? data.header : undefined
+        if (!isRecord(header)) return
+        const tools = header.tools ?? []
+        this.#factsFor(sessionId).toolsBytes = utf8Bytes(JSON.stringify(tools) ?? '')
+        return
+      }
+      case 'system/message': {
+        // system 提示词是派生历史：最近一条 system 消息就是当前的提示词，
+        // 早先那条被替换掉的文本不该再算一遍。
+        this.#factsFor(sessionId).systemBytes = utf8Bytes(messageText(messageOf(data)))
+        return
+      }
+      case 'user/message':
+      case 'assistant/message':
+      case 'tool/result': {
+        const facts = this.#factsFor(sessionId)
+        facts.messagesBytes += utf8Bytes(messageText(messageOf(data)))
+        facts.sawMessages = true
+        return
+      }
+      default: return
+    }
+  }
+
+  /**
+   * 本进程是否观察过这条会话。
+   * @param sessionId - 会话 id。
+   * @returns 观察到过任何一条相关事件时为 true。
+   */
+  known(sessionId: string): boolean {
+    return this.#facts.has(sessionId)
+  }
+
+  /**
+   * 一条会话的读数，两项都取不到时是空对象。
+   *
+   * 空对象而不是 0：一个还没广播过窗口、也没观察到任何原文的会话，本桥对
+   * 它的组成一无所知，编一个 0 会把「不知道」说成「没有内容」。
+   * @param sessionId - 会话 id。
+   * @returns 应答体，字段按观察到的部分给出。
+   */
+  answer(sessionId: string): UsageSessionAnswer {
+    const facts = this.#facts.get(sessionId)
+    const composition = facts === undefined ? undefined : compositionOf(facts)
+    if (facts?.contextWindow === undefined && composition === undefined) return {}
+    return {
+      ...(facts?.contextWindow === undefined ? {} : { contextWindow: facts.contextWindow }),
+      ...(composition === undefined ? {} : { composition }),
+    }
+  }
+
+  /** 取（必要时新建）一条会话的记录，并维持容量上界。 */
+  #factsFor(sessionId: string): SessionFacts {
+    const existing = this.#facts.get(sessionId)
+    if (existing !== undefined) return existing
+    const fresh: SessionFacts = { messagesBytes: 0, sawMessages: false }
+    this.#facts.set(sessionId, fresh)
+    while (this.#facts.size > this.#limit) {
+      const oldest = this.#facts.keys().next()
+      if (oldest.done === true) break
+      this.#facts.delete(oldest.value)
+    }
+    return fresh
+  }
+}
+
+/** 凭据服务的一角：pi-ai 记录与外部引用。 */
+export interface CredentialStoreFace {
+  readRecord(key: string): Promise<{ readonly kind?: string; readonly key?: string } | undefined>
+  resolve(ref: string): Promise<{ readonly value?: string } | undefined>
+}
+
+/** 设置服务的一角：按命名空间读一段解析后的配置。 */
+export interface SettingsFace {
+  get?(ns: string): unknown
+  describe?(options?: unknown): readonly { readonly ns?: string; readonly value?: unknown }[]
+}
+
+/** 本模块要读的宿主服务；每一个都可能不存在。 */
+export interface UsageFaces {
+  /** 活会话的存储：`usage.session` 靠它区分「不存在」与「存在但没读数」。 */
+  readonly sessions?: SessionStoreFace | undefined
+  /** 凭据服务：余额探测的密钥来源。 */
+  readonly credentials?: CredentialStoreFace | undefined
+  /** 设置服务：路由的 `apiKeyEnv` 与 `baseURL` 来源。 */
+  readonly settings?: SettingsFace | undefined
+}
+
+/** 上游探测用的 fetch 一角。 */
+export type FetchFace = (
+  url: string,
+  init?: { readonly headers?: Record<string, string>; readonly signal?: AbortSignal },
+) => Promise<{ readonly ok: boolean; readonly status: number; json(): Promise<unknown> }>
+
+/** 构造 {@link UsageService} 的全部输入。 */
+export interface UsageServiceOptions {
+  /** 每读一次宿主服务都重新解析一次，晚挂载的服务因此也能被读到。 */
+  readonly faces: () => UsageFaces
+  /** 缓存窗口与 `updatedAt` 读的时钟。 */
+  readonly now: () => number
+  /** 读不到宿主服务时的落点。 */
+  readonly log: (message: string) => void
+  /** 上游探测；默认用本进程的 `fetch`。 */
+  readonly fetch?: FetchFace
+  /** 余额缓存窗口；默认 {@link BALANCE_CACHE_TTL_MS}。 */
+  readonly ttlMs?: number
+  /** 一次探测的超时；默认 {@link BALANCE_PROBE_TIMEOUT_MS}。 */
+  readonly timeoutMs?: number
+}
+
+/**
+ * `usage.v1` 的两条方法背后的读服务，一个宿主一份、所有连接共享。
+ *
+ * 会话读数是宿主的事实而不是某个设备的事实，余额是账户的事实，所以两半都
+ * 挂在宿主侧：一部手机重复问、两台手机同时问，都不该让上游多收一个请求。
+ */
+export class UsageService {
+  readonly #options: UsageServiceOptions
+  readonly #tracker = new UsageTracker()
+  readonly #cache = new Map<string, { readonly at: number; readonly answer: UsageBalanceAnswer }>()
+  readonly #inFlight = new Map<string, Promise<UsageBalanceAnswer>>()
+
+  /**
+   * @param options - 宿主服务的解析函数、时钟与上游探测。
+   */
+  constructor(options: UsageServiceOptions) {
+    this.#options = options
+  }
+
+  /**
+   * 折进一条宿主广播的会话事件。
+   *
+   * 没广播过的事件不会出现在任何应答里：本模块不读会话日志，也不回填历史，
+   * 所以一条在桥挂载前就结束的会话只有活会话存储能证明它存在。
+   * @param sessionId - 事件所属会话。
+   * @param event - 事件本身。
+   */
+  record(sessionId: string, event: UsageEventLike): void {
+    this.#tracker.record(sessionId, event)
+  }
+
+  /**
+   * 一条会话的上下文窗口与组成估算。
+   *
+   * 「不存在」与「存在但两项都取不到」是两个答案：活会话存储里有它，或者本
+   * 进程观察过它的事件，都算存在（后者是这次应答唯一的信息来源），否则回
+   * undefined，由调用方翻译成协议自己的 `unknown-session`。
+   * @param sessionId - 会话 id。
+   * @returns 应答体，或者 undefined 表示这条会话不存在。
+   */
+  session(sessionId: string): UsageSessionAnswer | undefined {
+    if (!this.#live(sessionId) && !this.#tracker.known(sessionId)) return undefined
+    return this.#tracker.answer(sessionId)
+  }
+
+  /**
+   * 一条 provider 路由背后账户的余额，DeepSeek 官方口径。
+   *
+   * 判定的顺序就是省下上游请求的顺序：不是官方路由的 id 不查，指向别的
+   * origin 的路由不查，拿不到凭据不查；只有三关都过了才谈得上缓存与探测。
+   * @param provider - 客户端给的 provider 路由 id。
+   * @returns 余额，或者为什么读不到。
+   */
+  async balance(provider: string): Promise<UsageBalanceAnswer> {
+    if (!DEEPSEEK_ROUTES.has(provider)) return { provider, unsupported: 'not-deepseek-route' }
+    const faces = this.#faces()
+    if (!officialRoute(provider, faces.settings)) return { provider, unsupported: 'not-deepseek-route' }
+    const credential = await this.#credentialOf(provider, faces)
+    if (credential === undefined) return { provider, unsupported: 'no-credential' }
+    // 缓存键带上凭据指纹：换一把 key 就是另一个账户，不能被上一把的读数冒充。
+    const cacheKey = `${provider}\u0000${fingerprint(credential)}`
+    const cached = this.#cache.get(cacheKey)
+    if (cached !== undefined && this.#options.now() - cached.at < this.#ttl()) return cached.answer
+    const running = this.#inFlight.get(cacheKey)
+    if (running !== undefined) return await running
+    const settle = (answer: UsageBalanceAnswer): UsageBalanceAnswer => {
+      this.#remember(cacheKey, answer)
+      this.#inFlight.delete(cacheKey)
+      return answer
+    }
+    const probe = this.#probe(provider, credential)
+      .then(settle, (error: unknown) => settle({ provider, unsupported: 'probe-failed', reason: failureText(error) }))
+    this.#inFlight.set(cacheKey, probe)
+    return await probe
+  }
+
+  /** 宿主服务的一次解析；解析本身抛错按「什么都没挂载」处理。 */
+  #faces(): UsageFaces {
+    try {
+      return this.#options.faces()
+    } catch (error) {
+      this.#options.log(`the usage faces could not be resolved: ${failureText(error)}`)
+      return {}
+    }
+  }
+
+  /** 活会话存储里是否有这条会话；读不到就按没有处理。 */
+  #live(sessionId: string): boolean {
+    try {
+      return this.#faces().sessions?.get(sessionId) !== undefined
+    } catch (error) {
+      this.#options.log(`the live session "${sessionId}" could not be read: ${failureText(error)}`)
+      return false
+    }
+  }
+
+  /**
+   * 这条路由这一次要用的密钥：pi-ai 的凭据记录，然后 profile 的
+   * `apiKeyEnv`，最后官方适配器自己的环境变量引用。
+   *
+   * 记录里的 OAuth grant 不算凭据：官方余额端点只认 API key，一个 grant 拿
+   * 过去只会换来 401，所以这里直接落到环境变量这一档。
+   */
+  async #credentialOf(provider: string, faces: UsageFaces): Promise<string | undefined> {
+    const store = faces.credentials
+    if (store === undefined) return undefined
+    try {
+      const record = await store.readRecord(`${PI_AI_CREDENTIAL_SCOPE}/${provider}`)
+      if (record?.kind === 'api-key' && typeof record.key === 'string' && record.key !== '') return record.key
+    } catch (error) {
+      // 读写不了的记录按不存在处理：下一档是环境变量，那里还有一次机会。
+      this.#options.log(`the pi-ai credential of route "${provider}" could not be read: ${failureText(error)}`)
+    }
+    const name = nonEmptyText(profileOf(faces.settings, provider)?.apiKeyEnv) ?? deepseekApiKeyEnv(faces.settings)
+    try {
+      const resolved = await store.resolve(name)
+      if (typeof resolved?.value === 'string' && resolved.value !== '') return resolved.value
+    } catch (error) {
+      this.#options.log(`the credential reference "${name}" of route "${provider}" could not be resolved: ${failureText(error)}`)
+    }
+    return undefined
+  }
+
+  /**
+   * 对官方余额端点做一次探测。
+   *
+   * 失败一律折成 `probe-failed` 并带上一条短原因：401、超时与形状不符都是
+   * 「这次没读到」，任何一条都不会拿上一轮的旧值顶上。
+   */
+  async #probe(provider: string, credential: string): Promise<UsageBalanceAnswer> {
+    const call = this.#options.fetch ?? defaultFetch
+    try {
+      const response = await call(DEEPSEEK_BALANCE_URL, {
+        headers: { authorization: `Bearer ${credential}` },
+        signal: AbortSignal.timeout(this.#timeout()),
+      })
+      if (!response.ok) return { provider, unsupported: 'probe-failed', reason: `HTTP ${response.status}` }
+      const body: unknown = await response.json().catch(() => undefined)
+      const balance = parsedBalance(body)
+      if (balance === undefined) return { provider, unsupported: 'probe-failed', reason: 'unrecognized response shape' }
+      return { provider, ...balance, updatedAt: this.#options.now() }
+    } catch (error) {
+      return { provider, unsupported: 'probe-failed', reason: failureText(error) }
+    }
+  }
+
+  /** 记一次读数（成功与失败都记）并维持容量上界。 */
+  #remember(cacheKey: string, answer: UsageBalanceAnswer): void {
+    this.#cache.delete(cacheKey)
+    this.#cache.set(cacheKey, { at: this.#options.now(), answer })
+    while (this.#cache.size > BALANCE_CACHE_LIMIT) {
+      const oldest = this.#cache.keys().next()
+      if (oldest.done === true) return
+      this.#cache.delete(oldest.value)
+    }
+  }
+
+  /** 余额缓存窗口。 */
+  #ttl(): number {
+    return this.#options.ttlMs ?? BALANCE_CACHE_TTL_MS
+  }
+
+  /** 一次探测的超时。 */
+  #timeout(): number {
+    return this.#options.timeoutMs ?? BALANCE_PROBE_TIMEOUT_MS
+  }
+}
+
+/** 默认的探测实现：宿主与浏览器两侧都有全局 fetch。 */
+const defaultFetch: FetchFace = (url, init) => globalThis.fetch(url, init)
+
+/** 一条记录的长度：UTF-8 字节数，汉字因此按实际字节计。 */
+function utf8Bytes(text: string): number {
+  return text === '' ? 0 : encoder.encode(text).length
+}
+
+/**
+ * 字节数折算成 token：四字节一份，向下取整。
+ *
+ * 向下而不是四舍五入，是因为一个空数组序列化成 `[]` 也有两个字节，四舍五入会
+ * 把一个「这次请求没有工具」的 header 说成占了一份 token。
+ */
+function tokensOf(bytes: number): number {
+  return Math.floor(bytes / BYTES_PER_TOKEN)
+}
+
+/** 一条会话的组成估算；一项都没观察到时没有这个读数。 */
+function compositionOf(facts: SessionFacts): UsageComposition | undefined {
+  if (facts.toolsBytes === undefined && facts.systemBytes === undefined && !facts.sawMessages) return undefined
+  return {
+    system: tokensOf(facts.systemBytes ?? 0),
+    tools: tokensOf(facts.toolsBytes ?? 0),
+    messages: tokensOf(facts.messagesBytes),
+    estimated: true,
+  }
+}
+
+/** `request/context` 里可用的上下文窗口：非负有限整数才有意义。 */
+function contextWindowOf(data: unknown): number | undefined {
+  if (!isRecord(data)) return undefined
+  const window = data.contextWindow
+  return typeof window === 'number' && Number.isInteger(window) && window > 0 ? window : undefined
+}
+
+/** 事件里的消息对象：`system/message` 与 `assistant/message` 包在 `message` 里，`user/message` 就是它本身。 */
+function messageOf(data: unknown): unknown {
+  return isRecord(data) && isRecord(data.message) ? data.message : data
+}
+
+/**
+ * 一条消息的模型可见文本。
+ *
+ * 取的是每个内容块自己的 `text`（工具调用块则是它的 `arguments` 原文）：这两样
+ * 是一次请求里真正占 token 的部分，而消息 id、来源记录与流式记录都不占。
+ */
+function messageText(message: unknown): string {
+  const content = isRecord(message) ? message.content : undefined
+  if (!Array.isArray(content)) return ''
+  let text = ''
+  for (const block of content) {
+    if (typeof block === 'string') {
+      text += block
+      continue
+    }
+    if (!isRecord(block)) continue
+    if (typeof block.text === 'string') {
+      text += block.text
+      continue
+    }
+    if (typeof block.arguments === 'string') text += block.arguments
+  }
+  return text
+}
+
+/**
+ * 这条路由的请求是否确实发往官方 origin。
+ *
+ * 余额端点是按 origin 记账而不是按路由 id：一个共用 `deepseek` 这个 id 的
+ * 转售 profile 只改 `baseURL`，拿官方 key 去打官方端点会把官方账户的钱印在
+ * 它的名下（串号事故）。配了别的 origin 就回 `not-deepseek-route`；没配
+ * origin 的路由用的就是适配器自己的固定端点，也就是官方 origin。
+ */
+function officialRoute(provider: string, settings: SettingsFace | undefined): boolean {
+  const configured = originOf(nonEmptyText(profileOf(settings, provider)?.baseURL) ?? deepseekBaseUrl(settings))
+  return configured === undefined || configured === DEEPSEEK_API_ORIGIN
+}
+
+/** 一个 base URL 的 origin；空值或解析不了的 URL 都回 undefined。 */
+function originOf(baseURL: string | undefined): string | undefined {
+  if (baseURL === undefined || baseURL.trim() === '') return undefined
+  try {
+    return new URL(baseURL).origin
+  } catch {
+    return undefined
+  }
+}
+
+/** pi-ai profile 里这条路由的对象。 */
+function profileOf(settings: SettingsFace | undefined, provider: string): Record<string, unknown> | undefined {
+  const section = settingsSection(settings, PI_AI_SETTINGS_NS)
+  if (!isRecord(section) || !isRecord(section.providers)) return undefined
+  const profile = section.providers[provider]
+  return isRecord(profile) ? profile : undefined
+}
+
+/** 官方适配器这一档要读的环境变量引用。 */
+function deepseekApiKeyEnv(settings: SettingsFace | undefined): string {
+  const section = settingsSection(settings, DEEPSEEK_SETTINGS_NS)
+  return (isRecord(section) ? nonEmptyText(section.apiKeyEnv) : undefined) ?? DEEPSEEK_API_KEY_ENV
+}
+
+/** 官方适配器自己配的 base URL。 */
+function deepseekBaseUrl(settings: SettingsFace | undefined): string | undefined {
+  const section = settingsSection(settings, DEEPSEEK_SETTINGS_NS)
+  return isRecord(section) ? nonEmptyText(section.baseURL) : undefined
+}
+
+/**
+ * 读一段设置命名空间。
+ *
+ * 先问 `get`，再问 `describe`：设置服务换过读取入口，两者在宿主上都是「这一段
+ * 现在解析成什么」。读不到、抛错或根本没有设置服务，一律按「没有这段配置」，
+ * 于是 origin 判定与凭据回退都退回官方默认值。
+ */
+function settingsSection(settings: SettingsFace | undefined, ns: string): unknown {
+  if (settings === undefined) return undefined
+  try {
+    if (typeof settings.get === 'function') {
+      const value = settings.get(ns)
+      if (value !== undefined) return unwrap(value)
+    }
+    if (typeof settings.describe === 'function') {
+      const descriptors = settings.describe({ redactSecrets: false })
+      if (Array.isArray(descriptors)) {
+        const match = descriptors.find(entry => isRecord(entry) && entry.ns === ns)
+        if (match !== undefined) return unwrap(match.value)
+      }
+    }
+  } catch {
+    // 一段读不出来的配置按缺席处理：每次调用都记一行日志只会淹没真正的事件。
+  }
+  return undefined
+}
+
+/** 解开设置服务包在读数值外面的 volatile getter。 */
+function unwrap(value: unknown): unknown {
+  let current = value
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!isRecord(current) || typeof current.get !== 'function') break
+    current = (current as { get(): unknown }).get()
+  }
+  return current
+}
+
+/**
+ * 官方 `/user/balance` 应答体里本协议要的四个数。
+ *
+ * 缺一个都算形状不符：只读到总额却把赠金与充值额编成 0，等于把「这次没读到」
+ * 说成「账户里没有」。
+ */
+function parsedBalance(body: unknown): ParsedBalance | undefined {
+  if (!isRecord(body)) return undefined
+  const infos = body.balance_infos
+  if (!Array.isArray(infos) || infos.length === 0) return undefined
+  const first = infos[0]
+  if (!isRecord(first)) return undefined
+  const currency = nonEmptyText(first.currency)
+  const total = amount(first.total_balance)
+  const toppedUp = amount(first.topped_up_balance)
+  const granted = amount(first.granted_balance)
+  if (currency === undefined || total === undefined || toppedUp === undefined || granted === undefined) return undefined
+  return { currency, total, toppedUp, granted }
+}
+
+/** 余额端点把金额写成字符串；数字与字符串都读得出来才算数。 */
+function amount(value: unknown): number | undefined {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+/**
+ * 凭据的指纹（FNV-1a）。
+ *
+ * 缓存键要按凭据区分，但进程里不该为了做键而多留一份密钥：指纹进键，密钥
+ * 只出现在发往上游的那一个请求头里。
+ */
+function fingerprint(secret: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < secret.length; index += 1) {
+    hash ^= secret.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16)
+}
+
+/** 非空字符串，其余一律 undefined。 */
+function nonEmptyText(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/** 一个可按下标读取的普通对象。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
