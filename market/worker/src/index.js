@@ -12,6 +12,7 @@ import { readJsonCapped } from './body.js'
 import { isKnownAsset } from './asset-allowlist.js'
 import { handleNpmBadge, handleNpmDownloads } from './npm-badge.js'
 import { handleRelay, handleRelayRegister, handleRelayUnregister, pruneRelay } from './relay.js'
+import { handleRelayClaim, handleRelayRelease, handleRelayRetire, pruneRelayLeases } from './relay-control.js'
 import API_CATALOG from './api-catalog.js'
 import OPENAPI_SPEC from './openapi.js'
 import API_DOCS_HTML from './api-doc.js'
@@ -332,6 +333,11 @@ export default {
     try {
       await pruneRelay(env)
     } catch { /* best-effort; the relay GC retries on the next tick */ }
+    // Lease GC after the registry GC: it settles DNS and tunnel resources, the
+    // only path in this worker that removes a relay's stable source.
+    try {
+      await pruneRelayLeases(env)
+    } catch { /* best-effort; the lease GC retries on the next tick */ }
   },
 
   async fetch(request, env) {
@@ -353,6 +359,11 @@ export default {
 
     if (path === '/api/relay/register' && request.method === 'PUT') return handleRelayRegister(request, env)
     if (path === '/api/relay/unregister' && request.method === 'POST') return handleRelayUnregister(request, env)
+    // Control plane (additive): claim, release and retire. They stay on the
+    // market apex, so they never depend on the relay routes they manage.
+    if (path === '/api/relay/claim' && request.method === 'PUT') return handleRelayClaim(request, env)
+    if (path === '/api/relay/release' && request.method === 'POST') return handleRelayRelease(request, env)
+    if (path === '/api/relay/retire' && request.method === 'POST') return handleRelayRetire(request, env)
 
     // /app.js is listed in run_worker_first only so the tv.dsh-market.com
     // dashboard's same-origin script reaches its worker; every other hostname

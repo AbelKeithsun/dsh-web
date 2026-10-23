@@ -34,6 +34,13 @@
   "routes": [
     { "pattern": "*.dsh-market.com/*", "zone_name": "dsh-market.com" }
   ],
+  // Relay control plane (src/relay-control.js) reads three secrets that are
+  // never declared here: CF_API_TOKEN (Account: Cloudflare Tunnel, Edit; Zone:
+  // DNS, Edit, on dsh-market.com only), CF_ACCOUNT_ID and CF_ZONE_ID. Without
+  // all three the claim endpoint answers 503 cf-api-unconfigured and creates
+  // nothing. RELAY_MODE is an optional plain variable: absent (or "quick")
+  // answers the quick connector, "named" hands the hostname to the instance's
+  // own connector; it is the migration switch and its rollback.
   "triggers": {
     "crons": ["*/30 * * * *"]
   },
