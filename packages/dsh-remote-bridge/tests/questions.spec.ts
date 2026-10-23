@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { QUESTION_CLAIM_GRACE_MS } from '../src/core/hub.ts'
 import { ControllableStream, requestFrame, answerOf, makeBareHub, makeConnection, makeHub, RecordingTransport, settle, type FakeGateway } from './support/harness.ts'
 import type { QuestionAnswer, UserQuestionRequestLike } from '../src/core/questions.ts'
 
@@ -342,15 +343,20 @@ describe('user question bridge', () => {
     expect(questionPayloads(harness.transport)).toEqual([])
   })
 
-  it('operator loses the last phone and the claimed question is delegated', async () => {
+  it('operator loses the last phone and the claimed question is delegated when the window ends', async () => {
     // Given a claimed question on a hub whose only phone is about to go away
+    // Only the timeout pair is faked: the heartbeat interval stays real, so the
+    // minute of claim time below never pings a phone that is not there.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const harness = makeHub()
     await declareQuestions(harness.connection)
     // Here the desktop panel is what answers once the phone is gone, so it settles
     // rather than hanging: this case is about the hand-back, not about a race.
     const pending = harness.hub.question(hostRequest(), async () => ({ answers: [] }))
-    // When the connection closes
+    await settle()
+    // When the connection closes, and the grace window it leaves behind runs out
     harness.hub.detach(harness.connection)
+    await vi.advanceTimersByTimeAsync(QUESTION_CLAIM_GRACE_MS)
     // Then the question was handed to the next answerer rather than refused or left hanging
     expect(await pending).toEqual({ answers: [] })
     expect(harness.questions.size).toBe(0)
@@ -511,7 +517,12 @@ describe('user question bridge', () => {
     const payload = questionPayloads(harness.transport)[0]
     expect(payload).toMatchObject({ sessionId: 's-1', callId: 'bridge:minted-5', state: 'open' })
     expect(payload).not.toHaveProperty('expiresAt')
-    expect(harness.questions.openClaims()).toEqual([{ sessionId: 's-1', callId: 'bridge:minted-5', questions: expect.any(Array) }])
+    expect(harness.questions.listed()).toEqual([{
+      key: 's-1/bridge:minted-5',
+      sessionId: 's-1',
+      state: 'open',
+      payload: { sessionId: 's-1', callId: 'bridge:minted-5', state: 'open', questions: expect.any(Array) },
+    }])
     // And it stays answerable with the minted handle
     await harness.connection.handleText(requestFrame(31, 'question.answer', { sessionId: 's-1', callId: 'bridge:minted-5', answers: ANSWER.answers }))
     expect(answerOf(harness, 31)).toEqual({ ok: true, r: { ok: true } })
@@ -550,8 +561,8 @@ describe('user question bridge', () => {
     await settle()
     waitStream.push({ remainingMs: 4000 })
     await settle()
-    // When the last phone goes away and the claim is handed back
-    harness.hub.detach(harness.connection)
+    // When the bridge unloads and the claim is handed back at once
+    harness.hub.dispose()
     expect(await pending).toEqual(ANSWER)
     // The phone is already gone, so nothing can carry the settled notice to it
     const afterWithdraw = questionPayloads(harness.transport)
@@ -756,6 +767,8 @@ function followWaitStreams(gateway: FakeGateway): ControllableStream[] {
 }
 
 describe('held question list', () => {
+  afterEach(() => { vi.useRealTimers() })
+
   it('user of a phone that reconnects reads back every question the bridge still holds', async () => {
     // Given a bridge holding one open question with a published deadline and one
     // whose foreground wait the host already ended
@@ -791,13 +804,16 @@ describe('held question list', () => {
 
   it('user whose phone was away when the last device left finds nothing left to answer', async () => {
     // Given a question the bridge holds for the only paired phone
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const harness = makeHub()
     await declareQuestionList(harness.connection)
     harness.hub.question(hostRequest(), desktopWaiting)
     await settle()
     expect(harness.questions.size).toBe(1)
-    // When that phone goes away, which delegates the question to the next answerer
+    // When that phone goes away and the window kept for it runs out, which
+    // delegates the question to the next answerer
     harness.hub.detach(harness.connection)
+    await vi.advanceTimersByTimeAsync(QUESTION_CLAIM_GRACE_MS)
     expect(harness.questions.size).toBe(0)
     // Then the phone that comes back is told the set is empty, not handed a ghost
     const transport = new RecordingTransport()

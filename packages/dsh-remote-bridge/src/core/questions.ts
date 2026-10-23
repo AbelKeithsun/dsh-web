@@ -140,8 +140,9 @@ export interface QuestionListPayload {
 /**
  * `open` while the ask is still waiting, `continued` once the host's foreground
  * wait ended but a late answer can still be steered in, and `settled` as the
- * one-way notice that the phone's card is over — the host's own UI answered it or
- * the last paired client left. `settled` is published, never held.
+ * one-way notice that the phone's card is over — the host's own UI answered it, or
+ * none was left to answer it once the claim's grace window ended. `settled` is
+ * published, never held.
  */
 export type QuestionState = 'open' | 'continued' | 'settled'
 
@@ -582,17 +583,6 @@ export class QuestionClaims {
   }
 
   /**
-   * Every claim still waiting on an answer.
-   *
-   * A phone that connects after the question was raised never saw the original
-   * broadcast, so it has to be handed the live claims again — otherwise the
-   * question sits on the host with an answerable card nowhere.
-   */
-  openClaims(): readonly ClaimedQuestionView[] {
-    return [...this.#claims.values()].map(viewOf)
-  }
-
-  /**
    * Every question this bridge still holds, as `question.list` publishes it.
    *
    * The claim registry IS the answer: a question leaves it the moment it is
@@ -634,8 +624,9 @@ export class QuestionClaims {
 
   /**
    * Withdraw every claim, delegating each open question to the next answerer.
-   * Called when the last paired phone goes away and when the bridge unloads: a
-   * question nobody can answer must not hold the agent until its own deadline.
+   * Called when the last paired phone has been gone long enough that no grace
+   * window is still running, and when the bridge unloads: a question nobody can
+   * answer must not hold the agent until its own deadline.
    * @returns how many questions were still open.
    */
   withdrawAll(): number {

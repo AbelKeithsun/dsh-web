@@ -8,12 +8,13 @@
  * cancellation, the last phone leaving) delegates to the next answerer, which
  * the Host normalizes to `'unavailable'`.
  *
- * The claim on `user-questions/request` follows the same two rules, with two
+ * The claim on `user-questions/request` follows the same rules, with three
  * differences that belong to the host's own semantics: delegating is not a
  * refusal, because only a phone that declares `questions.v1` is ever shown the
- * question; and a question is named on the wire even when the host named none,
+ * question; a question is named on the wire even when the host named none,
  * because a blocking ask carries no call id and the phone still needs a handle
- * to answer with.
+ * to answer with; and the claim outlives the last paired device by a grace
+ * window, because a phone whose app the system suspended has refused nothing.
  * @module dsh-remote-bridge/core/hub
  */
 
@@ -63,10 +64,31 @@ function approvalPayload(prompt: PendingPromptView): ApprovalRequestPayload {
   return { sessionId: prompt.sessionId, id: prompt.id, summary: prompt.summary, toolName: prompt.toolName }
 }
 
+/**
+ * How long a user question outlives the last paired device, in milliseconds.
+ *
+ * A push notification carries a session link and nothing else: the phone can
+ * draw a question card only while this bridge still holds the claim, and it has
+ * to reconnect before it can read one. A phone whose app was suspended is gone
+ * for tens of seconds, so releasing the claim the instant its socket drops
+ * decides the question for it — the ask went back to the host's own answerer
+ * chain, the Mac showed the card, and the tap that arrived afterwards opened a
+ * session with nothing in it (measured 2026-10-23). The window is that reconnect
+ * budget, not a second deadline: a claim no phone came back for is released on
+ * expiry exactly as it was before.
+ */
+export const QUESTION_CLAIM_GRACE_MS = 60_000
+
 /** The bridge's live connections plus the answerer it composes onto the approval chain. */
 export class BridgeHub {
   readonly #options: BridgeConnectionOptions
   readonly #connections = new Set<BridgeConnection>()
+  /**
+   * The release this hub has scheduled for the user questions no paired device
+   * can answer any more. The claim table is global, so one timer covers every
+   * claim and there is never more than one of them.
+   */
+  #questionReleaseTimer: NodeJS.Timeout | undefined
 
   constructor(options: BridgeConnectionOptions) {
     this.#options = options
@@ -102,6 +124,9 @@ export class BridgeHub {
     )
     this.#connections.add(connection)
     connection.startHeartbeat()
+    // A paired device is the phone the window was being held open for: it is
+    // here now, so the release it was waiting out is no longer due.
+    if (connection.paired) this.#cancelQuestionRelease()
     if (auth !== undefined) void this.#options.roster.touch(auth.deviceId).catch(() => undefined)
     this.#options.log(`connection open (${auth === undefined ? 'unpaired' : `device ${auth.deviceId}`})`)
     return connection
@@ -109,18 +134,20 @@ export class BridgeHub {
 
   /**
    * Forget one connection and abort everything it owns. When it was the last
-   * paired device, every pending question is withdrawn: nobody left can answer.
+   * paired device, every pending approval is withdrawn at once and every pending
+   * user question is released when its grace window ends.
    */
   detach(connection: BridgeConnection): void {
     this.#connections.delete(connection)
     connection.dispose()
     if (this.pairedClients > 0) return
-    const withdrawn = this.#options.approvals.abandonAll()
-    if (withdrawn > 0) this.#options.log(`${withdrawn} approval question(s) withdrew: no paired device is connected`)
-    // A user question is delegated rather than refused: the next answerer in the
-    // host's chain decides, and the question's own deadline still holds.
-    const released = this.#options.questions.withdrawAll()
-    if (released > 0) this.#options.log(`${released} user question(s) released: no paired device is connected`)
+    // An approval takes no window: the tool behind it is the agent's own wait,
+    // and a card no connected phone can answer must not hold it a second longer.
+    this.#abandonApprovals()
+    // A user question is delegated rather than refused, so the next answerer in
+    // the host's chain decides and the question's own deadline still holds — but
+    // only once the window in which the phone can come back for it has run out.
+    if (this.#options.questions.size > 0) this.#armQuestionRelease()
   }
 
   /**
@@ -145,8 +172,13 @@ export class BridgeHub {
    */
   replayQuestions(connection: BridgeConnection): void {
     if (!connection.paired || !connection.declares(CAP_QUESTIONS)) return
-    for (const claim of this.#options.questions.openClaims()) {
-      connection.emit(TOPIC_QUESTION_REQUEST, questionPayload('open', claim))
+    // The claim's own state, not `open` for every claim: a question whose
+    // foreground wait the host already ended is `continued`, and replaying it as
+    // open tells the phone to wait on an agent that has already moved on. The
+    // held set is read the way `question.list` publishes it, so the replayed card
+    // and the row the phone reads back stay one shape.
+    for (const held of this.#options.questions.listed()) {
+      connection.emit(TOPIC_QUESTION_REQUEST, held.payload)
     }
   }
 
@@ -307,11 +339,55 @@ export class BridgeHub {
 
   /** Close every connection and withdraw every question. Idempotent. */
   dispose(): void {
+    // Unloading is not a phone going away: nothing can come back for these
+    // claims, so the window is dropped and the release happens right here.
+    this.#cancelQuestionRelease()
     for (const connection of [...this.#connections]) {
       this.#connections.delete(connection)
       connection.dispose()
     }
     this.#options.approvals.abandonAll()
     this.#options.questions.withdrawAll()
+  }
+
+  /**
+   * Arm the one release of the user questions no paired device can answer.
+   *
+   * A second departure while a window is already running must not extend it, so
+   * an armed timer is left alone: every claim it covers is released at the one
+   * instant it was scheduled for.
+   */
+  #armQuestionRelease(): void {
+    if (this.#questionReleaseTimer !== undefined) return
+    const timer = setTimeout(() => {
+      this.#questionReleaseTimer = undefined
+      // Exactly what an immediate release does, approvals included: whatever is
+      // still held when nobody is paired goes back to the host's own answerers.
+      this.#abandonApprovals()
+      this.#releaseQuestions()
+    }, QUESTION_CLAIM_GRACE_MS)
+    // A held question must never keep the host process alive, exactly like the
+    // deadline timer one claim arms.
+    timer.unref?.()
+    this.#questionReleaseTimer = timer
+  }
+
+  /** Drop the pending window, if there is one. The claims it would release stay held. */
+  #cancelQuestionRelease(): void {
+    if (this.#questionReleaseTimer === undefined) return
+    clearTimeout(this.#questionReleaseTimer)
+    this.#questionReleaseTimer = undefined
+  }
+
+  /** Abandon every approval: no paired device is left to answer one. */
+  #abandonApprovals(): void {
+    const withdrawn = this.#options.approvals.abandonAll()
+    if (withdrawn > 0) this.#options.log(`${withdrawn} approval question(s) withdrew: no paired device is connected`)
+  }
+
+  /** Release every user question to the next answerer. */
+  #releaseQuestions(): void {
+    const released = this.#options.questions.withdrawAll()
+    if (released > 0) this.#options.log(`${released} user question(s) released: no paired device is connected`)
   }
 }
