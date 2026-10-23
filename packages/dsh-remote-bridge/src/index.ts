@@ -49,7 +49,8 @@ import { QuestionClaims } from './core/questions.ts'
 import { WS_PATH } from './core/protocol.ts'
 import { SessionMeta, type SessionStoreFace, type SessionTitleFace, type WorkspacesFace } from './core/session-meta.ts'
 import { SessionPermissions, type ApprovalPolicyFace, type PermissionPresetsFace, type SandboxPolicyFace } from './core/session-permissions.ts'
-import { UsageService, type CredentialStoreFace, type SettingsFace } from './core/usage.ts'
+import { UsageService, type CredentialStoreFace, type SessionRosterFace, type SettingsFace } from './core/usage.ts'
+import { wireArgs, type GatewayPeer } from './core/wire.ts'
 import { dshHome } from './host/dsh-home.ts'
 import { ApnsSender, apnsConfigFromEnv } from './host/apns.ts'
 import { StandingWatchers } from './host/watchers.ts'
@@ -145,19 +146,61 @@ function sessionMetaFaces(ctx: Context) {
 }
 
 /**
+ * 宿主自己的会话名册，按 `usage.session` 需要的那一格读出来。
+ *
+ * 走的是 `session.list` 服务的同一个端点（`session/list`），也就是手机名册的
+ * 来源：它名下既有活的会话，也有本进程没观察过、当前也不 live 的会话，因此
+ * 那类会话不会被说成不存在。`ctx.sessions.list()` 答不了这一问——它只列已经
+ * 进入存储的会话。读失败或答不出 item 表就回 undefined，「不知道名册」由用量
+ * 服务退回活会话存储与事件折叠两条证词。
+ * @param ctx - 插件的上下文，携带网关。
+ * @param peer - 本桥自己的 owner peer，每次调用都以它发声。
+ * @param log - 读不到名册时的落点。
+ * @returns 名册 face。
+ */
+function sessionRoster(ctx: Context, peer: GatewayPeer, log: (message: string) => void): SessionRosterFace {
+  return {
+    ids: async (): Promise<readonly string[] | undefined> => {
+      try {
+        const value = await ctx.typertGateway.invoke({
+          namespace: 'session',
+          method: 'list',
+          args: wireArgs('session', 'list', {}),
+          peer,
+        })
+        const items = typeof value === 'object' && value !== null ? (value as { items?: unknown }).items : undefined
+        if (!Array.isArray(items)) return undefined
+        const ids: string[] = []
+        for (const item of items) {
+          const id = typeof item === 'object' && item !== null ? (item as { sessionId?: unknown }).sessionId : undefined
+          if (typeof id === 'string' && id !== '') ids.push(id)
+        }
+        return ids
+      } catch (error) {
+        log(`the host session roster could not be read: ${String(error)}`)
+        return undefined
+      }
+    },
+  }
+}
+
+/**
  * 解析 `usage.v1` 要读的宿主服务，现在就解析一次。
  *
- * 与元数据的三个 face 同一条理由：三者都不在本插件的 `inject` 里，缺一个不该
- * 让整个桥起不来。缺活会话存储，`usage.session` 就只能靠本进程观察过的事件
- * 判断会话是否存在；缺凭据服务，`usage.balance` 回 `no-credential`；缺设置
+ * 与元数据的三个 face 同一条理由：四者都不在本插件的 `inject` 里，缺一个不该
+ * 让整个桥起不来。缺活会话存储，`usage.session` 就只能靠名册与本进程观察过的
+ * 事件判断会话是否存在；缺凭据服务，`usage.balance` 回 `no-credential`；缺设置
  * 服务，路由的 `baseURL` 与 `apiKeyEnv` 读不到，origin 判定与凭据回退都退回
  * 官方默认值。face 是结构化的：本包不导入这些服务自己的类型。
  * @param ctx - 插件的上下文。
+ * @param peer - 本桥自己的 owner peer，名册读取以它发声。
+ * @param log - 读不到名册时的落点。
  * @returns 这些 face 此刻的样子。
  */
-function usageFaces(ctx: Context) {
+function usageFaces(ctx: Context, peer: GatewayPeer, log: (message: string) => void) {
   return {
     sessions: ctx.get('sessions') as SessionStoreFace | undefined,
+    roster: sessionRoster(ctx, peer, log),
     credentials: ctx.get('credentials') as CredentialStoreFace | undefined,
     settings: ctx.get('settings') as SettingsFace | undefined,
   }
@@ -229,7 +272,7 @@ function applyImpl(ctx: Context): void {
   // 用量读数：一条会话的窗口与组成靠宿主广播的事件折出来，余额靠宿主自己的
   // 凭据与设置查出来。一个宿主一份、所有连接共享——两台手机重复问，上游也只
   // 该收到一次请求（core/usage.ts）。
-  const usage = new UsageService({ faces: () => usageFaces(ctx), now: () => Date.now(), log })
+  const usage = new UsageService({ faces: () => usageFaces(ctx, ownerPeer, log), now: () => Date.now(), log })
   // The push channel is OFF unless this machine holds an Apple signing key: no
   // key, no sender, and every notification path is a no-op — which is what keeps
   // the protocol byte-identical for every deployment that has none (§28).

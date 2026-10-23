@@ -897,7 +897,7 @@ export class BridgeConnection {
       case METHOD_QUESTION_ANSWER: return await this.#questionAnswer(frame.p)
       case METHOD_QUESTION_LIST: return this.#questionList(frame.p)
       case METHOD_PUSH_REGISTER: return await this.#pushRegister(frame.p)
-      case METHOD_USAGE_SESSION: return this.#usageSession(frame.p)
+      case METHOD_USAGE_SESSION: return await this.#usageSession(frame.p)
       case METHOD_USAGE_BALANCE: return await this.#usageBalance(frame.p)
       case METHOD_JOBS_LIST: return await this.#jobsList(frame.p)
       case METHOD_PRESETS_LIST: return await this.#presetsList()
@@ -2144,13 +2144,14 @@ export class BridgeConnection {
    * 两个读数各有自己的来源，也各有自己的缺席方式：`contextWindow` 只在宿主
    * 广播过 `request/context` 时出现，`composition` 只在观察到任何原文时出现，
    * 两项都没有就是空对象。会话本身不存在是另一种情况，回的是
-   * `unknown-session`，而不是一个读不到任何东西的空对象。
+   * `unknown-session`，而不是一个读不到任何东西的空对象；而「存在」由活会话
+   * 存储、本进程观察到的事件与宿主名册三处中任意一处证明（见 `core/usage.ts`）。
    * @param payload - `{sessionId}`。
    */
-  #usageSession(payload: Readonly<Record<string, unknown>>): DispatchOutcome {
+  async #usageSession(payload: Readonly<Record<string, unknown>>): Promise<DispatchOutcome> {
     const sessionId = stringArg(payload, 'sessionId')
     if (sessionId === undefined) return refusal(CODE_INVALID_ARGS, 'usage.session requires sessionId')
-    const answer = this.#options.usage.session(sessionId)
+    const answer = await this.#options.usage.session(sessionId)
     if (answer === undefined) return refusal(CODE_UNKNOWN_SESSION, `session ${sessionId} does not exist on this host`)
     return { ok: true, r: answer }
   }

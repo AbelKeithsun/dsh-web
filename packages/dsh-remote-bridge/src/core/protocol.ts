@@ -440,9 +440,11 @@ export const CODE_UNPAIRED = 'unpaired'
 export const CODE_UNKNOWN_METHOD = 'unknown-method'
 export const CODE_INVALID_ARGS = 'invalid-args'
 /**
- * `usage.session` 点名的会话在这个宿主上不存在：活会话存储里没有它，本进程
- * 也从未观察过它的任何事件。它与「会话存在但两项读数都取不到」是两个答案，
- * 后者回的是空对象——一条刚刚开始、还什么都没广播的会话就在那个状态里。
+ * `usage.session` 点名的会话在这个宿主上不存在：宿主自己的会话名册里没有它，
+ * 活会话存储里没有它，本进程也从未观察过它的任何事件。它与「会话存在但两项
+ * 读数都取不到」是两个答案，后者回的是空对象——一条刚刚开始、还什么都没广播
+ * 的会话，以及一条在桥重载前就存在的会话，都在那个状态里：存在而没读数，不是
+ * 不存在。
  */
 export const CODE_UNKNOWN_SESSION = 'unknown-session'
 export const CODE_PROTO_UNSUPPORTED = 'proto-unsupported'

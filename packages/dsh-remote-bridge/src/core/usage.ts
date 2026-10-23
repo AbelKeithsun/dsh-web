@@ -31,6 +31,15 @@ export const BYTES_PER_TOKEN = 4
 /** 会话折叠最多记住多少条会话，超出时丢最早的一条。 */
 export const USAGE_SESSIONS_MAX = 512
 
+/**
+ * 宿主名册在本进程里的缓存窗口。
+ *
+ * 名册只在「活会话存储没有、事件折叠也没有」时才读，但一次开屏可能连着问几条，
+ * 所以同一个窗口内的多次存在性判定共用一次读取；窗口取得很短，是因为名册本身
+ * 会随新建会话变化。
+ */
+export const ROSTER_CACHE_TTL_MS = 5_000
+
 /** 同一个 provider + 凭据在这个窗口内最多打一次上游。 */
 export const BALANCE_CACHE_TTL_MS = 60_000
 
@@ -253,10 +262,27 @@ export interface SettingsFace {
   describe?(options?: unknown): readonly { readonly ns?: string; readonly value?: unknown }[]
 }
 
+/**
+ * 宿主自己的会话名册。
+ *
+ * 这是 `session.list` 服务的同一个来源，也就是手机名册的来源：它名下既有活的
+ * 会话，也有本进程没观察过、甚至当前不 live 的会话。活会话存储答不了这一问
+ * 的一半（`ctx.sessions.list()` 只列已进入存储的会话），所以名册单独一格。
+ */
+export interface SessionRosterFace {
+  /**
+   * 名册里的会话 id。
+   * @returns id 列表；读不到时回 undefined，调用方据此退回「不知道名册」。
+   */
+  ids(): Promise<readonly string[] | undefined>
+}
+
 /** 本模块要读的宿主服务；每一个都可能不存在。 */
 export interface UsageFaces {
   /** 活会话的存储：`usage.session` 靠它区分「不存在」与「存在但没读数」。 */
   readonly sessions?: SessionStoreFace | undefined
+  /** 宿主自己的会话名册：本进程没观察过的会话靠它证明自己存在。 */
+  readonly roster?: SessionRosterFace | undefined
   /** 凭据服务：余额探测的密钥来源。 */
   readonly credentials?: CredentialStoreFace | undefined
   /** 设置服务：路由的 `apiKeyEnv` 与 `baseURL` 来源。 */
@@ -296,6 +322,8 @@ export class UsageService {
   readonly #tracker = new UsageTracker()
   readonly #cache = new Map<string, { readonly at: number; readonly answer: UsageBalanceAnswer }>()
   readonly #inFlight = new Map<string, Promise<UsageBalanceAnswer>>()
+  /** 最近读到的一份宿主名册，以及它是哪一刻读的。 */
+  #roster: { readonly at: number; readonly ids: ReadonlySet<string> | undefined } | undefined
 
   /**
    * @param options - 宿主服务的解析函数、时钟与上游探测。
@@ -319,14 +347,18 @@ export class UsageService {
   /**
    * 一条会话的上下文窗口与组成估算。
    *
-   * 「不存在」与「存在但两项都取不到」是两个答案：活会话存储里有它，或者本
-   * 进程观察过它的事件，都算存在（后者是这次应答唯一的信息来源），否则回
-   * undefined，由调用方翻译成协议自己的 `unknown-session`。
+   * 「不存在」与「存在但两项都取不到」是两个答案，而「存在」有三个证人：活会话
+   * 存储里有它、本进程观察过它的事件、或者宿主名册里有它。前两个是同步的，因此
+   * 只有两个都答不上来时才会去问名册——名册才是那条「本进程没观察过、当前也不
+   * live」的会话唯一的证据，把它说成不存在会变成一次假的失败。
+   *
+   * 名册也读不到时，证人只剩前两个：这时回 undefined 就是协议的
+   * `unknown-session`，与加名册之前逐字一样。
    * @param sessionId - 会话 id。
    * @returns 应答体，或者 undefined 表示这条会话不存在。
    */
-  session(sessionId: string): UsageSessionAnswer | undefined {
-    if (!this.#live(sessionId) && !this.#tracker.known(sessionId)) return undefined
+  async session(sessionId: string): Promise<UsageSessionAnswer | undefined> {
+    if (!this.#live(sessionId) && !this.#tracker.known(sessionId) && !(await this.#inRoster(sessionId))) return undefined
     return this.#tracker.answer(sessionId)
   }
 
@@ -369,6 +401,34 @@ export class UsageService {
       this.#options.log(`the usage faces could not be resolved: ${failureText(error)}`)
       return {}
     }
+  }
+
+  /** 宿主名册里是否有这条会话；没有名册或读不到都按「不知道」处理。 */
+  async #inRoster(sessionId: string): Promise<boolean> {
+    return (await this.#rosterIds())?.has(sessionId) === true
+  }
+
+  /**
+   * 一个缓存窗口内的宿主名册。
+   *
+   * 一次开屏可能连着问几条会话，所以同一窗口内的判定共用一次读取；读失败（或
+   * 本进程根本没有名册来源）缓存的是 undefined，也就是「不知道名册」，判定因此
+   * 退回活会话存储与事件折叠两条证词。
+   */
+  async #rosterIds(): Promise<ReadonlySet<string> | undefined> {
+    const now = this.#options.now()
+    if (this.#roster !== undefined && now - this.#roster.at < ROSTER_CACHE_TTL_MS) return this.#roster.ids
+    let ids: ReadonlySet<string> | undefined
+    try {
+      const read = this.#faces().roster?.ids
+      const listed = read === undefined ? undefined : await read()
+      ids = listed === undefined ? undefined : new Set(listed)
+    } catch (error) {
+      this.#options.log(`the host session roster could not be read: ${failureText(error)}`)
+      ids = undefined
+    }
+    this.#roster = { at: this.#options.now(), ids }
+    return ids
   }
 
   /** 活会话存储里是否有这条会话；读不到就按没有处理。 */

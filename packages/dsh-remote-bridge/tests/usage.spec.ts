@@ -3,9 +3,11 @@ import { CAP_USAGE, MINOR, SERVED_CAPABILITIES } from '../src/core/protocol.ts'
 import { BALANCE_CACHE_TTL_MS, UsageService, type UsageFaces, type FetchFace } from '../src/core/usage.ts'
 import { answerOf, makeConnection, requestFrame, type ConnectionHarness } from './support/harness.ts'
 
-/** 一套宿主服务：活会话名单 + 凭据 + 设置，缺的就不给。 */
+/** 一套宿主服务：活会话名单 + 宿主名册 + 凭据 + 设置，缺的就不给。 */
 interface HostServices {
   readonly live?: readonly string[]
+  /** 宿主名册里的会话 id；省略就是这台宿主给不出名册。 */
+  readonly roster?: readonly string[]
   readonly credentials?: UsageFaces['credentials']
   readonly settings?: UsageFaces['settings']
 }
@@ -16,6 +18,7 @@ function usageOver(services: HostServices, clock: { now: number }, fetch: FetchF
   return new UsageService({
     faces: () => ({
       ...(services.live === undefined ? {} : { sessions: { get: id => (live.includes(id) ? { id } : undefined) } }),
+      ...(services.roster === undefined ? {} : { roster: { ids: async () => services.roster } }),
       ...(services.credentials === undefined ? {} : { credentials: services.credentials }),
       ...(services.settings === undefined ? {} : { settings: services.settings }),
     }),
@@ -145,16 +148,31 @@ describe('usage channel over protocol v1', () => {
     expect(answerOf(harness, 2).r).toEqual({})
   })
 
-  it('user reading a session this host never had is refused as an unknown session', async () => {
-    // Given a bridge whose live store and event fold both know no such session
+  it('user reading a session the host roster names but this process never observed is answered an empty object', async () => {
+    // Given a session the host's own roster knows while it is neither live nor observed
     const clock = { now: 1_700_000_000_000 }
-    const usage = usageOver({ live: ['s-1'] }, clock, upstreamOf({ status: 200, body: OFFICIAL_BALANCE }).fetch)
+    const usage = usageOver({ live: ['s-1'], roster: ['s-1', 's-cold'] }, clock, upstreamOf({ status: 200, body: OFFICIAL_BALANCE }).fetch)
+    const harness = makeConnection({ paired: true, usage })
+    await greet(harness, [CAP_USAGE])
+    // When the user reads it after the bridge was reloaded
+    await harness.connection.handleText(requestFrame(2, 'usage.session', { sessionId: 's-cold' }))
+    // Then it is a session this host has with no reading yet, not a session this
+    // host never had, and nothing was invented for the two missing readings
+    expect(answerOf(harness, 2)).toEqual({ ok: true, r: {} })
+    expect(Object.keys(answerOf(harness, 2).r as Record<string, unknown>)).toEqual([])
+  })
+
+  it('user reading a session this host never had is refused as an unknown session', async () => {
+    // Given a bridge whose roster, live store and event fold all know no such session
+    const clock = { now: 1_700_000_000_000 }
+    const usage = usageOver({ live: ['s-1'], roster: ['s-1'] }, clock, upstreamOf({ status: 200, body: OFFICIAL_BALANCE }).fetch)
     const harness = makeConnection({ paired: true, usage })
     await greet(harness, [CAP_USAGE])
     // When the user asks about a session id nothing ever named
     await harness.connection.handleText(requestFrame(2, 'usage.session', { sessionId: 's-404' }))
-    // Then the bridge says the session does not exist instead of answering {}
-    expect(answerOf(harness, 2).e).toEqual({ code: 'unknown-session', msg: 'session s-404 does not exist on this host' })
+    // Then the bridge says the session does not exist instead of answering {} or
+    // a composition of zeros
+    expect(answerOf(harness, 2)).toEqual({ ok: false, e: { code: 'unknown-session', msg: 'session s-404 does not exist on this host' } })
   })
 
   it('user reading the balance of the official route is answered the four amounts in yuan', async () => {
