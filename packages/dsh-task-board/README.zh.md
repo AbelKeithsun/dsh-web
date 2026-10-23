@@ -67,7 +67,7 @@
 - `src/client/native-panel.tsx` 注册看板的侧栏行与中栏页面（官方 `sidebar.panellist` 列表座位与 keyed `main` 座位），并维护与 ssh 面板的中栏互斥协议。
 - `src/client/host-api.ts` 单次导入旧浏览器数据、提交幂等动作，并把 Host snapshot 当作唯一已确认 UI 状态。
 - 同源接口为 `GET /api/task-board/state`、`GET /api/task-board/events` 和 `POST /api/task-board/action`。
-- 所有接口都要求浏览器同源标记：`sec-fetch-site: same-origin`、`Origin` 头，或 Host 的 `dsh-auth-*` 浏览器认证 cookie。最后一种是 DSH 桌面版到达看板的方式：它从 `dsh-app://app/` 提供 Web GUI，并自行转发该页面的请求，转发时删掉 `Origin` 与 `sec-fetch-site`，改为附上启动时用 Host 启动链接换来的、与 authority 绑定的 cookie。直接访问只允许 DSH loopback origin；同机认证反向代理必须使用显式 Host 白名单和服务端注入 token，而部署自己的隧道拨的是本机回环上游时，也可以改为打开 `trustForwardedProxy`（见「配置」），该形态仅凭同源标记即可通过。POST 还必须为 JSON。普通动作上限 64 KiB，导入上限 2 MiB。action 联合中没有命令、可执行路径、shell 文本或任意参数字段。
+- 所有接口都要求浏览器认证。在看板自己的围栏下，这体现为浏览器同源标记：`sec-fetch-site: same-origin`、`Origin` 头，或 Host 的 `dsh-auth-*` 浏览器认证 cookie。最后一种是 DSH 桌面版到达看板的方式：它从 `dsh-app://app/` 提供 Web GUI，并自行转发该页面的请求，转发时删掉 `Origin` 与 `sec-fetch-site`，改为附上启动时用 Host 启动链接换来的、与 authority 绑定的 cookie。直接访问只允许 DSH loopback origin。由 DSH 自己经可信反向代理或 Ingress 提供服务的部署，改由 Host 的 `connection` 服务放行：它执行自己的 Host/Origin 围栏并校验签名浏览器会话，再把请求交给看板；DSH 不负责前置的同机认证反向代理，仍必须使用显式 Host 白名单和服务端注入 token；部署自己的隧道拨的是本机回环上游时，也可以改为打开 `trustForwardedProxy`（见「配置」），该形态仅凭同源标记即可通过。POST 还必须为 JSON。普通动作上限 64 KiB，导入上限 2 MiB。action 联合中没有命令、可执行路径、shell 文本或任意参数字段。
 
 ## Agent 工具
 
@@ -132,7 +132,9 @@ dsh plugin --profile web add link:$(pwd)/packages/dsh-task-board
 
 四个新建卡片默认值都默认空，且都是 volatile：改动无需重启即生效，既作用于之后新建的卡片，也作用于已经打开的页面（无需刷新，新建对话框就会用上刚保存的值）；留空不钉住任何值，因此完全不配置它们的部署创建卡片的行为与今天一致。新卡片的每个执行目标按同一顺序取值——新建对话框里的显式选择优先于从源卡带过来的值（复制卡片沿用源卡已钉住的值，新建子任务沿用父卡的），后者优先于看板默认值——而父卡的权限永不参与。这四个默认值都不会放松权限确认门：高于会话基线的默认权限只是预填，卡片仍要等人工确认后才能运行。
 
-浏览器直接访问仍限制为 DSH loopback origin。若使用同机认证反向代理，应让 DSH Web 绑定 loopback，配置 `trustedProxyHosts`，在 `proxyTokenEnv` 指定的环境变量中放置高熵 token，并让代理在完成认证后替换（不能透传客户端提供的）`X-Dsh-Task-Board-Proxy-Token`。代理 Host 必须在白名单内，浏览器 `Origin` 必须与其 authority 相同。修改这些 composition 级代理设置后需重启 Host。
+浏览器直接访问仍限制为 DSH loopback origin。由 DSH 自己经可信反向代理或 Ingress 提供服务的部署（例如 TLS 在边缘终结、`dsh web --trusted-host dsh.example.internal`）无需看板侧配置：路由桥接 Host 的 `connection` 服务，该服务接受的 Host/Origin 围栏与签名 `dsh-auth-*` 浏览器会话即放行请求，被它拒绝的请求仍要过看板自己的围栏。这条路径不会给未持有 Host 签发会话的浏览器任何额外能力，也与下面两项配置无关。
+
+若使用同机认证反向代理，应让 DSH Web 绑定 loopback，配置 `trustedProxyHosts`，在 `proxyTokenEnv` 指定的环境变量中放置高熵 token，并让代理在完成认证后替换（不能透传客户端提供的）`X-Dsh-Task-Board-Proxy-Token`。代理 Host 必须在白名单内，浏览器 `Origin` 必须与其 authority 相同。修改这些 composition 级代理设置后需重启 Host。
 
 另一种形态是运维自己的隧道或反向代理转发到本机的请求。打开 `trustForwardedProxy` 后，携带转发头且落在回环上游（回环套接字与回环 Host）的请求仅凭浏览器同源标记即可通过；显式 `sec-fetch-site: cross-site` 标记照旧拒绝，经并非拨向本机的代理而来的请求仍判为远程。该开关是 volatile、按请求读取，改动对下一次请求生效；只有你自己运行那一跳时才打开它，因为不归你控制的代理可以替你伪造这些标记。
 
@@ -153,7 +155,7 @@ macOS 后端启动 `/usr/bin/caffeinate -i -w <host-pid>`，绝不请求 `-d`。
 
 ## 安全模型
 
-- 插件仍处在 DSH Web 既有部署与网络边界内，不返回宽松 CORS 头。state、action 与 SSE 共用同一访问栅栏；裸本地命令行请求不会被当作浏览器请求接受。除非打开 `trustForwardedProxy`，围栏拒绝一切被转发请求；即使打开，也只有落在本机回环上游、且不带跨站标记的那种被转发形态被放行。
+- 插件仍处在 DSH Web 既有部署与网络边界内，不返回宽松 CORS 头。state、action 与 SSE 共用同一访问栅栏；裸本地命令行请求不会被当作浏览器请求接受。部署提供 Host 的 `connection` 服务时，围栏只放行该服务已认证的请求——它的 Host/Origin 围栏加签名 `dsh-auth-*` 浏览器会话——其余请求继续走看板自己的 loopback 与 token 判定。除此之外，围栏拒绝一切被转发请求；除非打开 `trustForwardedProxy`，即使打开，也只有落在本机回环上游、且不带跨站标记的那种被转发形态被放行。
 - 所有变更载荷使用严格、版本化的判别联合；浏览器不能写入 scheduler 独占时间戳或 execution 结果。
 - 工作区、预设、权限、cron、任务状态和导入记录都会在 Host 再校验。
 - 卡片有效权限高于配置的会话默认值时进入待确认状态：人工确认该确切绑定之前，Host 拒绝手动执行与 cron 触发；变更钉住权限或交接包会清除确认（封死先确认后替换的提权路径）。

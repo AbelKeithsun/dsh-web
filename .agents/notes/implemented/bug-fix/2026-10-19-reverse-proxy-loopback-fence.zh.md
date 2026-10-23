@@ -26,6 +26,7 @@ dsh 部署常被放在反向代理后面：Cloudflare 隧道、frp，或 nginx �
 - 配对路由里的 `redirectOrigin` 在请求被转发到回环上游、且配置了公网基址时，把 `/pair-accept` 的 303 指向 `publicBaseUrl`；桌面直连的导航仍留在它实际到达的权威上。
 - `packages/dsh-task-board` 把这个更窄的反例做成 `trustForwardedProxy`（`Config`，volatile，默认 `false`，schema 默认值由 `DEFAULT_TRUST_FORWARDED_PROXY` 钉住，经 `resolveProxyAccess` 按请求读取，因此改动对下一次请求生效）。关闭时维持 #1906 围栏；开启后只放行 `isForwardedLoopbackRequest` 且必须同时带浏览器同源标记，显式 `sec-fetch-site: cross-site` 照旧拒绝。正是这条跨站检查取代了直连路径上的 Origin 相等断言，因为改写后的 Host 让围栏无从比对。
 - 这处修复的其余性质全部不变：浏览器同源标记保持原有位置与顺序，跨站标记仍然先拒绝，真实桌面请求——回环套接字、回环 Host、无转发头——判定结果与改动前完全一致。
+- 任务看板新增一条完全不读取转发头的放行路径：它桥接 Host 的 `connection` 服务，因此 Host 自己已经用 Host/Origin 围栏和签名浏览器会话认证过的请求，无需看板专用白名单即可到达看板（[connection 认证桥接](2026-10-23-task-board-connection-auth-bridge.md)）。本 note 上文的规则与其余每一道围栏均不变。
 
 ## 规则看不见的部分
 
