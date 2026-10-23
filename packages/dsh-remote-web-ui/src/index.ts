@@ -35,6 +35,7 @@ import { FORWARD_UPSTREAM_HOST, LanForwarder, type LanForwardState } from './lan
 import { isHttpUrl, tunnelPlanOf } from './tunnel-plan.ts'
 import { loadRelayIdentity, RelayRegistrar, type RelayState } from './relay-registry.ts'
 import { RelayConnectorPair, createNamedRelayConnector, readPluginVersion, relayClaimKeyOf, type RelayPairState } from './relay-connector.ts'
+import { createRelayBridgeRunner } from './relay-bridge-connector.ts'
 import { firewallActionNeeded, forwardPlanOf, isLanReachableBind, resolveManagedProfile, type AppliedFirewallState, type ForwardStopReason, type LanBindCapability, type StartupFacts } from './lan-bind-plan.ts'
 import { bindUrlHostOf, isWildcardLiteral, wildcardBindSupported, type ConfigSchemaFactory } from './host-bind-capability.ts'
 import { createInnerAuth } from './inner-auth.ts'
@@ -581,6 +582,15 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   // of the two the phone is served from, so both stay up and a server-side flip
   // (or its rollback) needs no plugin restart.
   const namedRelayConnector = createNamedRelayConnector()
+  // The bridge half: a socket to this instance's Durable Object meeting point,
+  // beside the quick tunnel. The control plane's mode decides which transport
+  // serves the phone, so the bridge idles while the instance is still quick.
+  const bridgeRelayConnector = createRelayBridgeRunner({
+    onState: (state) => {
+      if (state.state === 'connected') console.log('remote-web-ui: relay bridge attached for ' + state.instance)
+      if (state.state === 'failed') console.warn('remote-web-ui: relay bridge dial failed (' + state.error + ') — retrying with the same credential')
+    },
+  })
   let relayPair: RelayConnectorPair | undefined
   /** The claim input the pair last ran for (dedupes settings-sync re-runs). */
   let relayClaimedFor: string | undefined
@@ -603,8 +613,10 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
     relayAnnouncedFor = undefined
     relayClaimedFor = undefined
     // The named connector never outlives the relay half (a plan change to a
-    // manual named tunnel leaves only the operator's own tunnel running).
+    // manual named tunnel leaves only the operator's own tunnel running), and
+    // neither does the bridge socket.
     namedRelayConnector.stop()
+    bridgeRelayConnector.stop()
     if (pair !== undefined) {
       // Toggle-off releases the lease: the tunnel and the CNAME stay, so
       // re-enabling claims an instance that creates nothing. It never retires
@@ -652,6 +664,7 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
         pluginVersion ??= readPluginVersion()
         relayPair = new RelayConnectorPair(identity, {
           startNamed: (token: string, hostname: string) => { namedRelayConnector.start(token, hostname) },
+          startBridge: (start) => { bridgeRelayConnector.start(start) },
           onState: (state: RelayPairState) => {
             if (state.state === 'claimed') {
               console.log(`remote-web-ui: relay lease claimed — the ${state.mode} connector serves ${state.hostname}`)

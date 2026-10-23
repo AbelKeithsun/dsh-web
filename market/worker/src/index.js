@@ -13,11 +13,16 @@ import { isKnownAsset } from './asset-allowlist.js'
 import { handleNpmBadge, handleNpmDownloads } from './npm-badge.js'
 import { handleRelay, handleRelayRegister, handleRelayUnregister, pruneRelay } from './relay.js'
 import { handleRelayClaim, handleRelayRelease, handleRelayRetire, pruneRelayLeases } from './relay-control.js'
+import { handleRelayBridgeUpgrade } from './relay-bridge.js'
 import API_CATALOG from './api-catalog.js'
 import OPENAPI_SPEC from './openapi.js'
 import API_DOCS_HTML from './api-doc.js'
 
 const KINDS = new Set(['skin', 'pet', 'plugin', 'preset'])
+// The object class has to be exported from the entry module for wrangler to
+// find it; every instance of it lives in relay-bridge.js.
+export { RelayBridge } from './relay-bridge.js'
+
 const INSTALL_ACTIONS = new Set(['market-like', 'market-install'])
 const HOMEPAGE_PATHS = new Set(['/', '/index.html'])
 const HOME_LINK = '</.well-known/api-catalog>; rel="api-catalog", </openapi.json>; rel="service-desc", </api-docs.html>; rel="service-doc", </api-docs.html>; rel="describedby"'
@@ -364,6 +369,10 @@ export default {
     if (path === '/api/relay/claim' && request.method === 'PUT') return handleRelayClaim(request, env)
     if (path === '/api/relay/release' && request.method === 'POST') return handleRelayRelease(request, env)
     if (path === '/api/relay/retire' && request.method === 'POST') return handleRelayRetire(request, env)
+    // The bridge's connector door (additive): the Worker authenticates the
+    // upgrade with the lease's own credential before the instance's object sees
+    // it, so an object only ever holds a connection this Worker approved.
+    if (path === '/api/relay/bridge' && request.method === 'GET') return handleRelayBridgeUpgrade(request, env)
 
     // /app.js is listed in run_worker_first only so the tv.dsh-market.com
     // dashboard's same-origin script reaches its worker; every other hostname

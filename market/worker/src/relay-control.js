@@ -42,6 +42,18 @@ export const LEASE_TTL_MS = 90 * 24 * 60 * 60 * 1000
 export const CF_RETRY_AFTER_MS = 5_000
 /** The Cloudflare API origin (`client/v4`). */
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4'
+/** Where a bridge connector dials. The market apex, like the claim endpoint
+ * itself: a relay hostname would route the upgrade through the data plane it
+ * is trying to replace. */
+export const RELAY_BRIDGE_ENDPOINT = 'wss://dsh-market.com/api/relay/bridge'
+/**
+ * What one bridge upgrade presents as its credential: the lease's own id and
+ * secret. That pair is the only long-lived credential an instance holds, it is
+ * stored here as a hash and compared in constant time, and the claim reply
+ * names it instead of echoing it -- a second copy of a secret in a response
+ * body is a leak surface with nothing to show for it.
+ */
+export const RELAY_BRIDGE_CREDENTIAL = 'lease-secret'
 
 /** The tunnel name one instance owns. */
 export function relayTunnelName(id) {
@@ -71,11 +83,16 @@ export function leaseIngress(id, port) {
 }
 
 /**
- * Which connector serves the relay hostname. This one value is the migration
- * switch and the rollback: `quick` keeps today's Worker proxy path, `named`
- * hands the hostname to the instance's own connector.
+ * Which connector serves the relay hostname. The per-instance column is the
+ * migration switch and the rollback: `quick` keeps today's Worker proxy path,
+ * `bridge` hands the hostname to the instance's Durable Object meeting point.
+ * A row that has not been flipped keeps the deployment-wide answer, which is
+ * what the earlier named-tunnel switch still reads.
+ * @param env - the Worker environment.
+ * @param lease - this id's lease row, when it has one.
  */
-export function relayModeOf(env) {
+export function relayModeOf(env, lease) {
+  if (lease !== undefined && lease !== null && lease.mode === 'bridge') return 'bridge'
   return env.RELAY_MODE === 'named' ? 'named' : 'quick'
 }
 
@@ -189,7 +206,7 @@ export function relayApiOf(env) {
 
 /** The lease row of one id, or undefined. */
 async function leaseOf(env, id) {
-  return await env.DB.prepare('SELECT secret_hash, tunnel_id, hostname, state FROM relay_leases WHERE id = ?1').bind(id).first()
+  return await env.DB.prepare('SELECT secret_hash, tunnel_id, hostname, state, mode FROM relay_leases WHERE id = ?1').bind(id).first()
 }
 
 /** One rate-limit window of the current minute for a bucket. */
@@ -344,10 +361,20 @@ export async function handleRelayClaim(request, env) {
     return json({ ok: false, error: 'storage-unavailable' }, 503)
   }
   return json({
-    mode: relayModeOf(env),
+    // The row's own mode, so a flip reaches the plugin on its next claim
+    // without a redeploy; the upsert above never writes the column, so a claim
+    // cannot undo an operator's flip.
+    mode: relayModeOf(env, existing),
     tunnel: { id: lease.tunnelId, token: lease.token },
     hostname: lease.hostname,
     dns: { target: lease.target },
+    // Everything a bridge connector needs to dial and authenticate; nothing
+    // secret travels here (see RELAY_BRIDGE_CREDENTIAL).
+    bridge: {
+      endpoint: RELAY_BRIDGE_ENDPOINT,
+      instance: id,
+      credential: RELAY_BRIDGE_CREDENTIAL,
+    },
   })
 }
 

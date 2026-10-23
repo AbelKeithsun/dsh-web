@@ -105,6 +105,13 @@ export type RelayPairState =
   | { state: 'claimed'; mode: RelayConnectorMode; hostname: string }
   | { state: 'failed'; error: string }
 
+/** Everything the bridge connector needs to run for one accepted lease. */
+export interface RelayBridgeStart {
+  claim: RelayClaim
+  identity: RelayIdentity
+  port: number
+}
+
 /** Injectable seams of the lease half (defaults are the real control plane). */
 export interface RelayConnectorPairOptions {
   /** One claim attempt. */
@@ -113,6 +120,12 @@ export interface RelayConnectorPairOptions {
   startNamed?: (token: string, hostname: string) => void
   /** Stop the named connector. */
   stopNamed?: () => void
+  /** Start (or restart) the bridge connector for one accepted lease. It runs
+   * beside the quick tunnel and idles while the instance's mode is quick, so a
+   * server-side flip needs no plugin restart. */
+  startBridge?: (start: RelayBridgeStart) => void
+  /** Stop the bridge connector. */
+  stopBridge?: () => void
   /** Release the lease (the offline action, never a retire). */
   release?: (identity: RelayIdentity) => Promise<void>
   /** Observe the lease state (logs only — the card still renders the registry). */
@@ -187,6 +200,7 @@ export class RelayConnectorPair {
       this.attempts = 0
       this.leaseValue = outcome.claim
       this.startNamed(outcome.claim)
+      this.startBridge(outcome.claim, input.port)
       this.setState({ state: 'claimed', mode: outcome.claim.mode, hostname: outcome.claim.hostname })
       return outcome.claim
     }
@@ -239,6 +253,24 @@ export class RelayConnectorPair {
       this.options.stopNamed?.()
     } catch {
       // Stopping an already-stopped connector is not an error worth surfacing.
+    }
+    try {
+      this.options.stopBridge?.()
+    } catch {
+      // Same for the bridge half.
+    }
+  }
+
+  /** Bring the bridge connector up for one accepted lease, if it carries one. */
+  private startBridge(claim: RelayClaim, port: number): void {
+    const startBridge = this.options.startBridge
+    if (startBridge === undefined || claim.bridge === undefined) return
+    try {
+      startBridge({ claim, identity: this.identity, port })
+    } catch (error) {
+      // The bridge failing to start must not lose the accepted lease: quick
+      // keeps serving, exactly as it does when the claim itself is refused.
+      console.warn('remote-web-ui: the bridge connector could not start (' + (error instanceof Error ? error.message : String(error)) + ')')
     }
   }
 

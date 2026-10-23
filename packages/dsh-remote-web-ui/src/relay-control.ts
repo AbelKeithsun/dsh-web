@@ -15,8 +15,19 @@ import type { RelayIdentity } from './relay-registry.ts'
 export const RELAY_CLAIM_URL = 'https://dsh-market.com/api/relay/claim'
 export const RELAY_RELEASE_URL = 'https://dsh-market.com/api/relay/release'
 
-/** Which of the two connectors serves the relay hostname. */
-export type RelayConnectorMode = 'named' | 'quick'
+/** Which connector serves the relay hostname. `bridge` is the Durable Object
+ * meeting point (`relay-bridge-connector.ts`), `named` the instance's own cloud
+ * tunnel, `quick` today's Worker proxy path. */
+export type RelayConnectorMode = 'named' | 'quick' | 'bridge'
+
+/** What a bridge connector needs to dial: an endpoint and a credential to
+ * present. The credential is the lease's own long-lived id and secret -- the
+ * reply names it rather than repeating a secret in a body. */
+export interface RelayBridgeGrant {
+  endpoint: string
+  instance: string
+  credential: 'lease-secret'
+}
 
 /** One accepted lease, as the control plane answers it. */
 export interface RelayClaim {
@@ -24,6 +35,8 @@ export interface RelayClaim {
   tunnel: { id: string; token: string }
   hostname: string
   dns: { target: string }
+  /** Present when the control plane can route this instance over the bridge. */
+  bridge?: RelayBridgeGrant
 }
 
 /** What one claim attempt resolved to. */
@@ -61,9 +74,9 @@ export function relayClaimBody(request: RelayClaimRequest): string {
 /** One lease read back from an accepted claim, or undefined for a bad shape. */
 export function relayClaimOf(value: unknown): RelayClaim | undefined {
   if (typeof value !== 'object' || value === null) return undefined
-  const body = value as { mode?: unknown; tunnel?: unknown; hostname?: unknown; dns?: unknown }
+  const body = value as { mode?: unknown; tunnel?: unknown; hostname?: unknown; dns?: unknown; bridge?: unknown }
   const mode = body.mode
-  if (mode !== 'named' && mode !== 'quick') return undefined
+  if (mode !== 'named' && mode !== 'quick' && mode !== 'bridge') return undefined
   if (typeof body.tunnel !== 'object' || body.tunnel === null) return undefined
   const tunnel = body.tunnel as { id?: unknown; token?: unknown }
   if (typeof tunnel.id !== 'string' || tunnel.id === '') return undefined
@@ -72,7 +85,24 @@ export function relayClaimOf(value: unknown): RelayClaim | undefined {
   if (typeof body.dns !== 'object' || body.dns === null) return undefined
   const target = (body.dns as { target?: unknown }).target
   if (typeof target !== 'string' || target === '') return undefined
-  return { mode, tunnel: { id: tunnel.id, token: tunnel.token }, hostname: body.hostname, dns: { target } }
+  const bridge = relayBridgeGrantOf(body.bridge)
+  return {
+    mode,
+    tunnel: { id: tunnel.id, token: tunnel.token },
+    hostname: body.hostname,
+    dns: { target },
+    ...(bridge === undefined ? {} : { bridge }),
+  }
+}
+
+/** The bridge grant of one accepted lease, or undefined when it carries none. */
+export function relayBridgeGrantOf(value: unknown): RelayBridgeGrant | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const grant = value as { endpoint?: unknown; instance?: unknown; credential?: unknown }
+  if (typeof grant.endpoint !== 'string' || grant.endpoint === '') return undefined
+  if (typeof grant.instance !== 'string' || grant.instance === '') return undefined
+  if (grant.credential !== 'lease-secret') return undefined
+  return { endpoint: grant.endpoint, instance: grant.instance, credential: 'lease-secret' }
 }
 
 /** The error code and retry hint of a refused claim. */

@@ -4,6 +4,8 @@ Status: proposed
 
 This note supersedes the [named-tunnel relay proposal](2026-10-23-relay-named-tunnel-data-plane.md): three production readings on 2026-10-23 overturned its transport choice, so the choice is redone here, while the control-plane contract it already shipped (lease, claim/release/retire) is carried forward as a reusable asset rather than as a dead draft.
 
+The landing record is [the additive relay bridge](2026-10-23-relay-bridge-additive-implementation.md): the per-instance `mode`, the long-lived credential and socket replacement on the object are merge-ready code, not deployed yet.
+
 ## Problem
 
 A paired phone reaches its DSH instance at `https://<id>.dsh-market.com`, and every byte of that origin is served by the market Worker (`market/worker/src/relay.js`): the Worker reads one D1 row holding the instance's current `*.trycloudflare.com` quick-tunnel hostname and forwards the request through it. The origin transport is therefore a quick tunnel, and the official documentation classifies quick tunnels as a testing facility: no uptime guarantee, at most 200 in-flight requests per tunnel (excess answers `429`), no Server-Sent Events, and a hostname that changes on every restart ([Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)).

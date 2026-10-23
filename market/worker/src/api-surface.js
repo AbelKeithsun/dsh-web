@@ -629,5 +629,194 @@ export const API_ROUTES = [
         }
       }
     }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/relay/claim",
+    "summary": "Claim one relay lease for an instance and report its transport mode",
+    "doc": "为实例申领租约（隧道、ingress、CNAME）并回报该实例的传输模式",
+    "status": "200 / 400 / 403 / 405 / 429 / 502 / 503",
+    "operation": {
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "id",
+                "secret",
+                "origin"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "secret": {
+                  "type": "string"
+                },
+                "new_secret": {
+                  "type": "string"
+                },
+                "origin": {
+                  "type": "object"
+                },
+                "plugin": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Lease converged: mode, tunnel token, hostname and the bridge endpoint"
+        },
+        "400": {
+          "description": "Invalid JSON or parameters"
+        },
+        "403": {
+          "description": "Secret does not match the lease"
+        },
+        "405": {
+          "description": "Wrong method"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "502": {
+          "description": "Cloudflare API unavailable"
+        },
+        "503": {
+          "description": "Worker unconfigured or relay storage unavailable"
+        }
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/relay/release",
+    "summary": "Mark one relay lease released without removing its account resources",
+    "doc": "标记租约已释放，保留账户内资源以便再次申领",
+    "status": "200 / 400 / 403 / 405 / 503",
+    "operation": {
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "id",
+                "secret"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "secret": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Lease marked released"
+        },
+        "400": {
+          "description": "Invalid JSON or parameters"
+        },
+        "403": {
+          "description": "Secret does not match the lease"
+        },
+        "405": {
+          "description": "Wrong method"
+        },
+        "503": {
+          "description": "Relay storage unavailable"
+        }
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/relay/retire",
+    "summary": "Remove one relay lease's DNS record, tunnel and row",
+    "doc": "删除租约的 DNS 记录、隧道与数据行（唯一会移除中继来源的路径）",
+    "status": "200 / 400 / 403 / 405 / 502 / 503",
+    "operation": {
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "id",
+                "secret"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "secret": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Lease removed"
+        },
+        "400": {
+          "description": "Invalid JSON or parameters"
+        },
+        "403": {
+          "description": "Secret does not match the lease"
+        },
+        "405": {
+          "description": "Wrong method"
+        },
+        "502": {
+          "description": "Cloudflare API unavailable"
+        },
+        "503": {
+          "description": "Worker unconfigured or relay storage unavailable"
+        }
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/relay/bridge",
+    "summary": "Open the bridge connector socket of one relay instance (WebSocket upgrade)",
+    "doc": "打开实例的桥连接器 socket（WebSocket 升级，凭据为租约 id 与 secret）",
+    "status": "101 / 403 / 426 / 429 / 503",
+    "operation": {
+      "responses": {
+        "101": {
+          "description": "Connector attached (the instance's object replaces any previous socket)"
+        },
+        "403": {
+          "description": "Unknown id or wrong secret"
+        },
+        "426": {
+          "description": "Upgrade required"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Bridge not deployed or relay storage unavailable"
+        }
+      }
+    }
   }
 ]
