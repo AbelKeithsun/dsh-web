@@ -80,7 +80,7 @@ Status: proposed
 
 ### 观察面
 
-每个经桥的请求带 `x-relay-transport: bridge` 与转发的 `cf-ray`，回退时带 `x-relay-fallback: no-connector`；对象每 60 秒用 `getWebSockets().length` 采样一次在线连接数；断开原因（`deploy`、`network`、`evicted`）写进结构化日志，沿用 `wrangler.jsonc` 已开的 observability。Workers 每次发布都会在宽限期后断开存量 WebSocket（[Workers limits](https://developers.cloudflare.com/workers/platform/limits/) 的运行时更新宽限一节），所以桥必须假定「发布等于全网 socket 滚动重连」，重连退避沿用插件已有的 `RelayRegistrar` 策略。
+每个经桥的请求带 `x-relay-transport: bridge` 与转发的 `cf-ray`，回退时带 `x-relay-fallback: no-connector`；插件侧把状态、实例、端点、本地上游与最近一次拨号错误写进 `$DSH_HOME/remote-web-ui-relay-bridge.json`，因为桌面宿主把插件跑在一个没人读得到 stdout 的进程里（2026-10-23：一个从未认领的宿主整条命期都答 `no-connector`，没有任何可读痕迹）；对象每 60 秒用 `getWebSockets().length` 采样一次在线连接数；断开原因（`deploy`、`network`、`evicted`）写进结构化日志，沿用 `wrangler.jsonc` 已开的 observability。Workers 每次发布都会在宽限期后断开存量 WebSocket（[Workers limits](https://developers.cloudflare.com/workers/platform/limits/) 的运行时更新宽限一节），所以桥必须假定「发布等于全网 socket 滚动重连」，重连退避沿用插件已有的 `RelayRegistrar` 策略。
 
 ## 容量与成本算术
 
@@ -122,7 +122,7 @@ Status: proposed
 ### 切换排序
 
 1. 附加式部署：DO 命名空间、`/api/relay/bridge` 升级端点、`relay_registrations` 增加 `mode` 列且缺省 `quick`。Worker 的请求处理只多读一列，行为逐字节不变。
-2. 发布带桥连接器的插件：它开一条出站 WebSocket，同时照旧启动 quick 连接器；服务端只记录桥的存在，不切换任何实例。若这一步用的是「一次性票据 + 对象把已用写进存储」，第一次发布后全部连接都会失去且回不来（见「回退与鉴权」），所以重连凭据的形态必须在第 1 步之前定下来。
+2. 发布带桥连接器的插件：它开一条出站 WebSocket，同时照旧启动 quick 连接器；服务端只记录桥的存在，不切换任何实例。携带桥接授权的认领归传输层所有：只要中继开启且 web 服务端口已绑定就执行，不再等快速隧道启动，因此由桥接服务的实例在 `autoTunnel` 关闭时也能连到自己的对象（2026-10-23：一个 profile 解析出 `autoTunnel: false` 的桌面宿主从未认领，对象没有套接字，边缘一直答 `x-relay-fallback: no-connector`，直到认领与隧道解耦）。若这一步用的是「一次性票据 + 对象把已用写进存储」，第一次发布后全部连接都会失去且回不来（见「回退与鉴权」），所以重连凭据的形态必须在第 1 步之前定下来。
 3. 按实例翻 `mode`（先 1%，再按 `last_seen_at` 分批），Worker 在 `mode=bridge` 且对象有 socket 时走桥，其余走 quick。每一批都是一个 D1 UPDATE，秒级生效。
 4. 新版本插件默认不开 quick 隧道，只在桥不可用时按需拉起；老版本插件不受影响，永远继续用 quick 路径。
 5. 可选且最后才做的收尾：删除 quick 路径——`relay_registrations` 行、`relay.js` 的代理分支、`--http-host-header` 接线、插件的 quick 连接器。

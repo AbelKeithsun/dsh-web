@@ -58,8 +58,13 @@ describe('webServer port unsettled (0.2.1-rc.2)', () => {
     // retry timer), so sync never plans against an unsettled port
     const syncBody = bodyOf('sync')
     expect(syncBody).toContain('livePort === undefined && value.autoTunnel === true')
-    expect(syncBody).toContain('PORT_SETTLE_RETRY_MS')
+    expect(syncBody).toContain('schedulePortSettleRetry()')
     expect(syncBody).not.toContain('tunnelPlanOf(')
+    // The retry itself (and its one timer) lives in the helper the tunnel
+    // deferral and the lease claim share, so neither can schedule a second one.
+    const retry = bodyOf('schedulePortSettleRetry')
+    expect(retry).toContain('PORT_SETTLE_RETRY_MS')
+    expect(retry).toContain('if (portSettleTimer !== undefined) return')
     // The planner only runs inside the apply helper, behind the guard.
     const apply = bodyOf('applyTunnelPlan')
     expect(apply).toContain('tunnelPlanOf(value, port)')

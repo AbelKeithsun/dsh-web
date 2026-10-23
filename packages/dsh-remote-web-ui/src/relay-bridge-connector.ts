@@ -27,8 +27,11 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import https from 'node:https'
+import { dirname, join } from 'node:path'
+import { dshHome } from './dsh-home.ts'
 import type { RelayBridgeStart } from './relay-connector.ts'
 
 /** The upgrade carries the lease secret here, never in the URL. */
@@ -225,6 +228,46 @@ export type RelayBridgeState =
   | { state: 'dialing' }
   | { state: 'connected'; instance: string }
   | { state: 'failed'; error: string }
+
+/**
+ * What the connector records on disk: its state plus the lease it dials.
+ * The Desktop host runs this plugin in a process whose stdout nobody reads, so
+ * without this record a connector that never attached (or a lease that never
+ * claimed) leaves no trace at all.
+ */
+export interface RelayBridgeStateRecord {
+  state: RelayBridgeState['state']
+  instance: string
+  hostname: string
+  endpoint: string
+  upstream: string
+  /** When the record was written (ISO 8601). */
+  at: string
+  /** The dial failure, for a `failed` record. */
+  error?: string
+}
+
+/** Where the connector records its state (`$DSH_HOME/remote-web-ui-relay-bridge.json`). */
+export function relayBridgeStateFile(home: string = dshHome()): string {
+  return join(home, 'remote-web-ui-relay-bridge.json')
+}
+
+/**
+ * Record one connector state. Best effort on purpose: a home that cannot be
+ * written must never take the socket down with it.
+ * @param file - the record path (see `relayBridgeStateFile`).
+ * @param record - the state and the lease it belongs to.
+ */
+export function writeRelayBridgeState(file: string, record: RelayBridgeStateRecord): void {
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    const staged = file + '.tmp'
+    writeFileSync(staged, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 })
+    renameSync(staged, file)
+  } catch {
+    // A record that cannot land is not worth a broken connector.
+  }
+}
 
 /** Everything one bridge connector needs to run. */
 export interface RelayBridgeConnectorOptions {
@@ -615,22 +658,52 @@ export interface RelayBridgeRunner {
  * rebuilt when a later claim names a different endpoint, and stopped with the
  * relay half. The bridge keeps its socket up while the instance's mode is
  * quick, so a server-side flip needs no plugin restart.
- * @param options - a state observer (logs only).
+ * @param options - a state observer (logs and the on-disk record).
  */
-export function createRelayBridgeRunner(options: { onState?: (state: RelayBridgeState) => void } = {}): RelayBridgeRunner {
+export function createRelayBridgeRunner(options: {
+  onState?: (state: RelayBridgeState) => void
+  /** Where to record the state; `null` keeps the runner in memory only. */
+  stateFile?: string | null
+  /** The clock the record timestamps with (tests pass a fixed one). */
+  now?: () => string
+} = {}): RelayBridgeRunner {
+  const stateFile = options.stateFile === undefined ? relayBridgeStateFile() : options.stateFile
+  const now = options.now ?? (() => new Date().toISOString())
   let connector: RelayBridgeConnector | undefined
+  let lease: { instance: string; hostname: string; endpoint: string; upstream: string } | undefined
+  const observe = (state: RelayBridgeState): void => {
+    const target = lease
+    if (stateFile !== null) {
+      writeRelayBridgeState(stateFile, {
+        state: state.state,
+        instance: target?.instance ?? 'none',
+        hostname: target?.hostname ?? 'none',
+        endpoint: target?.endpoint ?? 'none',
+        upstream: target?.upstream ?? 'none',
+        at: now(),
+        ...(state.state === 'failed' ? { error: state.error } : {}),
+      })
+    }
+    options.onState?.(state)
+  }
   return {
     start(start: RelayBridgeStart): void {
       const grant = start.claim.bridge
       if (grant === undefined) return
       connector?.stop()
-      connector = new RelayBridgeConnector({
+      lease = {
+        instance: start.identity.id,
+        hostname: start.claim.hostname,
         endpoint: grant.endpoint,
+        upstream: 'http://127.0.0.1:' + String(start.port),
+      }
+      connector = new RelayBridgeConnector({
+        endpoint: lease.endpoint,
         id: start.identity.id,
         secret: start.identity.secret,
-        hostname: start.claim.hostname,
-        upstream: 'http://127.0.0.1:' + String(start.port),
-        onState: options.onState,
+        hostname: lease.hostname,
+        upstream: lease.upstream,
+        onState: observe,
       })
       connector.start()
     },

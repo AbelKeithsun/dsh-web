@@ -11,8 +11,11 @@
  * public origin -- the first test shows both sides of that gate.
  */
 import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -21,8 +24,12 @@ import {
   bridgeUpstreamHeaders,
   bridgeUpstreamHost,
   createBridgeFrameParser,
+  createRelayBridgeRunner,
   relayBridgeDialUrl,
+  relayBridgeStateFile,
+  writeRelayBridgeState,
   type RelayBridgeState,
+  type RelayBridgeStateRecord,
 } from '../src/relay-bridge-connector.ts'
 
 const ID = 'abcd1234abcd1234'
@@ -326,5 +333,82 @@ describe('the bridge connector forwards what the phone dialed', () => {
     expect(chunkOf(await answer).payload.toString('utf8')).toBe('pong:ping-1')
     expect(host.received[0].host).toBe(HOSTNAME)
     expect(host.received[0].url).toBe('/ios/v1')
+  })
+})
+
+describe('the connector state is readable where no stdout is', () => {
+  it('operator finds the dial facts in the state file after a host restart', () => {
+    // Given a $DSH_HOME the plugin may write and one record
+    const home = mkdtempSync(join(tmpdir(), 'dsh-bridge-state-'))
+    cleanups.push(async () => { rmSync(home, { recursive: true, force: true }) })
+    const file = relayBridgeStateFile(home)
+    const record: RelayBridgeStateRecord = {
+      state: 'failed',
+      instance: ID,
+      hostname: HOSTNAME,
+      endpoint: 'wss://dsh-market.com/api/relay/bridge',
+      upstream: 'http://127.0.0.1:56671',
+      at: '2026-10-23T03:30:00.000Z',
+      error: 'socket closed',
+    }
+
+    // When the connector records it
+    writeRelayBridgeState(file, record)
+
+    // Then the file names the state and the lease it belongs to, and the
+    // staged temp file never survives the write
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(record)
+    expect(readFileSync(file, 'utf8').endsWith('\n')).toBe(true)
+    expect(() => readFileSync(file + '.tmp')).toThrow()
+  })
+
+  it('operator reads the runner state from the file, not from the host log', async () => {
+    // Given a runner whose object answers the upgrade
+    const bridge = await startBridgeStandIn()
+    const host = await startHostStandIn()
+    const home = mkdtempSync(join(tmpdir(), 'dsh-bridge-runner-'))
+    cleanups.push(() => bridge.close(), () => host.close(), async () => { rmSync(home, { recursive: true, force: true }) })
+    const file = relayBridgeStateFile(home)
+    const states: RelayBridgeState[] = []
+    let markConnected = (): void => undefined
+    const connected = new Promise<void>((resolve) => { markConnected = resolve })
+    const runner = createRelayBridgeRunner({
+      stateFile: file,
+      now: () => '2026-10-23T03:30:00.000Z',
+      onState: (state) => {
+        states.push(state)
+        if (state.state === 'connected') markConnected()
+      },
+    })
+    cleanups.push(async () => { runner.stop() })
+
+    // When one accepted lease starts it
+    const attaching = bridge.nextAttach()
+    runner.start({
+      identity: { id: ID, secret: SECRET },
+      port: Number(new URL(host.origin).port),
+      claim: {
+        mode: 'bridge',
+        tunnel: { id: 'tun-1', token: 'named-token' },
+        hostname: HOSTNAME,
+        dns: { target: 'tun-1.cfargotunnel.com' },
+        bridge: { endpoint: bridge.endpoint, instance: ID, credential: 'lease-secret' },
+      },
+    })
+    // The record is written before the observer is told, so the connector's own
+    // transition (not the stand-in accepting the upgrade) is what the file holds
+    await Promise.all([bridge.nextAttach(), connected])
+
+    // Then the file names the attached state and the exact lease behind it
+    const record = JSON.parse(readFileSync(file, 'utf8')) as RelayBridgeStateRecord
+    expect(record).toEqual({
+      state: 'connected',
+      instance: ID,
+      hostname: HOSTNAME,
+      endpoint: bridge.endpoint,
+      upstream: host.origin,
+      at: '2026-10-23T03:30:00.000Z',
+    })
+    expect(runner.state.state).toBe('connected')
   })
 })
