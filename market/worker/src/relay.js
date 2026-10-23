@@ -11,18 +11,19 @@
  * instance; this worker never terminates the pairing.
  */
 
-const ID_RE = /^[a-z0-9]{16}$/
-const SECRET_RE = /^[A-Za-z0-9_-]{43}$/
+/** The id/secret shape both relay paths authenticate (see relay-control.js). */
+export const ID_RE = /^[a-z0-9]{16}$/
+export const SECRET_RE = /^[A-Za-z0-9_-]{43}$/
 /** Registration writes must name a plugin-managed quick tunnel. */
 const TARGET_ORIGIN_SUFFIX = '.trycloudflare.com'
 /** Rate limits: registration refreshes are infrequent (per tunnel start). */
-const REGISTER_WINDOW_MS = 60 * 1000
-const REGISTER_MAX_PER_IP = 30
-const REGISTER_MAX_PER_ID = 6
+export const REGISTER_WINDOW_MS = 60 * 1000
+export const REGISTER_MAX_PER_IP = 30
+export const REGISTER_MAX_PER_ID = 6
 /** Rows not seen for this long are dropped by the cron GC. */
 const REGISTRATION_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
-function json(data, status = 200, extra = {}) {
+export function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -33,12 +34,12 @@ function json(data, status = 200, extra = {}) {
   })
 }
 
-async function sha256Hex(text) {
+export async function sha256Hex(text) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-function timingSafeEqualStr(a, b) {
+export function timingSafeEqualStr(a, b) {
   if (a.length !== b.length) return false
   let diff = 0
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)

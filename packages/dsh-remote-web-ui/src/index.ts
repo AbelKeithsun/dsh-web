@@ -34,6 +34,7 @@ import { lanBindState, removeManagedBlock } from './lan-bind.ts'
 import { FORWARD_UPSTREAM_HOST, LanForwarder, type LanForwardState } from './lan-forward.ts'
 import { isHttpUrl, tunnelPlanOf } from './tunnel-plan.ts'
 import { loadRelayIdentity, RelayRegistrar, type RelayState } from './relay-registry.ts'
+import { RelayConnectorPair, createNamedRelayConnector, readPluginVersion, relayClaimKeyOf, type RelayPairState } from './relay-connector.ts'
 import { firewallActionNeeded, forwardPlanOf, isLanReachableBind, resolveManagedProfile, type AppliedFirewallState, type ForwardStopReason, type LanBindCapability, type StartupFacts } from './lan-bind-plan.ts'
 import { bindUrlHostOf, isWildcardLiteral, wildcardBindSupported, type ConfigSchemaFactory } from './host-bind-capability.ts'
 import { createInnerAuth } from './inner-auth.ts'
@@ -575,6 +576,16 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   // raw quick URL is used, exactly as before. Named tunnels keep their fixed
   // dashboard hostname and never touch the relay.
   let relayRegistrar: RelayRegistrar | undefined
+  // The named connector half: claimed on every tunnel start and run beside the
+  // quick tunnel on the same hostname. The control plane's `mode` decides which
+  // of the two the phone is served from, so both stay up and a server-side flip
+  // (or its rollback) needs no plugin restart.
+  const namedRelayConnector = createNamedRelayConnector()
+  let relayPair: RelayConnectorPair | undefined
+  /** The claim input the pair last ran for (dedupes settings-sync re-runs). */
+  let relayClaimedFor: string | undefined
+  /** The version a claim reports, read once from this package's manifest. */
+  let pluginVersion: string | undefined
   /**
    * The public base the pairing fence trusts. A tunnel reconnect must not
    * strip the host the QR still shows: named and relay hosts never change,
@@ -586,8 +597,21 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   const disposeRelayRegistrar = (unregister: boolean = false): void => {
     const registrar = relayRegistrar
     relayRegistrar = undefined
+    const pair = relayPair
+    relayPair = undefined
     publicBase.setRelay(undefined)
     relayAnnouncedFor = undefined
+    relayClaimedFor = undefined
+    // The named connector never outlives the relay half (a plan change to a
+    // manual named tunnel leaves only the operator's own tunnel running).
+    namedRelayConnector.stop()
+    if (pair !== undefined) {
+      // Toggle-off releases the lease: the tunnel and the CNAME stay, so
+      // re-enabling claims an instance that creates nothing. It never retires
+      // — the hostname is the phone's bookmark.
+      if (unregister) void pair.release().catch(() => undefined)
+      pair.dispose()
+    }
     if (registrar === undefined) return
     // Toggle-off removes the registry row so the stable origin stops
     // proxying; teardown/mode changes keep the row (the phone then sees the
@@ -620,6 +644,46 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
     }
     return relayRegistrar
   }
+  const ensureRelayPair = (): RelayConnectorPair | undefined => {
+    if (resolve().relay === false) return undefined
+    if (relayPair === undefined) {
+      try {
+        const identity = loadRelayIdentity(resolve().profile)
+        pluginVersion ??= readPluginVersion()
+        relayPair = new RelayConnectorPair(identity, {
+          startNamed: (token: string, hostname: string) => { namedRelayConnector.start(token, hostname) },
+          onState: (state: RelayPairState) => {
+            if (state.state === 'claimed') {
+              console.log(`remote-web-ui: relay lease claimed — the ${state.mode} connector serves ${state.hostname}`)
+            } else if (state.state === 'failed') {
+              // Not fatal: the quick connector keeps the origin the registry
+              // already gave the phone, and the pair retries with backoff.
+              console.warn(`remote-web-ui: relay lease claim failed (${state.error}) — the quick connector keeps serving, retrying`)
+            }
+          },
+        })
+      } catch (error) {
+        console.warn(`remote-web-ui: relay lease unavailable (${error instanceof Error ? error.message : String(error)}) — the quick tunnel path is unchanged`)
+      }
+    }
+    return relayPair
+  }
+  /**
+   * Claim the named lease for one tunnel start. Deduped on the local origin
+   * port plus the quick URL, so a settings sync never re-claims while a real
+   * restart (a new quick hostname) does — the claim is also what keeps the
+   * lease's `last_seen_at` inside the cron GC's TTL.
+   */
+  const claimRelayLeaseFor = (port: number | undefined, target: string | undefined): void => {
+    const key = relayClaimKeyOf(port, target)
+    if (key === undefined || relayClaimedFor === key) return
+    const pair = ensureRelayPair()
+    // The relay toggle being off leaves no pair: the key stays unrecorded so
+    // turning it back on claims the lease this trigger would have claimed.
+    if (pair === undefined || port === undefined) return
+    relayClaimedFor = key
+    void pair.start({ port, pluginVersion }).catch(() => undefined)
+  }
   const announceRelay = (registrar: RelayRegistrar, target: string): void => {
     if (relayAnnouncedFor === target) return
     relayAnnouncedFor = target
@@ -643,6 +707,7 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
       service.setTunnelStatus({ state: 'running', url: info.url })
       const registrar = tunnelMode === 'quick' ? ensureRelayRegistrar() : undefined
       if (registrar !== undefined) announceRelay(registrar, info.url)
+      if (tunnelMode === 'quick') claimRelayLeaseFor(ctx.webServer.port, info.url)
       runPostureProbe()
     } else if (info.phase === 'starting') {
       // A quick-tunnel restart mints a new hostname, but the old one is not
@@ -1126,6 +1191,10 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
       tunnel.start(originHostHeader === undefined
         ? plan.targetUrl
         : { kind: 'quick', targetUrl: plan.targetUrl, originHostHeader })
+      // Claim the named lease beside the quick tunnel on every start. A claim
+      // that cannot land (an unconfigured or unavailable control plane) leaves
+      // `mode` and the QR exactly where the registry put them.
+      claimRelayLeaseFor(port, liveTunnelUrl)
     } else if (plan.mode === 'named') {
       // The hostname is fixed and known before the process runs, so publish it
       // now: a named tunnel that fails to start must not leave the previous
