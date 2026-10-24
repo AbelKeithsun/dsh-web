@@ -4,6 +4,7 @@
  * origin down. The control plane decides which connector is served; this half
  * only keeps both sides up.
  */
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   RelayConnectorPair,
@@ -244,7 +245,7 @@ describe('the named connector side facts', () => {
     // Given the quick connector records its child under the DSH home
     // When the named connector records its own
     // Then the two slots differ, so neither start reaps its sibling's child
-    expect(namedTunnelChildRecordFile('/tmp/dsh')).toBe('/tmp/dsh/remote-web-ui-tunnel-child-named.json')
+    expect(namedTunnelChildRecordFile('/tmp/dsh')).toBe(join('/tmp/dsh', 'remote-web-ui-tunnel-child-named.json'))
   })
 
   it('operator sees a settings sync and a tunnel restart claim differently', () => {
