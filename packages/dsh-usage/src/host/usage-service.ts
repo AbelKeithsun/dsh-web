@@ -22,6 +22,7 @@ import { deepseekModelSpend } from '../core/pricing.ts'
 import { createLedgerDocument, deserializeLedger, foldUsage, ledgerDayKeys, localDateKey, pruneLedger, summarizeDays, totalTokens } from '../core/ledger.ts'
 import type { BalanceView, CredentialKind, ObservedSpendView, PlanView, ProviderSnapshotState, ProviderSnapshotView, UsageDayView, UsageLedgerDocument, UsageOverviewView, UsageTokenTotals } from '../core/types.ts'
 import { addTotals, emptyTotals } from '../core/types.ts'
+import { resolveSpendDisplay, type SpendDisplay } from '../core/spend.ts'
 
 /**
  * Persisted accrual state for the official DeepSeek family's real spend:
@@ -60,6 +61,12 @@ interface ProviderRoute {
 export interface UsageServiceOptions {
   pollIntervalSec: number
   retainDays: number
+  /**
+   * How the browser halves should read the stored CNY costs. Optional so a
+   * caller that predates the display setting keeps the CNY rendering (issue
+   * #1937); the overview stamps the resolved value on every document.
+   */
+  display?: SpendDisplay
 }
 
 /** Probe timeout per HTTP call. */
@@ -336,6 +343,8 @@ export class UsageService {
     const all = summarizeDays(allKeys.map((key) => this.ledger.days[key] ?? {}))
     return {
       updatedAt: Date.now(),
+      // Display only: costs stay stored in CNY (issue #1937).
+      display: resolveSpendDisplay(this.options.display),
       providers,
       current: this.currentView(),
       usage: {

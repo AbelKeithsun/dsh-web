@@ -165,6 +165,23 @@ describe('UsageFootCard content', () => {
     expect(container.querySelector('[data-dsh-part="foot-card-usage"]')?.textContent).toBe('12.3k tokens · 45 次调用')
   })
 
+  it('user who chose USD sees the same stored spend converted in the headline', () => {
+    // Given an overview carrying a priced day and a USD display at 7.2 CNY per USD
+    document.documentElement.lang = 'zh'
+    const over: UsageOverviewView = {
+      ...overview([deepseekBalance], { inputTokens: 10_000, outputTokens: 2300, calls: 45, cost: 72 }),
+      display: { currency: 'USD', cnyPerUsd: 7.2 },
+    }
+
+    // When the foot card renders
+    const { container } = render(<UsageFootCard {...cardProps(over)} />)
+
+    // Then the headline is the same stored cost read in dollars
+    const card = container.querySelector('[data-dsh-part="foot-card"]')
+    expect(card?.textContent).toContain('$10.00')
+    expect(card?.textContent).not.toContain('¥72.00')
+  })
+
   it('user sees the token headline when nothing today was priced', () => {
     // Given an overview with unpriced usage only (cost stays 0)
     document.documentElement.lang = 'zh'

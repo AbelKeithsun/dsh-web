@@ -425,11 +425,27 @@ describe('UsageSectionCard settings writes', () => {
   it('writes the rounded poll interval and keeps out-of-range drafts off the wire', () => {
     const live = fakeForm()
     render(<UsageSectionCard {...cardProps(overview(mixed))} settings={live.form} />)
-    const interval = screen.getByRole('spinbutton')
+    const interval = screen.getByLabelText(/轮询间隔|Poll interval/)
     fireEvent.change(interval, { target: { value: '120' } })
     expect(live.writes).toEqual([['pollIntervalSec', 120]])
     fireEvent.change(interval, { target: { value: '10' } })
     expect(live.writes).toEqual([['pollIntervalSec', 120]])
+  })
+
+  it('user switching the display currency gets the chosen currency and rate written', () => {
+    // Given the settings row with the display controls
+    const live = fakeForm()
+    render(<UsageSectionCard {...cardProps(overview(mixed))} settings={live.form} />)
+
+    // When the user switches the display currency to USD and edits the rate
+    fireEvent.change(screen.getByLabelText(/消费显示货币|Spend display currency/), { target: { value: 'USD' } })
+    expect(live.writes).toEqual([['spendCurrency', 'USD']])
+    fireEvent.change(screen.getByLabelText(/汇率|Exchange rate/), { target: { value: '7.15' } })
+
+    // Then both go on the wire, and an unusable rate draft stays off it
+    expect(live.writes).toEqual([['spendCurrency', 'USD'], ['cnyPerUsd', 7.15]])
+    fireEvent.change(screen.getByLabelText(/汇率|Exchange rate/), { target: { value: '0' } })
+    expect(live.writes).toEqual([['spendCurrency', 'USD'], ['cnyPerUsd', 7.15]])
   })
 })
 

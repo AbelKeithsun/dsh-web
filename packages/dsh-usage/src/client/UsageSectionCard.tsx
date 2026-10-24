@@ -18,11 +18,16 @@ import { isDeepSeekProviderRoute } from '../core/adapters.ts'
 import { deepseekPeriodAt } from '../core/pricing.ts'
 import { voucherData, drawVoucher, faceValue, formatDay, formatDenomination, loadVoucherArt } from './voucher.ts'
 import type { ObservedSpendView, ProviderSnapshotView, UsageDayView, UsageOverviewView, UsageProviderSummary, UsageTokenTotals, UsageWindowSummary } from '../core/types.ts'
+import { formatSpend, type SpendDisplay } from '../core/spend.ts'
 
 /** The settings fields this section edits (immediate-apply semantics). */
 export interface UsageSettings {
   enabled?: boolean
   pollIntervalSec?: number
+  /** Currency the spend figures are displayed in; the ledger stays CNY. */
+  spendCurrency?: 'CNY' | 'USD'
+  /** CNY per USD, consulted only while the display currency is USD. */
+  cnyPerUsd?: number
 }
 
 /** The registration-side face the section's slot entry injects. */
@@ -76,11 +81,6 @@ function formatTime(ms: number): string {
   } catch {
     return ''
   }
-}
-
-/** Formatted CNY spend estimate (the only priced currency today). */
-function formatCost(cost: number): string {
-  return '¥' + cost.toFixed(2)
 }
 
 function toneClass(percent: number): string {
@@ -394,7 +394,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             {(day?.totals.cost ?? 0) > 0 && (
               <div className={styles.providerRow} data-dsh-part="today-cost">
                 <span className={styles.providerName}>{isToday ? t('usage.today.cost') : t('usage.day.cost')}</span>
-                <span className={styles.providerTokens}>{formatCost(day?.totals.cost ?? 0)}</span>
+                <span className={styles.providerTokens}>{formatSpend(day?.totals.cost ?? 0, snapshot.display)}</span>
               </div>
             )}
             {(day?.providers.length ?? 0) > 0 && (
@@ -405,7 +405,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
                       {snapshot.providers.find((provider) => provider.provider === row.provider)?.displayName ?? row.provider}
                       {current.provider === row.provider && <span className={styles.currentBadge}>{t('usage.current')}</span>}
                     </span>
-                    <span className={styles.providerTokens}>{formatTokens(row.totals.inputTokens + row.totals.cacheReadTokens + row.totals.cacheWriteTokens + row.totals.outputTokens)} · {t('usage.calls', { n: row.totals.calls })}{row.totals.cost > 0 ? ` · ${formatCost(row.totals.cost)}` : ''}</span>
+                    <span className={styles.providerTokens}>{formatTokens(row.totals.inputTokens + row.totals.cacheReadTokens + row.totals.cacheWriteTokens + row.totals.outputTokens)} · {t('usage.calls', { n: row.totals.calls })}{row.totals.cost > 0 ? ` · ${formatSpend(row.totals.cost, snapshot.display)}` : ''}</span>
                   </div>
                 ))}
               </div>
@@ -463,6 +463,7 @@ export function UsageSectionCard(props: UsageSectionProps): ReactNode {
             // voucher falls back to that day's fold-time estimate.
             observedSpend={bankSelection === undefined ? snapshot.usage.observedSpend : undefined}
             loading={bankSelection !== undefined && bankDayLoad?.status === 'loading'}
+            display={snapshot.display}
             {...(bankDayLoad?.status === 'error' ? { error: bankDayLoad.error ?? '' } : {})}
           />
         </>
@@ -550,8 +551,8 @@ function totalOf(totals: UsageTokenTotals): number {
  * the artwork draw failure degrades to an error line and never takes the
  * section down.
  */
-function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: ObservedSpendView; loading?: boolean; error?: string }): ReactNode {
-  const { window: ledger, observedSpend, loading, error } = props
+function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: ObservedSpendView; loading?: boolean; error?: string; display?: SpendDisplay }): ReactNode {
+  const { window: ledger, observedSpend, loading, error, display } = props
   const data = voucherData(ledger)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [drawError, setDrawError] = useState<string | undefined>(undefined)
@@ -631,8 +632,8 @@ function VoucherCard(props: { window?: UsageWindowSummary; observedSpend?: Obser
             </div>
             <span className={styles.muted}>
               {observedSpend !== undefined
-                ? t('usage.bank.spend.observed', { cost: observedSpend.cny.toFixed(2), since: formatDay(observedSpend.since) })
-                : t('usage.bank.spend.estimated', { cost: data.cost.toFixed(2) })}
+                ? t('usage.bank.spend.observed', { cost: formatSpend(observedSpend.cny, display), since: formatDay(observedSpend.since) })
+                : t('usage.bank.spend.estimated', { cost: formatSpend(data.cost, display) })}
             </span>
             <span className={styles.muted}>{t('usage.bank.window', { from: data.from, to: data.to })}</span>
             <div className={styles.buttonRow}>
@@ -695,7 +696,7 @@ function SettingsRow(props: {
   const disabled = snapshot === undefined || !snapshot.writable
   const [failure, setFailure] = useState<string | undefined>(undefined)
 
-  const write = (field: 'enabled' | 'pollIntervalSec', next: boolean | number): void => {
+  const write = (field: 'enabled' | 'pollIntervalSec' | 'spendCurrency' | 'cnyPerUsd', next: boolean | number | 'CNY' | 'USD'): void => {
     setFailure(undefined)
     let answer: Promise<boolean>
     try {
@@ -737,6 +738,34 @@ function SettingsRow(props: {
             onChange={(event) => {
               const parsed = Number(event.target.value)
               if (Number.isFinite(parsed) && parsed >= 30 && parsed <= 3600) write('pollIntervalSec', Math.round(parsed))
+            }}
+          />
+        </label>
+        <label className={styles.settingItem}>
+          {t('usage.config.spendCurrency')}
+          <select
+            value={value.spendCurrency === 'USD' ? 'USD' : 'CNY'}
+            disabled={disabled}
+            onChange={(event) => { write('spendCurrency', event.target.value === 'USD' ? 'USD' : 'CNY') }}
+          >
+            <option value="CNY">CNY</option>
+            <option value="USD">USD</option>
+          </select>
+        </label>
+        <label className={styles.settingItem}>
+          {t('usage.config.cnyPerUsd')}
+          <input
+            type="number"
+            min={0.01}
+            max={1000}
+            step={0.01}
+            value={typeof value.cnyPerUsd === 'number' ? value.cnyPerUsd : 7.2}
+            disabled={disabled}
+            onChange={(event) => {
+              const parsed = Number(event.target.value)
+              // An unusable rate is simply not written: the stored value stays,
+              // and rendering falls back to the documented default rate.
+              if (Number.isFinite(parsed) && parsed >= 0.01 && parsed <= 1000) write('cnyPerUsd', Math.round(parsed * 100) / 100)
             }}
           />
         </label>

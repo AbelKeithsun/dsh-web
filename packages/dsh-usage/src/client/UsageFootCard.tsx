@@ -32,6 +32,7 @@ import { formatTokens, type UsageSettings } from './UsageSectionCard.tsx'
 import { deepseekPeriodAt } from '../core/pricing.ts'
 import { isDeepSeekProviderRoute } from '../core/adapters.ts'
 import { totalTokens } from '../core/ledger.ts'
+import { formatSpend } from '../core/spend.ts'
 import type { BalanceView, ProviderSnapshotView, UsageOverviewView } from '../core/types.ts'
 import type { UsageStoreInstance } from './usage-store.ts'
 
@@ -148,9 +149,9 @@ function spendProvider(snapshot: UsageOverviewView): string | undefined {
  */
 function headline(snapshot: UsageOverviewView): { label: string; value: string; tokenFallback: boolean; provider?: string } {
   const totals = snapshot.usage.today.totals
-  if (totals.cost > 0) return { label: t('usage.foot.cost'), value: '¥' + totals.cost.toFixed(2), tokenFallback: false, provider: spendProvider(snapshot) }
+  if (totals.cost > 0) return { label: t('usage.foot.cost'), value: formatSpend(totals.cost, snapshot.display), tokenFallback: false, provider: spendProvider(snapshot) }
   if (totals.calls > 0) return { label: t('usage.today'), value: formatTokens(totalTokens(totals)) + ' tokens', tokenFallback: true }
-  return { label: t('usage.foot.cost'), value: '¥0.00', tokenFallback: false }
+  return { label: t('usage.foot.cost'), value: formatSpend(0, snapshot.display), tokenFallback: false }
 }
 
 /** The tokens/calls sub-line under the headline; a quiet no-data line on an empty day. */

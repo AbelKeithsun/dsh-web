@@ -106,7 +106,10 @@ describe('resolveConfig', () => {
     const { resolveConfig } = await loadPlugin()
     // When resolveConfig runs
     // Then the documented defaults are resolved
-    expect(resolveConfig()).toEqual({ enabled: true, pollIntervalSec: 60, retainDays: 180 })
+    expect(resolveConfig()).toEqual({
+      enabled: true, pollIntervalSec: 60, retainDays: 180,
+      display: { currency: 'CNY', cnyPerUsd: 7.2 },
+    })
   })
 
   it('operator gets out-of-band values coerced into the enum and valid ones kept', async () => {
@@ -116,8 +119,19 @@ describe('resolveConfig', () => {
     // Then valid values pass through and the out-of-band interval falls back to the documented default
     expect(resolveConfig({ pollIntervalSec: 120, enabled: false, retainDays: 30 })).toEqual({
       enabled: false, pollIntervalSec: 120, retainDays: 30,
+      display: { currency: 'CNY', cnyPerUsd: 7.2 },
     })
     expect(resolveConfig({ pollIntervalSec: 'fast' as unknown as number }).pollIntervalSec).toBe(60)
+  })
+
+  it('operator who chose a USD display gets it resolved onto the service options', async () => {
+    // Given a saved USD display with a custom rate
+    const { resolveConfig } = await loadPlugin()
+    // When resolveConfig runs
+    const resolved = resolveConfig({ spendCurrency: 'USD', cnyPerUsd: 7.1 })
+    // Then the display travels with the other options, and an unusable rate falls back
+    expect(resolved.display).toEqual({ currency: 'USD', cnyPerUsd: 7.1 })
+    expect(resolveConfig({ spendCurrency: 'USD', cnyPerUsd: 0 }).display.cnyPerUsd).toBe(7.2)
   })
 
   it('operator gets a settings field for every config key because each one is volatile', async () => {
