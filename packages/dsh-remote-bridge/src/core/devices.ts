@@ -189,6 +189,7 @@ export class DeviceRoster {
   readonly #log: (message: string) => void
   readonly #devices = new Map<string, StoredDevice>()
   #loaded: Promise<void> | undefined
+  #writeQueue: Promise<void> = Promise.resolve()
 
   constructor(options: DeviceRosterOptions) {
     this.#file = options.file
@@ -372,8 +373,16 @@ export class DeviceRoster {
   /**
    * Write the roster atomically: same directory, 0600 from creation, flushed
    * before the rename so a crash cannot leave a truncated file in place.
+   * Writes are serialized per roster so concurrent token retirement cannot race
+   * the replacement (Windows rejects overlapping renames).
    */
   async #persist(): Promise<void> {
+    const pending = this.#writeQueue.then(() => this.#write())
+    this.#writeQueue = pending.catch(() => undefined)
+    return pending
+  }
+
+  async #write(): Promise<void> {
     const directory = dirname(this.#file)
     await mkdir(directory, { recursive: true, mode: 0o700 })
     const payload = JSON.stringify({ version: ROSTER_VERSION, devices: [...this.#devices.values()] }, null, 2)
