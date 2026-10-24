@@ -298,7 +298,7 @@ describe('gateway update route', () => {
     const declared = '>=0.1.7-rc.2 || >=0.2.0-rc.2'
 
     // When the host sits on the newer rc line
-    const allowed = updateHandler(facts, async () => manifest('1.1.0', { dsh: { engines: { dsh: declared } } }), async () => '0.2.1-rc.2')
+    const allowed = updateHandler(facts, async () => manifest('1.1.0', { dsh: { engines: { dsh: declared } } }), async () => '0.2.1-rc.3')
     const allowedResponse = response()
     await allowed.handler(request({ id: 'dsh-memoir' }), allowedResponse.res)
 
@@ -462,7 +462,7 @@ describe('gateway check-updates route', () => {
     const handler = checkUpdatesHandler(
       facts,
       async () => manifest('1.1.0', { dsh: { engines: { dsh: 'nonsense' } } }),
-      async () => '0.2.1-rc.2',
+      async () => '0.2.1-rc.3',
     )
     const captured = response()
 
@@ -490,7 +490,7 @@ describe('gateway check-updates route', () => {
     const handler = checkUpdatesHandler(
       facts,
       async () => manifest('1.1.0', { dsh: { engines: { dsh: declared } } }),
-      async () => '0.2.1-rc.2',
+      async () => '0.2.1-rc.3',
     )
     const captured = response()
 

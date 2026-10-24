@@ -1,1 +1,0 @@
-import{s as i,b as t}from"./index-FenqlmyD.js";import"./git-BU1FIAb7.js";const n="ui-onboarding",o=t.object({welcomeNoticeVersion:t.string()});function a(e){e.inject(["settings"],s=>{s.settings.register(i(n),o)})}export{a as apply};

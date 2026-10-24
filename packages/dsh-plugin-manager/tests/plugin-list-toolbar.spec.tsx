@@ -181,7 +181,7 @@ describe('updating every third-party plugin', () => {
     // Given one row the host proved too old and one it could not verify, so
     // only the second comes back without the running DSH version
     const below: PluginUpdateItem = {
-      id: 'dsh-too-old', current: '1.0.0', latest: '2.0.0', requiresDsh: '>=9.0.0', compatible: false, hostVersion: '0.2.1-rc.2',
+      id: 'dsh-too-old', current: '1.0.0', latest: '2.0.0', requiresDsh: '>=9.0.0', compatible: false, hostVersion: '0.2.1-rc.3',
     }
     const unverified: PluginUpdateItem = {
       id: 'dsh-unverified', current: '1.0.0', latest: '2.0.0', requiresDsh: '>=9.0.0', compatible: false,

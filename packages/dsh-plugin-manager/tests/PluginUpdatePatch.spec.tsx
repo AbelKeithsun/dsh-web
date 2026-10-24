@@ -281,7 +281,7 @@ describe('update application', () => {
     // Given a release the host could not evaluate at all: the row is blocked
     // but carries neither a requirement to name nor a host version it compared
     renderPatch(face({
-      checkUpdates: async () => [{ ...updateItem, compatible: false, hostVersion: '0.2.1-rc.2' }],
+      checkUpdates: async () => [{ ...updateItem, compatible: false, hostVersion: '0.2.1-rc.3' }],
     }))
     fireEvent.click(screen.getByRole('button', { name: t('checkUpdates') }))
     await waitFor(() => { expect(document.querySelector('[data-update-compat]')?.getAttribute('data-update-compat')).toBe('blocked') })
