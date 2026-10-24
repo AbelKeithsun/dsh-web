@@ -367,8 +367,11 @@
     - id: tool-subagent-control
       name: '@deepseek-ai/dsh-tool-subagent-control'
 
-    - id: tool-subagent-list-agents
-      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+    # Do not add a `@deepseek-ai/dsh-tool-subagent-control/list-agents` row
+    # back: DSH 0.2.1-rc.3 dropped that subpath export, and the control row above
+    # registers `list_agents` from its own `apply()`. A row naming the removed
+    # subpath makes the whole preset fail to mount
+    # (`tool-subagent-list-agents ... never started`), issue #1940.
 
     # `modelSelectionSettings: true` opts this row into the child-model
     # selection the Web settings page owns per Session: the tool then
