@@ -23,6 +23,9 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
  * `main` seat plus the ctx.layout panel-navigation service the board selects
  * its page through, so the row must be live before the board can contribute
  * (the board's own registrations wait on the seat declaration either way).
+ * dsh-client-ui-chat and dsh-client-ui-session joined with message-edit:
+ * ui-chat owns conversation.chat.turnTail, while ui-session supplies the
+ * Session standard props and useAccess gate that the editor consumes.
  * A rename, removal, or new inject name must update this list together with
  * its runtime-module-table evidence.
  */
@@ -33,9 +36,11 @@ const APPROVED_INJECT_MODULES = [
   '@deepseek-ai/dsh-client-connection',
   '@deepseek-ai/dsh-client-locale',
   '@deepseek-ai/dsh-client-store',
+  '@deepseek-ai/dsh-client-ui-chat',
   '@deepseek-ai/dsh-client-ui-conversation',
   '@deepseek-ai/dsh-client-ui-layout',
   '@deepseek-ai/dsh-client-ui-renderer',
+  '@deepseek-ai/dsh-client-ui-session',
   '@deepseek-ai/dsh-client-ui-settings',
   '@deepseek-ai/dsh-client-ui-sidebar',
   '@deepseek-ai/dsh-client-ui-slots',
