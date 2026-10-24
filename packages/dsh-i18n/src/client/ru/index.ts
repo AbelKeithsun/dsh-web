@@ -10,6 +10,7 @@ import { ru as agents } from './agents.ts'
 import { ru as gitGraph } from './git-graph.ts'
 import { ru as liangshen } from './liangshen.ts'
 import { ru as market } from './market.ts'
+import { ru as messageEdit } from './message-edit.ts'
 import { ru as pet } from './pet.ts'
 import { ru as pluginManager } from './plugin-manager.ts'
 import { ru as presetCenter } from './preset-center.ts'
@@ -31,6 +32,7 @@ export const ruDictionaries: Record<string, Record<string, string>> = {
   'git-graph': gitGraph,
   'liangshen': liangshen,
   'dsh-web-ui-market': market,
+  'message-edit': messageEdit,
   'pet': pet,
   'settings.pluginManager': pluginManager,
   'dsh-web-ui-preset-center': presetCenter,

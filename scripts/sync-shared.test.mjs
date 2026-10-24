@@ -49,9 +49,9 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // renders through the same chrome), which adds three client copies: the card
   // chrome, its form primitives, and the card stylesheet. It carries no
   // entry-bound form fallback, because it binds no Host settings namespace.
-  assert.equal(entries.length, 117)
+  assert.equal(entries.length, 118)
   const clientTrio = entries.filter(entry => entry.target.includes('/src/client/'))
-  assert.equal(clientTrio.length, 52)
+  assert.equal(clientTrio.length, 53)
   const hostCopies = entries.filter(entry => entry.target.includes('/src/host/')
     || entry.target.includes('/src/dsh-home.ts')
     || entry.target.includes('/src/mount-once.ts')
