@@ -1641,11 +1641,13 @@ window.__ModuleLoader__.load({
 						if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("dsh-skin-applied", { detail: { id } }));
 					} catch {}
 				} catch (err) {
-					if (err.code === "conflict" && !force) setConflict({
+					const code = err.code;
+					if (code === "conflict" && !force) setConflict({
 						kind,
 						id,
 						dest: err.dest ?? id
 					});
+					else if (code === "blocked") callout(id, t("installBlocked"));
 					else callout(id, t("installFailed", { reason: messageOf(err) }));
 				} finally {
 					setInstalling(null);
@@ -2575,6 +2577,7 @@ window.__ModuleLoader__.load({
 			"installed": "已安装",
 			"manageInPluginPage": "在插件页管理",
 			"installFailed": "安装失败：{reason}",
+			"installBlocked": "被 Cloudflare 挑战拦截：请切换网络或关闭代理后重试",
 			"installSpecInvalid": "安装来源无效，仅支持 npm 包名或 https:// git 地址",
 			"copied": "已复制",
 			"copyCommand": "复制安装命令",
@@ -2683,6 +2686,7 @@ window.__ModuleLoader__.load({
 			"installed": "Installed",
 			"manageInPluginPage": "Manage in Plugins",
 			"installFailed": "Install failed: {reason}",
+			"installBlocked": "Blocked by a Cloudflare challenge: switch network or disable the proxy, then retry",
 			"installSpecInvalid": "Invalid install source; only npm package names and https:// git URLs are supported",
 			"copied": "Copied",
 			"copyCommand": "Copy install command",

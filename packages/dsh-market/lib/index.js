@@ -1195,8 +1195,11 @@ function writeJson(res, status, body, headers = {}) {
 *  - the download URL is rebuilt from the validated rel, never taken from
 *    the client (the client only sends the asset id);
 *  - the manifest and every downloaded file are size-capped (1 MiB manifest,
-*    2000 files per asset, 200 MiB per file) and every fetch has a 30 s
-*    timeout, so a hostile manifest cannot exhaust host memory or disk;
+*    2000 files per asset, 200 MiB per file) and every fetch has a bounded
+*    per-attempt timeout (120 s by default) with exponential backoff, so a
+*    hostile manifest cannot exhaust host memory or disk while a slow or
+*    transiently unavailable origin still has a real chance to answer
+*    (issues #1941);
 *  - writes are staged in a temp dir next to the destination and renamed
 *    into place only after every file downloaded successfully, so a failed
 *    install never leaves a half-written asset directory;
@@ -1272,6 +1275,7 @@ function targetDir(dshHome, kind, id) {
 	return join(dshHome, KIND_DIR[kind], id);
 }
 var MarketInstallError = class extends Error {
+	/** `blocked` is a Cloudflare challenge: retrying cannot clear it. */
 	code;
 	constructor(code, message) {
 		super(message);
@@ -1282,13 +1286,71 @@ function isAbortError(err) {
 	const name = typeof err === "object" && err !== null ? err.name : void 0;
 	return name === "AbortError" || name === "TimeoutError";
 }
-/** fetch with a hard timeout; a timeout becomes a typed MarketInstallError. */
-async function fetchWithTimeout(url, fetchImpl, code, timeoutMs) {
-	try {
-		return await fetchImpl(url, withIdentityEncoding({ signal: AbortSignal.timeout(timeoutMs) }));
-	} catch (err) {
-		if (isAbortError(err)) throw new MarketInstallError(code, `fetch timed out after ${timeoutMs}ms: ${url}`);
-		throw err;
+/** HTTP statuses worth another attempt: the origin is overloaded or transiently unavailable. */
+function isRetryableStatus(status) {
+	return status === 408 || status === 429 || status >= 500;
+}
+/**
+* Whether a response is a Cloudflare managed challenge instead of the asset.
+* A proxy in front of dsh-market.com answers the origin's JSON with an HTML
+* challenge page (403 or 503, `cf-mitigated: challenge`, the origin's usual
+* `server: cloudflare`), which no retry can clear: the user has to switch
+* network or disable the proxy (issue #1941).
+*/
+function isCloudflareChallenge(res) {
+	if (res.headers.get("cf-mitigated") === "challenge") return true;
+	const server = res.headers.get("server") ?? "";
+	return (res.status === 403 || res.status === 503) && server.toLowerCase().includes("cloudflare");
+}
+/** Wait between two attempts; injected so a test can drive the backoff. */
+function sleep(ms) {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
+/**
+* Fetch one manifest or asset URL with a hard per-attempt timeout and
+* exponential backoff. Timeouts, transport failures and transient HTTP
+* statuses are retried; a Cloudflare challenge and an ordinary 4xx are
+* terminal on the first answer, because repeating them only wastes the user's
+* time. The last attempt always throws a typed MarketInstallError.
+* @param url - the absolute URL to fetch.
+* @param fetchImpl - the fetch implementation (host fetch, or a test seam).
+* @param code - the error code an exhausted request reports.
+* @param what - the human name of the thing being fetched, used in messages.
+* @param timeoutMs - the per-attempt timeout.
+* @param retries - extra attempts after the first.
+* @param baseDelayMs - base delay of the backoff.
+* @returns the successful response.
+*/
+async function fetchAsset(url, fetchImpl, code, what, timeoutMs, retries, baseDelayMs) {
+	const attempts = Math.max(1, Math.floor(retries) + 1);
+	for (let attempt = 1;; attempt += 1) {
+		const last = attempt >= attempts;
+		let res;
+		try {
+			res = await fetchImpl(url, withIdentityEncoding({ signal: AbortSignal.timeout(timeoutMs) }));
+		} catch (err) {
+			if (isAbortError(err)) {
+				if (!last) {
+					await sleep(baseDelayMs * 3 ** (attempt - 1));
+					continue;
+				}
+				throw new MarketInstallError(code, `${what} timed out after ${timeoutMs}ms (${attempt} attempt(s)): ${url}`);
+			}
+			if (!last) {
+				await sleep(baseDelayMs * 3 ** (attempt - 1));
+				continue;
+			}
+			throw err;
+		}
+		if (res.ok) return res;
+		if (isCloudflareChallenge(res)) throw new MarketInstallError("blocked", `Cloudflare challenge intercepted ${url} (HTTP ${res.status}): switch network or disable the proxy, then retry`);
+		if (!last && isRetryableStatus(res.status)) {
+			await sleep(baseDelayMs * 3 ** (attempt - 1));
+			continue;
+		}
+		throw new MarketInstallError(code, `${what} failed: ${res.status}`);
 	}
 }
 /**
@@ -1326,11 +1388,9 @@ async function readBodyLimited(res, maxBytes, code, what, timeoutMs) {
 	}
 	return Buffer.concat(chunks, total);
 }
-async function fetchManifest(kind, fetchImpl, maxBytes, timeoutMs) {
+async function fetchManifest(kind, fetchImpl, maxBytes, timeoutMs, retries, baseDelayMs) {
 	const url = `${MARKET_ORIGIN}/manifest/${KIND_MANIFEST[kind]}.json`;
-	const res = await fetchWithTimeout(url, fetchImpl, "manifest", timeoutMs);
-	if (!res.ok) throw new MarketInstallError("manifest", `manifest fetch failed: ${res.status}`);
-	const text = await readBodyLimited(res, maxBytes, "manifest", `manifest ${url}`, timeoutMs);
+	const text = await readBodyLimited(await fetchAsset(url, fetchImpl, "manifest", "manifest fetch", timeoutMs, retries, baseDelayMs), maxBytes, "manifest", `manifest ${url}`, timeoutMs);
 	const data = JSON.parse(text.toString("utf8"));
 	if (!data || !Array.isArray(data.items)) throw new MarketInstallError("manifest", "manifest shape invalid");
 	return data;
@@ -1344,8 +1404,10 @@ async function installAsset(kind, id, options) {
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const manifestMaxBytes = options.manifestMaxBytes ?? 1048576;
 	const fileMaxBytes = options.fileMaxBytes ?? 209715200;
-	const fetchTimeoutMs = options.fetchTimeoutMs ?? 3e4;
-	const item = (await fetchManifest(kind, fetchImpl, manifestMaxBytes, fetchTimeoutMs)).items.find((entry) => entry.id === id);
+	const fetchTimeoutMs = options.fetchTimeoutMs ?? 12e4;
+	const retries = options.retries ?? 2;
+	const retryDelayMs = options.retryDelayMs ?? 500;
+	const item = (await fetchManifest(kind, fetchImpl, manifestMaxBytes, fetchTimeoutMs, retries, retryDelayMs)).items.find((entry) => entry.id === id);
 	if (!item) throw new MarketInstallError("manifest", `asset not in manifest: ${id}`);
 	const plan = planDownload(kind, id, item.files ?? []);
 	const dest = targetDir(options.dshHome, kind, id);
@@ -1362,9 +1424,7 @@ async function installAsset(kind, id, options) {
 		mkdirSync(tmp, { recursive: true });
 		const hashes = {};
 		for (const entry of plan) {
-			const res = await fetchWithTimeout(entry.url, fetchImpl, "download", fetchTimeoutMs);
-			if (!res.ok) throw new MarketInstallError("download", `${entry.url} failed: ${res.status}`);
-			const buf = await readBodyLimited(res, fileMaxBytes, "download", entry.url, fetchTimeoutMs);
+			const buf = await readBodyLimited(await fetchAsset(entry.url, fetchImpl, "download", entry.url, fetchTimeoutMs, retries, retryDelayMs), fileMaxBytes, "download", entry.url, fetchTimeoutMs);
 			const target = join(tmp, ...entry.rel.split("/"));
 			const guard = entry.rel.split("/").slice(0, -1).join(sep);
 			if (guard) mkdirSync(join(tmp, guard), { recursive: true });
@@ -1473,14 +1533,17 @@ function makeMarketRoutes(deps = {}) {
 			return;
 		}
 		try {
+			const policy = deps.installPolicy?.() ?? {};
 			writeJson(res, 200, await installAsset(kind, id, {
 				dshHome: home,
 				force: body.force === true,
-				fetchImpl
+				fetchImpl,
+				...policy.timeoutMs === void 0 ? {} : { fetchTimeoutMs: policy.timeoutMs },
+				...policy.retries === void 0 ? {} : { retries: policy.retries }
 			}), { "cache-control": "no-store" });
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? String(err.code) : "write";
-			writeJson(res, code === "conflict" ? 409 : code === "manifest" ? 502 : 500, {
+			writeJson(res, code === "conflict" ? 409 : code === "manifest" || code === "blocked" ? 502 : 500, {
 				ok: false,
 				error: code,
 				message: err instanceof Error ? err.message : String(err)
@@ -1547,11 +1610,27 @@ function makeMarketRoutes(deps = {}) {
 const name = "ui-market";
 /** Services the routes need; the gateway requires the host webserver. */
 const inject = ["webServer"];
-const Config = Schema.object({ enabled: Schema.boolean().default(true).volatile() });
+const Config = Schema.object({
+	enabled: Schema.boolean().default(true).volatile(),
+	installTimeoutSec: Schema.number().min(30).max(600).default(120).volatile(),
+	installRetries: Schema.number().min(0).max(4).default(2).volatile()
+});
+/**
+* Read one volatile config field, following the live reference the schema
+* produces (a settings save commits in place and does not remount the row).
+*/
+function readConfigNumber(field, fallback) {
+	const live = typeof field === "object" && field !== null && typeof field.get === "function" ? field.get() : field;
+	return typeof live === "number" && Number.isFinite(live) ? live : fallback;
+}
 /** Mount the install gateway (once). */
 const apply = mountOnce("@linxin666/dsh-client-ui-market", applyImpl);
-function applyImpl(ctx) {
-	const routes = makeMarketRoutes();
+function applyImpl(ctx, config) {
+	const installPolicy = () => ({
+		timeoutMs: readConfigNumber(config?.installTimeoutSec, 120) * 1e3,
+		retries: readConfigNumber(config?.installRetries, 2)
+	});
+	const routes = makeMarketRoutes({ installPolicy });
 	for (const route of routes) try {
 		ctx.effect(() => {
 			const dispose = ctx.webServer.register(route);

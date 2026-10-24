@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { brotliCompressSync } from 'node:zlib'
 import {
+  DEFAULT_INSTALL_RETRIES,
+  FETCH_TIMEOUT_MS,
   FILE_MAX_BYTES,
   MANIFEST_MAX_BYTES,
   MARKET_ORIGIN,
@@ -310,6 +312,134 @@ describe('installAsset limits', () => {
     await expect(installAsset('skin', 'whale-song', { dshHome: home, fetchImpl, fileMaxBytes: 1024 }))
       .rejects.toMatchObject({ code: 'download', message: expect.stringMatching(/exceeds/) })
     expect(existsSync(targetDir(home, 'skin', 'whale-song'))).toBe(false)
+  })
+
+  it('operator gets a per-attempt timeout long enough for the published manifest', () => {
+    // Given the installer's default budget
+    // When a caller configures nothing
+    // Then one attempt gets at least two minutes, because the manifest alone
+    // measured 68.5 s on a direct connection (issue #1941)
+    expect(FETCH_TIMEOUT_MS).toBeGreaterThanOrEqual(120_000)
+    expect(DEFAULT_INSTALL_RETRIES).toBeGreaterThanOrEqual(2)
+  })
+
+  // A self-contained manifest for the limits block: the shared fixture lives
+  // in the sibling describe.
+  const skinsManifest = {
+    items: [{ id: 'whale-song', files: ['skin.json', 'skin.css', 'assets/whale-art.webp'] }],
+  }
+  const manifestUrl = MARKET_ORIGIN + '/manifest/skins.json'
+
+  it('operator gets the asset installed after one transient 503 on the manifest', async () => {
+    const home = tmpHome()
+    let manifestCalls = 0
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === manifestUrl) {
+        manifestCalls += 1
+        // Given the origin answers the first manifest request with 503
+        if (manifestCalls === 1) return new Response('busy', { status: 503 })
+        return new Response(JSON.stringify(skinsManifest), { status: 200 })
+      }
+      return new Response('data-' + (url.split('/').pop() ?? ''), { status: 200 })
+    }) as typeof fetch
+
+    // When the install runs
+    const result = await installAsset('skin', 'whale-song', { dshHome: home, fetchImpl, retryDelayMs: 0 })
+
+    // Then the second attempt succeeds and the asset is written once
+    expect(result.ok).toBe(true)
+    expect(manifestCalls).toBe(2)
+    expect(existsSync(targetDir(home, 'skin', 'whale-song'))).toBe(true)
+  })
+
+  it('operator gets the asset installed after one transient 500 on a file', async () => {
+    // Given a manifest that answers and one file that fails once with 500
+    const home = tmpHome()
+    let fileCalls = 0
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === manifestUrl) return new Response(JSON.stringify(skinsManifest), { status: 200 })
+      if (url.endsWith('/skin.css')) {
+        fileCalls += 1
+        if (fileCalls === 1) return new Response('busy', { status: 500 })
+      }
+      return new Response('data-' + (url.split('/').pop() ?? ''), { status: 200 })
+    }) as typeof fetch
+
+    // When the install runs
+    const result = await installAsset('skin', 'whale-song', { dshHome: home, fetchImpl, retryDelayMs: 0 })
+
+    // Then the retried file arrives and the asset is written once
+    expect(result.ok).toBe(true)
+    expect(fileCalls).toBe(2)
+  })
+
+  it('operator gets a download error without a retry when a file is missing', async () => {
+    const home = tmpHome()
+    let fileCalls = 0
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === manifestUrl) return new Response(JSON.stringify(skinsManifest), { status: 200 })
+      if (url.endsWith('/skin.css')) {
+        fileCalls += 1
+        return new Response('nope', { status: 404 })
+      }
+      return new Response('data-' + (url.split('/').pop() ?? ''), { status: 200 })
+    }) as typeof fetch
+
+    // Given an asset request that answers 404
+    // When the install runs
+    // Then it fails as a download error without burning the retry budget
+    await expect(installAsset('skin', 'whale-song', { dshHome: home, fetchImpl, retryDelayMs: 0 }))
+      .rejects.toMatchObject({ code: 'download', message: expect.stringMatching(/404/) })
+    expect(fileCalls).toBe(1)
+    expect(existsSync(targetDir(home, 'skin', 'whale-song'))).toBe(false)
+  })
+
+  it('operator gets an actionable blocked error when a Cloudflare challenge intercepts the install', async () => {
+    const home = tmpHome()
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls += 1
+      return new Response('<!DOCTYPE html><title>Just a moment...</title>', {
+        status: 403,
+        headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' },
+      })
+    }) as typeof fetch
+
+    // Given a proxy intercepting the manifest with a managed challenge
+    // When the install runs
+    // Then it fails as blocked, says what to do, and does not retry the challenge
+    await expect(installAsset('skin', 'whale-song', { dshHome: home, fetchImpl, retryDelayMs: 0 }))
+      .rejects.toMatchObject({
+        code: 'blocked',
+        message: expect.stringMatching(/Cloudflare challenge.*switch network or disable the proxy/i),
+      })
+    expect(calls).toBe(1)
+    expect(existsSync(targetDir(home, 'skin', 'whale-song'))).toBe(false)
+  })
+
+  it('operator whose manifest fetch times out spends every configured attempt', async () => {
+    // Given a request that never answers
+    const home = tmpHome()
+    let calls = 0
+    const fetchImpl = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        if (signal === null || signal === undefined) return
+        if (signal.aborted) { reject(signal.reason); return }
+        signal.addEventListener('abort', () => reject(signal.reason))
+      })
+    }) as typeof fetch
+
+    // When the install runs with a budget of two retries
+    await expect(installAsset('skin', 'whale-song', { dshHome: home, fetchImpl, fetchTimeoutMs: 20, retryDelayMs: 0 }))
+      .rejects.toMatchObject({ code: 'manifest', message: expect.stringMatching(/timed out/) })
+
+    // Then all three attempts were spent before the install gave up
+    expect(calls).toBe(3)
   })
 
   it('times out a manifest fetch after the configured timeout', async () => {

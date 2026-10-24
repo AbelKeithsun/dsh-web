@@ -567,6 +567,8 @@ export function MarketCard(props: MarketCardProps): ReactNode {
       const code = (err as { code?: string }).code
       if (code === 'conflict' && !force) {
         setConflict({ kind, id, dest: (err as { dest?: string }).dest ?? id })
+      } else if (code === 'blocked') {
+        callout(id, t('installBlocked'))
       } else {
         callout(id, t('installFailed', { reason: messageOf(err) }))
       }

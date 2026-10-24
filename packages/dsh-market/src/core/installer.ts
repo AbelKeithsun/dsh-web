@@ -15,8 +15,11 @@
  *  - the download URL is rebuilt from the validated rel, never taken from
  *    the client (the client only sends the asset id);
  *  - the manifest and every downloaded file are size-capped (1 MiB manifest,
- *    2000 files per asset, 200 MiB per file) and every fetch has a 30 s
- *    timeout, so a hostile manifest cannot exhaust host memory or disk;
+ *    2000 files per asset, 200 MiB per file) and every fetch has a bounded
+ *    per-attempt timeout (120 s by default) with exponential backoff, so a
+ *    hostile manifest cannot exhaust host memory or disk while a slow or
+ *    transiently unavailable origin still has a real chance to answer
+ *    (issues #1941);
  *  - writes are staged in a temp dir next to the destination and renamed
  *    into place only after every file downloaded successfully, so a failed
  *    install never leaves a half-written asset directory;
@@ -70,8 +73,18 @@ export const MAX_FILES_PER_ASSET = 2000
 /** Per-file download size cap (bytes). */
 export const FILE_MAX_BYTES = 200 * 1024 * 1024
 
-/** Per-request timeout (ms). */
-export const FETCH_TIMEOUT_MS = 30_000
+/**
+ * Per-attempt timeout (ms). 120 s rather than the old 30 s: the published
+ * manifest alone is ~190 KiB and measured 68.5 s on a direct connection, so a
+ * 30 s budget made a correct download look like a hang (issue #1941).
+ */
+export const FETCH_TIMEOUT_MS = 120_000
+
+/** Extra attempts per request after the first (one try plus two retries). */
+export const DEFAULT_INSTALL_RETRIES = 2
+
+/** Base delay (ms) of the exponential backoff between attempts. */
+export const RETRY_BASE_DELAY_MS = 500
 
 export type MarketKind = 'skin' | 'pet' | 'preset'
 
@@ -167,8 +180,12 @@ export interface InstallOptions {
   manifestMaxBytes?: number
   /** Per-file size cap in bytes (default FILE_MAX_BYTES). */
   fileMaxBytes?: number
-  /** Per-request timeout in ms (default FETCH_TIMEOUT_MS). */
+  /** Per-attempt timeout in ms (default FETCH_TIMEOUT_MS). */
   fetchTimeoutMs?: number
+  /** Extra attempts per request after the first (default DEFAULT_INSTALL_RETRIES). */
+  retries?: number
+  /** Base delay of the retry backoff in ms (default RETRY_BASE_DELAY_MS). */
+  retryDelayMs?: number
 }
 
 export interface InstallResult {
@@ -180,8 +197,9 @@ export interface InstallResult {
 }
 
 export class MarketInstallError extends Error {
-  readonly code: 'manifest' | 'download' | 'conflict' | 'write'
-  constructor(code: 'manifest' | 'download' | 'conflict' | 'write', message: string) {
+  /** `blocked` is a Cloudflare challenge: retrying cannot clear it. */
+  readonly code: 'manifest' | 'download' | 'conflict' | 'write' | 'blocked'
+  constructor(code: 'manifest' | 'download' | 'conflict' | 'write' | 'blocked', message: string) {
     super(message)
     this.code = code
   }
@@ -192,23 +210,88 @@ function isAbortError(err: unknown): boolean {
   return name === 'AbortError' || name === 'TimeoutError'
 }
 
-/** fetch with a hard timeout; a timeout becomes a typed MarketInstallError. */
-async function fetchWithTimeout(
+/** HTTP statuses worth another attempt: the origin is overloaded or transiently unavailable. */
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500
+}
+
+/**
+ * Whether a response is a Cloudflare managed challenge instead of the asset.
+ * A proxy in front of dsh-market.com answers the origin's JSON with an HTML
+ * challenge page (403 or 503, `cf-mitigated: challenge`, the origin's usual
+ * `server: cloudflare`), which no retry can clear: the user has to switch
+ * network or disable the proxy (issue #1941).
+ */
+function isCloudflareChallenge(res: Response): boolean {
+  if (res.headers.get('cf-mitigated') === 'challenge') return true
+  const server = res.headers.get('server') ?? ''
+  return (res.status === 403 || res.status === 503) && server.toLowerCase().includes('cloudflare')
+}
+
+/** Wait between two attempts; injected so a test can drive the backoff. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, ms) })
+}
+
+/**
+ * Fetch one manifest or asset URL with a hard per-attempt timeout and
+ * exponential backoff. Timeouts, transport failures and transient HTTP
+ * statuses are retried; a Cloudflare challenge and an ordinary 4xx are
+ * terminal on the first answer, because repeating them only wastes the user's
+ * time. The last attempt always throws a typed MarketInstallError.
+ * @param url - the absolute URL to fetch.
+ * @param fetchImpl - the fetch implementation (host fetch, or a test seam).
+ * @param code - the error code an exhausted request reports.
+ * @param what - the human name of the thing being fetched, used in messages.
+ * @param timeoutMs - the per-attempt timeout.
+ * @param retries - extra attempts after the first.
+ * @param baseDelayMs - base delay of the backoff.
+ * @returns the successful response.
+ */
+async function fetchAsset(
   url: string,
   fetchImpl: typeof fetch,
   code: 'manifest' | 'download',
+  what: string,
   timeoutMs: number,
+  retries: number,
+  baseDelayMs: number,
 ): Promise<Response> {
-  try {
+  const attempts = Math.max(1, Math.floor(retries) + 1)
+  for (let attempt = 1; ; attempt += 1) {
+    const last = attempt >= attempts
     // The host's built-in fetch loses content-encoding decompression once npm
     // undici loads; withIdentityEncoding keeps the market origin from
     // compressing at all (full rationale in shared/host/http.ts).
-    return await fetchImpl(url, withIdentityEncoding({ signal: AbortSignal.timeout(timeoutMs) }))
-  } catch (err) {
-    if (isAbortError(err)) {
-      throw new MarketInstallError(code, `fetch timed out after ${timeoutMs}ms: ${url}`)
+    let res: Response
+    try {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one request per attempt is the point of this loop.
+      res = await fetchImpl(url, withIdentityEncoding({ signal: AbortSignal.timeout(timeoutMs) }))
+    } catch (err) {
+      if (isAbortError(err)) {
+        // oxlint-disable-next-line eslint/no-await-in-loop -- the backoff between retries is the point of this loop.
+        if (!last) { await sleep(baseDelayMs * 3 ** (attempt - 1)); continue }
+        throw new MarketInstallError(code, `${what} timed out after ${timeoutMs}ms (${attempt} attempt(s)): ${url}`)
+      }
+      // A transport failure (DNS, reset, TLS) is transient in practice; reserve
+      // the retry budget for it instead of failing the whole install at once.
+      // oxlint-disable-next-line eslint/no-await-in-loop -- the backoff between retries is the point of this loop.
+      if (!last) { await sleep(baseDelayMs * 3 ** (attempt - 1)); continue }
+      throw err
     }
-    throw err
+    if (res.ok) return res
+    if (isCloudflareChallenge(res)) {
+      throw new MarketInstallError(
+        'blocked',
+        `Cloudflare challenge intercepted ${url} (HTTP ${res.status}): switch network or disable the proxy, then retry`,
+      )
+    }
+    if (!last && isRetryableStatus(res.status)) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- the backoff between retries is the point of this loop.
+      await sleep(baseDelayMs * 3 ** (attempt - 1))
+      continue
+    }
+    throw new MarketInstallError(code, `${what} failed: ${res.status}`)
   }
 }
 
@@ -265,10 +348,11 @@ async function fetchManifest(
   fetchImpl: typeof fetch,
   maxBytes: number,
   timeoutMs: number,
+  retries: number,
+  baseDelayMs: number,
 ): Promise<MarketManifest> {
   const url = `${MARKET_ORIGIN}/manifest/${KIND_MANIFEST[kind]}.json`
-  const res = await fetchWithTimeout(url, fetchImpl, 'manifest', timeoutMs)
-  if (!res.ok) throw new MarketInstallError('manifest', `manifest fetch failed: ${res.status}`)
+  const res = await fetchAsset(url, fetchImpl, 'manifest', 'manifest fetch', timeoutMs, retries, baseDelayMs)
   const text = await readBodyLimited(res, maxBytes, 'manifest', `manifest ${url}`, timeoutMs)
   const data = JSON.parse(text.toString('utf8')) as MarketManifest
   if (!data || !Array.isArray(data.items)) throw new MarketInstallError('manifest', 'manifest shape invalid')
@@ -289,7 +373,9 @@ export async function installAsset(
   const manifestMaxBytes = options.manifestMaxBytes ?? MANIFEST_MAX_BYTES
   const fileMaxBytes = options.fileMaxBytes ?? FILE_MAX_BYTES
   const fetchTimeoutMs = options.fetchTimeoutMs ?? FETCH_TIMEOUT_MS
-  const manifest = await fetchManifest(kind, fetchImpl, manifestMaxBytes, fetchTimeoutMs)
+  const retries = options.retries ?? DEFAULT_INSTALL_RETRIES
+  const retryDelayMs = options.retryDelayMs ?? RETRY_BASE_DELAY_MS
+  const manifest = await fetchManifest(kind, fetchImpl, manifestMaxBytes, fetchTimeoutMs, retries, retryDelayMs)
   const item = manifest.items.find((entry) => entry.id === id)
   if (!item) throw new MarketInstallError('manifest', `asset not in manifest: ${id}`)
   const plan = planDownload(kind, id, item.files ?? [])
@@ -311,8 +397,7 @@ export async function installAsset(
     mkdirSync(tmp, { recursive: true })
     const hashes: Record<string, string> = {}
     for (const entry of plan) {
-      const res = await fetchWithTimeout(entry.url, fetchImpl, 'download', fetchTimeoutMs)
-      if (!res.ok) throw new MarketInstallError('download', `${entry.url} failed: ${res.status}`)
+      const res = await fetchAsset(entry.url, fetchImpl, 'download', entry.url, fetchTimeoutMs, retries, retryDelayMs)
       const buf = await readBodyLimited(res, fileMaxBytes, 'download', entry.url, fetchTimeoutMs)
       const target = join(tmp, ...entry.rel.split('/'))
       const guard = entry.rel.split('/').slice(0, -1).join(sep)

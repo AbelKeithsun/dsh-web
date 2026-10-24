@@ -25,17 +25,51 @@ export const inject = ['webServer']
 export interface Config {
   /** Master switch for the market card. */
   enabled?: boolean
+  /** Per-attempt download timeout in seconds, 30-600. */
+  installTimeoutSec?: number
+  /** Extra attempts per install request after the first, 0-4. */
+  installRetries?: number
 }
 
 export const Config = z.object({
   enabled: z.boolean().default(true).volatile(),
+  // The published manifest alone is ~190 KiB and can take a minute on a slow
+  // link, so the old hard-coded 30 s made a healthy install look like a hang.
+  // Both knobs are operator settings rather than constants (issue #1941).
+  installTimeoutSec: z.number().min(30).max(600).default(120).volatile(),
+  installRetries: z.number().min(0).max(4).default(2).volatile(),
 })
+
+/** The effective install network policy derived from the row config. */
+interface InstallPolicy {
+  /** Per-attempt timeout in ms. */
+  timeoutMs: number
+  /** Extra attempts after the first. */
+  retries: number
+}
+
+/**
+ * Read one volatile config field, following the live reference the schema
+ * produces (a settings save commits in place and does not remount the row).
+ */
+function readConfigNumber(field: unknown, fallback: number): number {
+  const live = typeof field === 'object' && field !== null && typeof (field as { get?: unknown }).get === 'function'
+    ? (field as { get(): unknown }).get()
+    : field
+  return typeof live === 'number' && Number.isFinite(live) ? live : fallback
+}
 
 /** Mount the install gateway (once). */
 export const apply = mountOnce('@linxin666/dsh-client-ui-market', applyImpl)
 
-function applyImpl(ctx: Context): void {
-  const routes = makeMarketRoutes()
+function applyImpl(ctx: Context, config?: Config): void {
+  // Resolved per request, not at mount time: a settings save must reach the
+  // next install without remounting the routes.
+  const installPolicy = (): InstallPolicy => ({
+    timeoutMs: readConfigNumber(config?.installTimeoutSec, 120) * 1000,
+    retries: readConfigNumber(config?.installRetries, 2),
+  })
+  const routes = makeMarketRoutes({ installPolicy })
   for (const route of routes) {
     try {
       ctx.effect(() => {

@@ -29,6 +29,7 @@ export const ru: Record<string, string> = {
   'install': 'Установить',
   'install.path': 'Каталог установки: {path}',
   'installFailed': 'Ошибка установки: {reason}.',
+  'installBlocked': 'Заблокировано проверкой Cloudflare: переключите сеть или отключите прокси и повторите попытку.',
   'installNow': 'Установить в один клик',
   'installSpecInvalid': 'Недопустимый источник установки; поддерживаются только имена npm-пакетов и git-URL вида https://.',
   'installed': 'Установлено',

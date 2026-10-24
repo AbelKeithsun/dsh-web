@@ -32,6 +32,11 @@ export interface MakeMarketRoutesDeps {
   fetchImpl?: typeof fetch
   /** Runtime hook for tests. */
   now?: () => number
+  /**
+   * The effective install network policy, resolved per request so a settings
+   * save reaches the next install (issue #1941).
+   */
+  installPolicy?: () => { timeoutMs?: number; retries?: number }
 }
 
 /** Build the market install routes. */
@@ -65,15 +70,19 @@ export function makeMarketRoutes(deps: MakeMarketRoutesDeps = {}): WebRoute[] {
       return
     }
     try {
+      const policy = deps.installPolicy?.() ?? {}
       const result = await installAsset(kind, id, {
         dshHome: home,
         force: body.force === true,
         fetchImpl,
+        ...(policy.timeoutMs === undefined ? {} : { fetchTimeoutMs: policy.timeoutMs }),
+        ...(policy.retries === undefined ? {} : { retries: policy.retries }),
       })
       writeJson(res, 200, result, { 'cache-control': 'no-store' })
     } catch (err) {
       const code = err instanceof Error && 'code' in err ? String((err as { code: unknown }).code) : 'write'
-      const status = code === 'conflict' ? 409 : code === 'manifest' ? 502 : 500
+      // A Cloudflare challenge is an upstream failure, not the caller's fault.
+      const status = code === 'conflict' ? 409 : code === 'manifest' || code === 'blocked' ? 502 : 500
       writeJson(res, status, { ok: false, error: code, message: err instanceof Error ? err.message : String(err) }, { 'cache-control': 'no-store' })
     }
   }
