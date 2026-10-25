@@ -324,10 +324,19 @@ export function delegationDenialReason(input) {
   }
   // A tool mounted without route fields cannot be handed the pair a policy
   // expects, so it is policed through the route its child would inherit.
+  //
+  // A COMPLETE pair is never reclassified here. The probe resolves the registry
+  // view from the call, which can be a scope that does not carry this preset's
+  // delegation registration, so it can answer "no route fields" for a tool the
+  // model was in fact shown WITH them. Denying the pair there produced a denial
+  // no call could satisfy and made every routed dispatch impossible. The pair
+  // still faces the allowlist check below, so this branch can only soften an
+  // impossible denial — never an authorization.
   const declares = probe?.(agent, toolName)
   if (declares === false) {
-    if (complete) return overrideReason(toolName, named.provider, named.model, allowed)
-    return inheritedRouteDenial(agent, toolName, allowed)
+    // A bare or half-named call keeps the old behaviour: police the route the
+    // child would inherit. Only the COMPLETE pair falls through.
+    if (!complete) return inheritedRouteDenial(agent, toolName, allowed)
   }
   if (!complete) return missingPairReason(toolName, named, inheritedRouteOf(agent), allowed)
   if (!routesInclude(allowed, named.provider, named.model)) {

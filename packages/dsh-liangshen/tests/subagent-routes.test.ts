@@ -189,6 +189,21 @@ describe('liangshen-subagent-routes', () => {
     })).toContain('names no provider or model')
   })
 
+  it('operator keeps a complete authorized pair even when the probe reports no route fields', () => {
+    // Given a registry view that cannot see this preset's delegation registration
+    // (the probe answers false), When the call names an authorized pair, Then the
+    // pair still runs — a denial there is one no call could satisfy.
+    expect(delegationDenialReason({
+      agent: agentAt(PARENT_ROUTE), toolName: 'subagent', args: callArgs(PARENT_ROUTE), sessions: undefined,
+      probe: () => false,
+    })).toBeUndefined()
+    // Then: an off-list pair is refused for being off-list, not for its shape.
+    expect(delegationDenialReason({
+      agent: agentAt(PARENT_ROUTE), toolName: 'subagent', args: callArgs(OFF_LIST_ROUTE), sessions: undefined,
+      probe: () => false,
+    })).toContain('is not on the Session allowlist')
+  })
+
   it('operator sees an empty recorded allowlist refuse every delegation', () => {
     // Given a recorded but empty list, When a delegation runs, Then nothing is
     // authorized and the denial says so rather than reading as "no policy".
