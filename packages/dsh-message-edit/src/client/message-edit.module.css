@@ -42,8 +42,11 @@
 .editor {
   display: flex;
   flex-direction: column;
+  align-self: center;
   gap: 8px;
-  width: min(100%, 720px);
+  /* Match the composer: it extends 16px beyond each side of the chat column. */
+  width: calc(100% + 32px);
+  max-width: var(--dsh-composer-card-max-width);
   box-sizing: border-box;
   padding: 12px;
   border: 1px solid var(--dsw-alias-border-l2);
