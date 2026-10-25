@@ -101,6 +101,11 @@
     - id: web-ui-i18n
       name: '@linxin666/dsh-i18n'
 
+# from ../dsh-browser-view
+- insert:
+    - id: web-ui-browser-view
+      name: '@linxin666/dsh-client-ui-browser-view'
+
 # inactive by default (opt-in rows): these ship disabled; each is enabled per row in the
 # plugin manager, whose enable writes a user-layer "disabled: false" override that wins.
 - id: web-ui-ssh

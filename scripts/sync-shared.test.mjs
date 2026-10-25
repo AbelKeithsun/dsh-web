@@ -49,7 +49,10 @@ test('copies cover the settings trio for all consumers plus host and http helper
   // renders through the same chrome), which adds three client copies: the card
   // chrome, its form primitives, and the card stylesheet. It carries no
   // entry-bound form fallback, because it binds no Host settings namespace.
-  assert.equal(entries.length, 118)
+  // dsh-browser-view adds one host copy of loopback.ts: its panel socket and
+  // status route drive a real browser, so the route family reuses the shared
+  // fence instead of restating it.
+  assert.equal(entries.length, 119)
   const clientTrio = entries.filter(entry => entry.target.includes('/src/client/'))
   assert.equal(clientTrio.length, 53)
   const hostCopies = entries.filter(entry => entry.target.includes('/src/host/')
@@ -59,7 +62,7 @@ test('copies cover the settings trio for all consumers plus host and http helper
     || entry.target.includes('/src/pair-access.ts')
     || entry.target.includes('/src/agent/')
     || entry.target.endsWith('/packages/dsh-task-board/src/http.ts'))
-  assert.equal(hostCopies.length, 47)
+  assert.equal(hostCopies.length, 48)
 })
 
 test('checkSync detects drift and applySync repairs it', async () => {
