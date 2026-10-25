@@ -690,6 +690,36 @@ describe('liangshen-minimal-prompt', () => {
       expect(text).not.toMatch(/\{\{/)
     })
 
+    test('operator forks a same-route child only after checking that route is allowed', () => {
+      // Given the appended block, When the fork guidance is read, Then a fork
+      // on the current route is named as the cheapest same-route child, and the
+      // allowlist check it owes is stated as the model's job.
+      expect(DISPATCHER_RULES).toContain('the CHEAPEST form of a same-route child')
+      expect(DISPATCHER_RULES)
+        .toContain('confirm your own provider/model is among the routes list_subagent_models returned')
+      // Then: the enforcement the old text promised is attributed to the layer
+      // that actually has it, because the built-in assertion returns early
+      // unless the call names a route and only a host-plane guard can police an
+      // inherited one.
+      expect(DISPATCHER_RULES).toContain('The built-in assertion does not check an inherited route')
+      expect(DISPATCHER_RULES).toContain('a deployment MAY police inherit-only tools from the host plane')
+      expect(DISPATCHER_RULES).toContain('That refusal is not fixable by any argument')
+      expect(DISPATCHER_RULES).not.toContain('the guard still validates the route it inherits')
+      // Then: the other half of the same design is stated where routing is
+      // decided: a tool mounted without route fields is inherit mode, so it
+      // cannot be handed the pair the allowlist expects.
+      expect(DISPATCHER_RULES).toContain('is in INHERIT mode')
+      expect(DISPATCHER_RULES).toContain('demanding a pair from it is a denial no call can satisfy')
+      // Then: the superseded ban is gone rather than left beside its
+      // replacement, so the block holds one rule for one decision.
+      expect(DISPATCHER_RULES).not.toContain('never as a shortcut around explicit routing')
+      expect(DISPATCHER_RULES).not.toContain('subagent_fork will be hard-rejected')
+      // Then: the provenance record names the correction, so a later
+      // re-extraction that reverts it fails the freshness contract.
+      expect(DISPATCHER_RULES_PROVENANCE.corrections.some((entry) =>
+        entry.rule === 'R2 fork' && entry.superseded.startsWith('subagent_fork deliberately shares'))).toBe(true)
+    })
+
     test('operator gets the local additions after the reference block, which stays verbatim', async () => {
       // Given the switch on, When the operator assembles the prompt, Then the
       // local additions ride after the last reference sentence and the
@@ -795,13 +825,14 @@ describe('liangshen-minimal-prompt', () => {
       // failing test rather than a silent revert.
       expect(DISPATCHER_RULES_PROVENANCE.package).toBe('@eddyskywalker/dsh-chatgpt-subscription')
       expect(DISPATCHER_RULES_PROVENANCE.reExtractedAt).toBe('2026-10-18')
-      expect(DISPATCHER_RULES_PROVENANCE.corrections.map((entry) => entry.rule)).toEqual(['R2', 'R8', 'R6/R7', 'R0/R5'])
+      expect(DISPATCHER_RULES_PROVENANCE.corrections.map((entry) => entry.rule)).toEqual(['R2', 'R8', 'R6/R7', 'R0/R5', 'R2 fork'])
       // Each correction is really in the text, not only in the record.
       expect(DISPATCHER_RULES).toContain('[State: Unlisted]')
       expect(DISPATCHER_RULES).toContain('is not one, because delegation still works there')
       expect(DISPATCHER_RULES).toContain('1 first attempt + at most 2 re-dispatches = at most 3 runs total')
       expect(DISPATCHER_RULES).toContain('(5 is a cap, not a range and not a target)')
       expect(DISPATCHER_RULES).toContain('[Before every turn] Scan the task list for items that will escalate')
+      expect(DISPATCHER_RULES).toContain('The built-in assertion does not check an inherited route')
       // The superseded readings are gone: a mounted tool is not an allowlist, and
       // an empty allowlist is not a fallback ground.
       expect(DISPATCHER_RULES).not.toContain('always appear or disappear together, so this single signal is sufficient')

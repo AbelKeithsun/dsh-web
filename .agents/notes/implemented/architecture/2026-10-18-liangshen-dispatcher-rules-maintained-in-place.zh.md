@@ -22,7 +22,7 @@ Status: implemented
 - `DISPATCHER_RULES` 于 2026-10-18 从来源包发布的谱系（一个真实 DSH 部署组装出的调度者规则集）重新抽取，承载 R0.5、R0、R-G、R1 到 R8、R-W 与二十条反模式。
 - `DISPATCHER_RULES_PROVENANCE` 记录来源包、承继版本、重抽日期、段的清单，以及每一条就地更正的「被取代的句子 / 替换文本 / 为什么」。这条记录就是新鲜度契约：此后任何一次重抽若丢掉某条更正，`tests/minimal-prompt.test.ts` 会红。
 - `tools/check-dispatcher-rules.mjs` 是漂移检查。来源包已安装时它逐句比对两份文本并报告差异；未安装时明说并正常退出，因为「不存在」不是漂移的证据。
-- 更正是出处记录里点名的四条：R2 的三态、R8 被撤回的理由、R6/R7 记录化的重派次数与每轮扫描、R0/R5 的上限即上限与 [Limits] 单位规则。
+- 更正是出处记录里点名的五条：R2 的三态、R8 被撤回的理由、R6/R7 记录化的重派次数与每轮扫描、R0/R5 的上限即上限与 [Limits] 单位规则，以及后来补上的一条 R2 fork 更正。原来那句 fork 规则既把该工具禁到「只用于评审」，又声称守卫会拒绝被继承的路由；按原样两句话都不成立。让子 agent 跑在父代理自己那条路由上，是最省的同路由子代理（不欠 route: 行，前缀与 KV 缓存都保住）；而内置断言会跳过被继承的路由——它在调用未指名路由时就提前返回。执行是分层的，所以块里现在明说哪一层管什么：宿主侧守卫可以接管 inherit 型工具，直接拒绝这样的 fork，而且那种拒绝不是子调用靠参数能补救的；无论如何 [State: Listed] 下这次允许清单核对都是模型自己的活。同一条更正还点明了这套设计依赖的邻接事实：一个没挂载路由字段的委派工具就处于 inherit 模式，向它索要显式参数是任何调用都无法满足的拒绝。
 - 附录有两条同属此原则：G13 改为引用 R0 当前的措辞（`at most 2 key questions`）而不是已被取代的区间；G16 是新增的——登记的事实是登记那一刻的读数，主体已变的事实必须先重读、落定后撤销，过期锚点比没有锚点更糟，而本预设投射的事实登记簿正是这样一种锚点。违规项 C 覆盖「拿它做规划」。
 
 ## Alternatives considered
@@ -40,6 +40,6 @@ Status: implemented
 
 ## Testing
 
-- `packages/dsh-liangshen/tests/minimal-prompt.test.ts` 固定块的最后一条反模式、十三个 section 标题的顺序、附录的总述行、出处记录，以及每条更正的两个方向：新句子在、被取代的句子不在。
+- `packages/dsh-liangshen/tests/minimal-prompt.test.ts` 固定块的最后一条反模式、十三个 section 标题的顺序、附录的总述行、出处记录，以及每条更正的两个方向：新句子在、被取代的句子不在。fork 更正由它自己的测试固定：最省同路由那句与欠着的那次允许清单核对必须在，被取代的禁令和它承诺的硬拒绝必须不在。
 - `packages/dsh-liangshen/tests/preset-composition.test.ts` 把 persona 的收敛边界钉在「它禁止的那次重复」上，而不是轮数。
 - `node tools/check-dispatcher-rules.mjs` 报告与已安装来源包之间的漂移状态。

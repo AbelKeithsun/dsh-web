@@ -135,8 +135,9 @@ dsh plugin --profile web remove @linxin666/dsh-liangshen
 - working-context 行只在其来源（plan-mode 状态、已激活的分页命名空间、进行中的 todo）可读时注入，否则省略；
 - 工具结果超过 4096 字符即被修剪，保留 2048 字符头部与 1024 字符尾部（守护稀疏索引槽位的同时保住错误尾部与退出码），避免超大输出挤占上下文；
 - `run_code` 需要挂载的 code runtime（随包发布的 web 与 headless 组合都挂载 `dsh-code-runtime-worker-thread`）；没有时 `ptc` 不做声明，会话运行原生工具面；
-- spawn 委派行已开启子 agent 模型选择（`modelSelectionSettings: true`），因此设置界面的子智能体模型选择开关在本预设下生效：模型在 `subagent` 上看到 `provider` / `model` / `reasoning_effort` 参数与 `list_subagent_models` 发现工具，显式路由会按会话的允许清单校验；
-- 同一组合 scope 内只允许一行委派工具开启该开关：上游开启时以固定工具名在该行所合入的 scope 中注册 `list_subagent_models`，而注册表拒绝同一 scope 内同名工具的第二次注册，因此第二行开启会让整个会话创建失败而不是多出一份能力。fork 行因此不带该键（官方 Standard、PTC、Cordis 预设同样如此），组合测试按结构统计开启行数；
+- spawn 委派行已开启子 agent 模型选择（`modelSelection: true` 与 `modelDiscovery: true`），因此设置界面的子智能体模型选择开关在本预设下生效：模型在 `subagent` 上看到 `provider` / `model` / `reasoning_effort` 参数与 `list_subagent_models` 发现工具，显式路由会按会话的允许清单校验（没有已记录的策略时退回父会话当前路由）；该行同时保留拆分前的写法 `modelSelectionSettings: true`：`devDependencies` 里钉的 SDK 只认这一个键，而本仓库运行所对的 harness checkout 已不再声明它，两代各读自己认识的键，另一个保持惰性；
+- 同一组合 scope 内只允许一行委派工具开启发现：上游 `modelDiscovery` 以固定工具名在该行所合入的 scope 中注册 `list_subagent_models`，而注册表拒绝同一 scope 内同名工具的第二次注册，因此第二个开启行会让整个会话创建失败而不是多出一份能力。fork 行因此不带它（官方 Standard、PTC、Cordis 预设同样如此，且它们连路由字段也不开），组合测试按结构统计发现工具的所有者；
+- `subagent-routes` 行是子路由守卫。一旦会话记录了允许路由清单，本行所管辖的每次委派都必须落到已授权路由上：`subagent` 上显式的 `provider`/`model` 对，或 `subagent_fork`（以及任何创建 teammate 的工具）上调用方自己的路由——后者的继承路由正是因为工具无法自选才需要校验。拒绝时会列出可用路由；在只继承的工具上点名路由会作为越权重路由被拒；没挂路由字段的工具不索要它给不出的参数，而是按子代理将要继承的路由校验。守卫对任何读不到的事实一律放行（未记录策略、无会话注册表、无注册表探针），因此答不出来的宿主保持 harness 原本的委派行为；行上的 `enabled: false` 可整体关闭；
 - 清单不发布 `workflow` 工具，而 workflow 引擎仍为 `ralph` 保留挂载；
 - shell 挂载上游标准 Stdio 栈，POSIX 注册 `bash`，win32 注册 `pwsh`——每个宿主恰好挂一个 shell 工具，带简短功能描述标题卡片与确定性退出码；
 - 文件工具继承宿主文件沙箱（不挂载裸 `dsh-fs-local`）；

@@ -225,6 +225,19 @@
 - id: fact-ledger
   name: ./fact-ledger.mjs
 
+# The child-route guard. The harness records a Session's authorized child
+# routes as a durable `subagent/model-selection-policy` event, but its own
+# delegation tool only rejects an EXPLICIT route outside that list: a call that
+# names no `provider`/`model` inherits the parent route unchecked, and an
+# inherit-only tool such as `subagent_fork` cannot name one at all. This row
+# closes that gap on the preset plane — an allowlist-carrying Session must
+# resolve every policed delegation to an authorized route, and a refusal names
+# the routes that would work. It fails open on every fact it cannot read (no
+# policy event, no session registry, no registry probe), so a Host that cannot
+# answer keeps the harness's own delegation behavior.
+- id: subagent-routes
+  name: ./subagent-routes.mjs
+
 # The harness's workspace-instruction loader. Under the default
 # `instructionSource: host` this row owns the channel: its baseline and dynamic
 # user-role messages reach the model untouched. Under
@@ -400,30 +413,48 @@
     # subpath makes the whole preset fail to mount
     # (`tool-subagent-list-agents ... never started`), issue #1940.
 
-    # `modelSelectionSettings: true` opts this row into the child-model
-    # selection the Web settings page owns per Session: the tool then
-    # publishes `provider` / `model` / `reasoning_effort` parameters and the
-    # `list_subagent_models` discovery tool, and an explicit route is
-    # checked against the Session's allowed list. Without it the settings
-    # toggle reads as dead under this preset and an explicit selection
-    # fails with `child model selection is disabled for this tool instance`.
+    # Child-model selection is TWO upstream knobs and this row sets both:
+    # `modelSelection` publishes the `provider` / `model` /
+    # `reasoning_effort` parameters on `subagent` (an explicit route is
+    # checked against the Session's allowed list, falling back to the parent
+    # route when no policy was recorded), and `modelDiscovery` registers the
+    # `list_subagent_models` discovery tool. Without them an explicit
+    # selection fails with `child model selection is disabled for this tool
+    # instance` and the settings page's subagent toggle reads as dead.
     #
-    # EXACTLY ONE delegation row per composition scope may opt in. The
-    # opt-in registers the discovery tool under the FIXED name
+    # `modelSelectionSettings: true` is the PRE-SPLIT spelling of the same
+    # opt-in: one boolean that published the route fields AND registered
+    # discovery. The SDK pinned in this package's devDependencies
+    # (0.2.1-rc.3) still ships only that key, while the harness checkout this
+    # repository runs against has replaced it with the pair above. That
+    # loader's schema does not declare the retired name, so nothing reads it:
+    # Schemastery keeps the undeclared field but fills `modelSelection` and
+    # `modelDiscovery` with `false`, leaving the opt-in inert with no error
+    # to notice. Both spellings therefore ship together: each generation
+    # reads the key it knows and ignores the other, and neither host loses
+    # the opt-in. Delete `modelSelectionSettings` once no supported cohort
+    # predates the split.
+    #
+    # EXACTLY ONE delegation row per composition scope may enable
+    # `modelDiscovery`: it registers the discovery tool under the FIXED name
     # `list_subagent_models` in the scope the row composes into, and the tool
     # registry refuses a second registration of one name in one scope, so a
-    # second opt-in row fails the whole session with `tool
+    # second discovery owner fails the whole session with `tool
     # 'list_subagent_models' is already registered in this scope`. The fork
-    # row below therefore stays without it, exactly as the builtin Standard,
-    # PTC, and Cordis presets ship: their `tool-subagent` row opts in and
-    # their `tool-subagent-fork` row does not. Do not complete the
-    # fork row to match; the opt-in belongs to the spawn row alone.
+    # row below therefore leaves discovery off, exactly as the builtin
+    # Standard, PTC, and Cordis presets ship: their `tool-subagent` row opts
+    # in and their `tool-subagent-fork` row does not. Do not complete the
+    # fork row to match; discovery belongs to the spawn row alone. The route
+    # fields alone are per instance upstream, and the fork row leaves those
+    # off too, matching the shipped official roster.
     - id: tool-subagent
       name: '@deepseek-ai/dsh-tool-subagent'
       config:
         provider: spawn
         toolName: subagent
         modelSelectionSettings: true
+        modelSelection: true
+        modelDiscovery: true
         backgroundMode: continuable
 
     - id: tool-subagent-fork

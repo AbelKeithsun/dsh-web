@@ -52,12 +52,12 @@ function leafRows(rows: readonly CompositionRow[]): CompositionRow[] {
     Array.isArray(row.config) ? leafRows(row.config as CompositionRow[]) : [row])
 }
 
-/** The parsed rows whose own config carries `modelSelectionSettings: true`. */
-function modelSelectionOptIns(text = preset): CompositionRow[] {
+/** The parsed rows whose own config owns the `list_subagent_models` discovery tool. */
+function discoveryOwners(text = preset): CompositionRow[] {
   return leafRows(readCompositionRows(text, presetDir))
-    .filter((row) =>
-      typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)
-      && (row.config as Record<string, unknown>).modelSelectionSettings === true)
+    .filter((entry) =>
+      typeof entry.config === 'object' && entry.config !== null && !Array.isArray(entry.config)
+      && (entry.config as Record<string, unknown>).modelDiscovery === true)
 }
 describe('liangshen preset composition', () => {
   it('is structurally valid for the preset loader', () => {
@@ -125,9 +125,13 @@ describe('liangshen preset composition', () => {
     expect(row('tool-catalog')).not.toContain('anchorTools')
   })
 
-  it('mounts working-context and tool-activate, and no retired guard row', () => {
+  it('mounts working-context, tool-activate and the child-route guard, and no retired guard row', () => {
     expect(row('tool-activate')).toContain('name: ./tool-activate.mjs')
     expect(row('working-context')).toContain('name: ./working-context.mjs')
+    // The subagent route guard is its own row: the retired row below was a
+    // runtime-degeneration breaker, not this policy guard.
+    expect(row('subagent-routes')).toContain('name: ./subagent-routes.mjs')
+    expect(row('subagent-routes')).not.toContain('disabled: true')
     // The runtime degeneration circuit breaker is retired: the composition
     // carries no guard row, so no session mounts its pre-step channel.
     expect(row('guard')).toBe('')
@@ -170,27 +174,37 @@ describe('liangshen preset composition', () => {
   it('operator gets child-model selection from the spawn delegation row alone', () => {
     // Given: the shipped composition, read the way the preset loader reads it.
     // When: the delegation rows are inspected for the child-model opt-in.
-    // Then: the spawn row opts in, so the tool publishes its route
-    // parameters and the `list_subagent_models` discovery tool the settings
-    // toggle depends on.
-    expect(row('tool-subagent')).toContain('modelSelectionSettings: true')
-    // Then: the fork row stays out, because the upstream opt-in registers
-    // one discovery tool under a FIXED name per composed scope and a second
-    // opt-in row fails the whole session composition with the duplicate
-    // tool-name error instead of adding a second opt-in.
-    expect(row('tool-subagent-fork')).not.toContain('modelSelectionSettings')
-    // Then: the parsed composition carries exactly one opt-in row, so the
-    // invariant survives a row being added, renamed, or moved.
-    expect(modelSelectionOptIns().map((optIn) => optIn.id)).toEqual(['tool-subagent'])
-    // Then: the guard is not vacuous - giving the fork row the flag, the
-    // exact edit a maintainer would make to complete the opt-in, is counted
-    // as a second one instead of passing silently.
+    // Then: the spawn row sets both current upstream knobs, so the tool
+    // publishes its route parameters and the `list_subagent_models`
+    // discovery tool the settings toggle depends on.
+    const spawn = row('tool-subagent')
+    expect(spawn).toContain('modelSelection: true')
+    expect(spawn).toContain('modelDiscovery: true')
+    // Then: the pre-split spelling rides along. The SDK pinned in
+    // devDependencies reads only that key, and the harness checkout this
+    // repository runs against silently drops it as an unknown field, so the
+    // row carries both and either generation finds its opt-in.
+    expect(spawn).toContain('modelSelectionSettings: true')
+    // Then: the fork row stays out of both, because the discovery flag
+    // registers one tool under a FIXED name per composed scope and a second
+    // owner fails the whole session composition with the duplicate
+    // tool-name error instead of adding a second opt-in. The official
+    // Standard, PTC, and Cordis rosters ship the route fields off there too.
+    const fork = row('tool-subagent-fork')
+    expect(fork).not.toMatch(/\bmodelSelection(?:Settings)?: true/)
+    expect(fork).not.toContain('modelDiscovery')
+    // Then: the parsed composition carries exactly one discovery owner, so
+    // the invariant survives a row being added, renamed, or moved.
+    expect(discoveryOwners().map((owner) => owner.id)).toEqual(['tool-subagent'])
+    // Then: the guard is not vacuous - giving the fork row the discovery
+    // flag, the exact edit a maintainer would make to complete the opt-in,
+    // is counted as a second owner instead of passing silently.
     const forked = preset.replace(
       '        provider: fork\n        toolName: subagent_fork\n',
-      '        provider: fork\n        toolName: subagent_fork\n        modelSelectionSettings: true\n',
+      '        provider: fork\n        toolName: subagent_fork\n        modelDiscovery: true\n',
     )
     expect(forked).not.toBe(preset)
-    expect(modelSelectionOptIns(forked).map((optIn) => optIn.id))
+    expect(discoveryOwners(forked).map((owner) => owner.id))
       .toEqual(['tool-subagent', 'tool-subagent-fork'])
   })
 })
