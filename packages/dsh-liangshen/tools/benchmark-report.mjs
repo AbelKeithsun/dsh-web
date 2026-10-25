@@ -88,6 +88,30 @@ function costOf(entries) {
   return priced === 0 ? null : total
 }
 
+/**
+ * Per-group means of the behavioural numbers a probe task reports. These are
+ * not outcome measures: a probe passes or fails on its oracle, and these
+ * numbers say which habit produced that outcome. They are kept apart from the
+ * success rate on purpose, because the whole point of a probe is that the two
+ * can disagree.
+ */
+export function aggregateBehaviour(entries) {
+  const sums = new Map()
+  const counts = new Map()
+  for (const entry of entries) {
+    const behaviour = entry?.behaviour
+    if (behaviour === null || typeof behaviour !== 'object' || Array.isArray(behaviour)) continue
+    for (const [key, value] of Object.entries(behaviour)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue
+      sums.set(key, (sums.get(key) ?? 0) + value)
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+  }
+  const out = {}
+  for (const [key, sum] of sums) out[key] = { mean: sum / counts.get(key), n: counts.get(key) }
+  return out
+}
+
 /** Per-group descriptive statistics over the raw run records. */
 export function aggregateGroups(runs) {
   const byGroup = new Map()
@@ -127,6 +151,7 @@ export function aggregateGroups(runs) {
       humanInterventions: sumOf(entries, (run) => run.humanInterventions),
       approvalAsks: sumOf(entries, (run) => run.approvalsAsked),
       estimatedCostCny: costOf(entries),
+      behaviour: aggregateBehaviour(graded),
     }
   }
   return groups
@@ -316,6 +341,24 @@ export function renderMarkdown(report) {
     ].join(' | ') + ' |')
   }
   lines.push('')
+  const metricNames = [...new Set(Object.values(report.groups)
+    .flatMap((stats) => Object.keys(stats.behaviour ?? {})))].sort()
+  if (metricNames.length > 0) {
+    lines.push('## Behaviour metrics (probe tasks, per-group mean)')
+    lines.push('')
+    lines.push('| Meta metric | ' + GROUP_ORDER.filter((group) => report.groups[group] !== undefined).join(' | ') + ' |')
+    lines.push('| --- |' + GROUP_ORDER.filter((group) => report.groups[group] !== undefined).map(() => ' --- |').join(''))
+    for (const metric of metricNames) {
+      const cells = GROUP_ORDER
+        .filter((group) => report.groups[group] !== undefined)
+        .map((group) => {
+          const value = report.groups[group].behaviour?.[metric]
+          return value === undefined ? 'n/a' : value.mean.toFixed(2) + ' (n=' + value.n + ')'
+        })
+      lines.push('| ' + metric + ' | ' + cells.join(' | ') + ' |')
+    }
+    lines.push('')
+  }
   lines.push('## Paired comparisons')
   lines.push('')
   lines.push('| Comparison | Purpose | Tasks paired | Mean delta (95% CI) |')
@@ -346,6 +389,7 @@ export function renderMarkdown(report) {
   lines.push('- Model tool errors exclude transport failures: a run that cannot reach a host is evidence about the network, not about the model, so the two are reported side by side.')
   lines.push('- Cost is the price book currency (CNY), not USD: the route bills in CNY and the published row is quoted per million CNY.')
   lines.push('- Language-style counters (we and let me) stay with tools/analyze-session.mjs, which needs reasoning text the durable log does not always carry; those counters are not part of the outcome measures here.')
+  lines.push('- A probe task carries its own oracle under tools/probes: the pass column is that oracle, and the behaviour table is the habit that produced it. A probe that cannot separate its own scripted good and bad policies fails tools/probe-selftest.mjs, so a probe reading here has been shown to discriminate before any model ran it.')
   lines.push('- A small sample screens a direction; it does not claim a stable improvement. Widen the sample within the stated budget before concluding.')
   lines.push('')
   return lines.join('\n')

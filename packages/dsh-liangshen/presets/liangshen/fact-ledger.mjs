@@ -23,6 +23,19 @@
  * The tool is deliberately small: it validates and reports, it does not edit
  * the context itself. The projection the model sees next step is the fold of
  * the log the runtime appended for this call.
+ *
+ * AN ANCHOR, NOT A SOURCE OF TRUTH (2026-10-18): a pinned fact is a reading
+ * taken when it was registered, and the projection re-publishes it verbatim
+ * afterwards, so a fact whose subject changed is stale the moment it is read
+ * again while looking exactly as fresh as it did the first time. That is the
+ * one failure this register can introduce on its own, and it is the expensive
+ * kind: nothing downstream questions a fact the model supplied. The register
+ * therefore stays a pointer with an expiry the model manages -- the tool
+ * description tells it to re-read the subject before planning on a fact whose
+ * subject moved, and to revoke the entry once the subject is settled -- rather
+ * than pretending the projection can detect the change itself. Detecting it
+ * would need a reverse index from every fact to every file it names, which is
+ * exactly the guessing this preset exists to avoid.
  */
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -90,6 +103,7 @@ export function apply(ctx) {
       'Pin one key fact into this session working context — the line the runtime projects next to the newest message every step. Use it for the facts a long session must not lose: a hard user constraint, a confirmed architecture decision, a path that already failed.',
       `A fact is one short line (<= ${MAX_FACT_CHARS} chars); at most ${MAX_FACTS} stay pinned, the oldest dropping off. Pass the same text again to no-op; pass the revoke field with a fact tag (or its exact text) to unpin everything under it.`,
       'Pin sparingly: the register rides the guaranteed-attention window, and flooding it dilutes every other fact.',
+      'A pinned fact is an anchor, not current state: it is republished verbatim, so a fact whose subject later changed reads exactly as fresh as it did when pinned. Before planning on a fact, re-read its subject if that subject moved; once the subject is settled, revoke the entry instead of leaving a stale line pinned.',
     ].join('\n'),
     parameters: {
       type: 'object',

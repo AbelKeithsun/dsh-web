@@ -41,7 +41,7 @@ import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -52,6 +52,24 @@ const require = createRequire(import.meta.url)
 
 /** Fixed route every variant runs on, so the comparison isolates the preset. */
 export const FIXED_ROUTE = { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'max' }
+
+/**
+ * Parse 'provider/model[/reasoning-effort]' into a route. The default stays
+ * FIXED_ROUTE so an aggregated comparison reads one route per report; a probe
+ * run may instead name the route the operator actually uses, which is the
+ * only way its behaviour says anything about that operator's sessions.
+ */
+export function parseRoute(spec) {
+  const parts = String(spec).split('/')
+  if (parts.length < 2 || parts[0] === '' || parts[1] === '') {
+    throw new Error('benchmark: --route wants provider/model[/reasoning-effort]')
+  }
+  return {
+    provider: parts[0],
+    model: parts[1],
+    reasoningEffort: parts[2] !== undefined && parts[2] !== '' ? parts[2] : FIXED_ROUTE.reasoningEffort,
+  }
+}
 
 /** The two turns the protocol smoke check uses: an anchored exploration, then a promoted mutation. */
 export const DEFAULT_TURNS = [
@@ -595,9 +613,23 @@ export function loadTaskFile(path) {
   if (!Array.isArray(parsed?.tasks) || parsed.tasks.length === 0) {
     throw new Error(`benchmark: ${path} carries no tasks array`)
   }
+  const base = dirname(resolve(path))
   for (const task of parsed.tasks) {
     if (typeof task?.id !== 'string' || !Array.isArray(task?.turns) || typeof task?.check !== 'string') {
       throw new Error(`benchmark: task ${JSON.stringify(task?.id)} needs an id, turns, and a check`)
+    }
+    // A task seeds either inline files or a directory (and support files) that
+    // already lives in the repository: a behaviour probe is a small program,
+    // and inlining it into JSON would make it unreadable and unreviewable.
+    if (task.from !== undefined) {
+      const list = Array.isArray(task.from) ? task.from : [task.from]
+      if (list.some((entry) => typeof entry !== 'string' || entry === '')) {
+        throw new Error(`benchmark: task ${JSON.stringify(task.id)} has a from entry that is not a path`)
+      }
+      Object.defineProperty(task, '__fromPaths', {
+        value: list.map((entry) => resolve(base, entry)),
+        enumerable: false,
+      })
     }
   }
   return parsed
@@ -620,6 +652,48 @@ function writeTaskFiles(workspace, files) {
     const target = join(workspace, name)
     mkdirSync(dirname(target), { recursive: true })
     writeFileSync(target, String(content), 'utf8')
+  }
+}
+
+/**
+ * Seed a task workspace: its inline files first, then every `from` path. A
+ * directory is copied by its contents, a file by its name, so a probe's
+ * simulator and the shared module it imports land side by side.
+ */
+export function materializeTask(workspace, task) {
+  writeTaskFiles(workspace, task.files)
+  for (const source of task.__fromPaths ?? []) {
+    const info = statSync(source, { throwIfNoEntry: false })
+    if (info === undefined) {
+      throw new Error(`benchmark: task ${JSON.stringify(task.id)} from ${source} does not exist`)
+    }
+    if (info.isDirectory()) cpSync(source, workspace, { recursive: true })
+    else cpSync(source, join(workspace, basename(source)))
+  }
+}
+
+/**
+ * Read a probe's behavioural numbers: the same program shape as a check, but
+ * it prints one JSON object and is allowed to fail while still reporting.
+ */
+export async function evaluateMetrics(workspace, metrics, timeoutMs = 60000) {
+  const result = await spawnCaptured(
+    process.execPath,
+    ['--input-type=module', '-e', metrics],
+    { cwd: workspace },
+    timeoutMs,
+  )
+  const lines = result.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '')
+  const last = lines.at(-1)
+  if (last === undefined) return { error: 'metrics produced no output' }
+  try {
+    const parsed = JSON.parse(last)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { error: 'metrics must print one JSON object' }
+    }
+    return parsed
+  } catch {
+    return { error: 'metrics output was not JSON: ' + last.slice(0, 120) }
   }
 }
 
@@ -701,14 +775,25 @@ export function priceRun(usage, prices, route) {
 }
 
 /** Build the variant patch that redirects persistence and selects the isolated preset. */
-export function buildPatch({ variantId, variant, presetDir, runDir, turns }) {
+export function buildPatch({ variantId, variant, presetDir, runDir, turns, route = FIXED_ROUTE }) {
   const presetId = variant.official === true ? OFFICIAL_PRESET_ID : variantId
   const lines = [
-    '- id: headless-startup',
-    '  disabled: true',
-    '',
+    '# The startup row stays MOUNTED: it publishes the headlessStartup provider',
+    '# that sandbox-policy and the agent-plane rows inject, and disabling it (as',
+    '# this runner did before DSH 0.2.1) leaves every dependent row waiting for a',
+    '# service that can no longer appear, so the preset never mounts. Only the',
+    '# runner row is disabled: it is what would execute the task itself, and this',
+    '# patch replaces it with the benchmark driver below.',
     '- id: headless-runner',
     '  disabled: true',
+    '',
+    '# DSH 0.2.1 disables the managed credential store in the headless bundle,',
+    '# which turns every request into an immediate authentication failure and',
+    '# records a session that never reached a model. This run resolves',
+    '# credentials the way an interactive session does, so the row is re-enabled',
+    '# here rather than replaced.',
+    '- id: credentials',
+    '  disabled: false',
     '',
     '- id: session-persistence-jsonl',
     '  config:',
@@ -717,9 +802,9 @@ export function buildPatch({ variantId, variant, presetDir, runDir, turns }) {
     '',
     '- id: agent-default-model',
     '  config:',
-    `    provider: ${FIXED_ROUTE.provider}`,
-    `    model: ${FIXED_ROUTE.model}`,
-    `    reasoningEffort: ${FIXED_ROUTE.reasoningEffort}`,
+    '    provider: ' + route.provider,
+    '    model: ' + route.model,
+    '    reasoningEffort: ' + (route.reasoningEffort ?? FIXED_ROUTE.reasoningEffort),
     '',
     '# The preset roster. The headless profile mounts neither the registry nor a',
     '# preset, so the variant supplies both: `default` names the evaluated preset',
@@ -793,10 +878,11 @@ export async function runLiveCase(options) {
 
     const workspace = join(runDir, 'workspace')
     mkdirSync(workspace, { recursive: true })
-    if (options.task !== undefined) writeTaskFiles(workspace, options.task.files)
+    if (options.task !== undefined) materializeTask(workspace, options.task)
 
+    const route = options.route ?? FIXED_ROUTE
     const turns = options.turns ?? options.task?.turns ?? DEFAULT_TURNS
-    const patch = buildPatch({ variantId, variant, presetDir, runDir, turns })
+    const patch = buildPatch({ variantId, variant, presetDir, runDir, turns, route })
 
     const patchPath = join(runDir, 'variant.patch.yml')
     writeFileSync(patchPath, patch, 'utf8')
@@ -830,6 +916,11 @@ export async function runLiveCase(options) {
     const check = options.task === undefined
       ? undefined
       : await evaluateCheck(workspace, options.task.check, options.timeoutMs ?? 120000)
+    // The behavioural numbers ride beside the pass/fail verdict: a probe can
+    // pass on the score while the habit it exists to expose is still there.
+    const behaviour = options.task?.metrics === undefined
+      ? null
+      : await evaluateMetrics(workspace, options.task.metrics)
 
     return {
       variant: variantId,
@@ -846,6 +937,8 @@ export async function runLiveCase(options) {
       timedOut: child.timedOut,
       passed: check === undefined ? null : check.passed === true && child.code === 0 && !child.timedOut,
       check,
+      behaviour,
+      route,
       durationMs: Date.now() - started,
       outcome,
       stderrTail: child.stderr.split('\n').filter((line) => line.trim() !== '').slice(-12).join('\n'),
@@ -894,8 +987,9 @@ export async function runLiveSuite(options) {
   const timeoutMs = options.timeoutMs ?? 300000
   const prices = resolvePriceTable(options.prices) ?? null
 
-  const routeKey = routePriceKey(FIXED_ROUTE)
-  const routePrice = routePrices(prices, FIXED_ROUTE)
+  const route = options.route ?? FIXED_ROUTE
+  const routeKey = routePriceKey(route)
+  const routePrice = routePrices(prices, route)
   // A budget gate that cannot price a run would silently never trigger, which is
   // exactly the unbounded spend the plan forbids; validate instead of pretending.
   if (routePrice !== undefined) assertPriceEntry(routePrice, routeKey)
@@ -908,6 +1002,7 @@ export async function runLiveSuite(options) {
 
   const baseline = await collectBaseline()
   baseline.taskRevision = taskRevision(corpus)
+  baseline.route = route
   baseline.suite = {
     groups,
     repeat,
@@ -937,10 +1032,11 @@ export async function runLiveSuite(options) {
       turns: task.turns,
       repetition,
       timeoutMs,
+      route,
       keep: options.keep === true,
     })
     sessions += 1
-    const costCny = priceRun(run.usage, prices, FIXED_ROUTE)
+    const costCny = priceRun(run.usage, prices, route)
     if (costCny !== null) estimatedCostCny += costCny
     const record = { baseline, costCny, ...run }
     const file = join(outDir, 'live-' + group + '-' + task.id + '-r' + repetition + '.json')
@@ -973,11 +1069,17 @@ if (isMain) {
   const outDir = read('--out', '.benchmark-results')
   const timeoutMs = Number(read('--timeout', '300000'))
 
+  const routeSpec = read('--route', undefined)
+  // Named apart from the per-run 'route' read further down, which is the route
+  // a run actually reported rather than the one it was asked for.
+  const selectedRoute = routeSpec === undefined ? FIXED_ROUTE : parseRoute(routeSpec)
+
   if (args.includes('--tasks')) {
     const corpus = loadTaskFile(read('--tasks'))
     const pricesPath = read('--prices', undefined)
     const suite = await runLiveSuite({
       tasks: corpus,
+      route: selectedRoute,
       groups: read('--groups', undefined)?.split(',').map((entry) => entry.trim()).filter(Boolean),
       repeat: Number(read('--repeat', '3')),
       maxSessions: Number(read('--max-sessions', '0')) > 0 ? Number(read('--max-sessions', '0')) : Number.POSITIVE_INFINITY,
@@ -991,7 +1093,7 @@ if (isMain) {
     console.log(`aggregate with: node tools/benchmark-report.mjs ${outDir}`)
   } else {
     const variant = read('--variant', 'B')
-    const report = await runLiveCase({ variant, timeoutMs, keep: args.includes('--keep') })
+    const report = await runLiveCase({ variant, timeoutMs, route: selectedRoute, keep: args.includes('--keep') })
     mkdirSync(outDir, { recursive: true })
     const outFile = join(outDir, `live-${variant}.json`)
     writeFileSync(outFile, JSON.stringify({ baseline: await collectBaseline(), ...report }, null, 2))

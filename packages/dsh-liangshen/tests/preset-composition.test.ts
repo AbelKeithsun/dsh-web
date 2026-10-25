@@ -93,7 +93,12 @@ describe('liangshen preset composition', () => {
     expect(persona).toContain('Follow YAGNI and the PDCA loop')
     expect(persona).toContain('Do not write redundant comments.')
     expect(persona).toContain('Bounded Inspection & Convergence: Do not traverse dependency chains unbounded')
-    expect(persona).toContain('Limit pre-action inspection to immediate target files')
+    // The convergence bound names the repetition it forbids, not a turn count:
+    // a numeric cap is read at its strictest end and swallows the cheap check
+    // that would settle an open question (2026-10-18).
+    expect(persona).toContain('Stop repeating an inspection whose answer you already hold')
+    expect(persona).toContain('A concrete hypothesis with a cheap check is different: run it.')
+    expect(persona).not.toContain('at most 2-3 inspection turns')
     expect(persona).not.toContain('text:')
     expect(persona).not.toContain('complete:')
     // Runtime contexts are durable user-role messages, not prompt text: they

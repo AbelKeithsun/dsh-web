@@ -23,7 +23,7 @@ import {
   WORKSPACE_INSTRUCTIONS_SECTION_NAME,
 } from '../presets/liangshen/minimal-prompt.mjs'
 import * as promptModule from '../presets/liangshen/minimal-prompt.mjs'
-import { DISPATCHER_RULES, DISPATCHER_RULES_APPENDIX, DISPATCHER_RULES_WITH_APPENDIX } from '../presets/liangshen/dispatcher-rules.mjs'
+import { DISPATCHER_RULES, DISPATCHER_RULES_APPENDIX, DISPATCHER_RULES_PROVENANCE, DISPATCHER_RULES_WITH_APPENDIX } from '../presets/liangshen/dispatcher-rules.mjs'
 
 type Listener = (first: any, second: any, third: any) => Promise<any>
 
@@ -697,8 +697,10 @@ describe('liangshen-minimal-prompt', () => {
       // not a rewrite of the upstream text the block was extracted from.
       const result = await assemble(register({ dispatcher: true }), FULL_SECTIONS, undefined, agentAt(project()))
       const text = personaText(result)
-      // The reference block ends at anti-pattern 16 and carries no addition.
-      expect(DISPATCHER_RULES.endsWith('16. Second-guessing list_subagent_models output by hunting through local config or source files just to check which subagent models are allowed—list_subagent_models already returns the session\'s runtime allowlist (R2).')).toBe(true)
+      // The reference block ends at anti-pattern 20 and carries no addition: the
+      // 2026-10-18 re-extraction moved the last anti-pattern, and this pin is
+      // what makes the next re-extraction a deliberate edit rather than a slip.
+      expect(DISPATCHER_RULES.endsWith('20. Reporting a route as "authorized", or claiming per-task routing is in force, when the session recorded no allowlist (R2 [State: Unlisted]).')).toBe(true)
       expect(DISPATCHER_RULES).not.toContain('G7')
       expect(DISPATCHER_RULES).not.toContain('Task board is not a dispatch')
       // The reference block is the current upstream text: it carries the R-W
@@ -753,13 +755,15 @@ describe('liangshen-minimal-prompt', () => {
         '- G13 The minimal L1 form:',
         '- G14 Fact-check dispatches:',
         '- G15 Task board is not a dispatch:',
+        '- G16 Facts are anchors, not sources of truth:',
         'A. Asking instead of judging:',
         'B. Asking the same decision twice,',
+        'C. Planning on a pinned fact whose subject has changed since it was pinned,',
       ]) {
         expect(text, marker).toContain(marker)
         expect(text.split(marker)).toHaveLength(2)
       }
-      expect(text.indexOf('16. Second-guessing list_subagent_models'))
+      expect(text.indexOf('20. Reporting a route as "authorized"'))
         .toBeLessThan(text.indexOf('G7 to G14 below are the local additions'))
       // The glossary splits the two scopes before the first bullet: G7 through
       // G14 amend G1 through G6, while G15 amends R5 instead. Widening the
@@ -767,7 +771,7 @@ describe('liangshen-minimal-prompt', () => {
       // interview rule, so the whole line is pinned verbatim.
       const glossary = DISPATCHER_RULES_APPENDIX.split('\n')[1]
       expect(glossary).toBe(
-        'G7 to G14 below are the local additions to G1 to G6 above: where they conflict with G1 to G6, those entries win. G15 below is a separate addition to R5 and has no counterpart upstream.',
+        'G7 to G14 below are the local additions to G1 to G6 above: where they conflict with G1 to G6, those entries win. G15 below is a separate addition to R5, and G16 a separate rule for the fact register this preset injects; neither has a counterpart upstream.',
       )
       // No sentence in the appendix files G15 as an addition to G1 to G6. The
       // check is per sentence, because the glossary sentence above names both
@@ -786,6 +790,22 @@ describe('liangshen-minimal-prompt', () => {
       // The appendix is English throughout: no CJK character reaches the
       // prompt from the local half.
       expect(DISPATCHER_RULES_APPENDIX).not.toMatch(/[\u3000-\u9fff\uff00-\uffef]/)
+      // The provenance record IS the freshness contract: every correction folded
+      // in place is named there, so dropping one in a later re-extraction is a
+      // failing test rather than a silent revert.
+      expect(DISPATCHER_RULES_PROVENANCE.package).toBe('@eddyskywalker/dsh-chatgpt-subscription')
+      expect(DISPATCHER_RULES_PROVENANCE.reExtractedAt).toBe('2026-10-18')
+      expect(DISPATCHER_RULES_PROVENANCE.corrections.map((entry) => entry.rule)).toEqual(['R2', 'R8', 'R6/R7', 'R0/R5'])
+      // Each correction is really in the text, not only in the record.
+      expect(DISPATCHER_RULES).toContain('[State: Unlisted]')
+      expect(DISPATCHER_RULES).toContain('is not one, because delegation still works there')
+      expect(DISPATCHER_RULES).toContain('1 first attempt + at most 2 re-dispatches = at most 3 runs total')
+      expect(DISPATCHER_RULES).toContain('(5 is a cap, not a range and not a target)')
+      expect(DISPATCHER_RULES).toContain('[Before every turn] Scan the task list for items that will escalate')
+      // The superseded readings are gone: a mounted tool is not an allowlist, and
+      // an empty allowlist is not a fallback ground.
+      expect(DISPATCHER_RULES).not.toContain('always appear or disappear together, so this single signal is sufficient')
+      expect(DISPATCHER_RULES).not.toContain('allowlist is empty and the user has not enabled it')
     })
 
     test('operator keeps the additions when the persona already carries the reference block', async () => {

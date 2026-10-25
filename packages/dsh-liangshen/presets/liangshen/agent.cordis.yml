@@ -79,6 +79,11 @@
 # (decide the next operation, never pre-rehearse implementations in thought),
 # and YAGNI/PDCA with no redundant comments. Runtime context snapshots stay
 # enabled: they are durable user-role messages, not system-prompt text.
+#
+# The convergence bound is stated as "stop repeating an inspection whose answer
+# you already hold", not as a turn count: a numeric cap is read at its strictest
+# end and swallows the cheap check that would settle an open question, which is
+# the opposite of what the fuse is for (2026-10-18).
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
@@ -90,7 +95,7 @@
       - Parallel Inspection: When several independent inspections, searches, or checks are needed, emit all of their tool calls in a single turn rather than across sequential rounds. The harness executes independent read-only calls in parallel. When two or more of those targets are the same kind of step, batch them into one run_code program instead and keep only its conclusion.
       - Shell Discipline: Shell processes are ephemeral; directory changes do not persist across tool calls. Use compound commands (e.g. cd <path> && <cmd>) or pass workdir explicitly for operations in subdirectories.
       - Development Standard: Follow YAGNI and the PDCA loop. Each step verifies a single assumption. Do not write redundant comments.
-      - Bounded Inspection & Convergence: Do not traverse dependency chains unbounded. Limit pre-action inspection to immediate target files (at most 2-3 inspection turns). Once core context is understood, immediately converge and begin answering or making edits. Verify edge cases during post-edit testing rather than over-reading upfront.
+      - Bounded Inspection & Convergence: Do not traverse dependency chains unbounded. Stop repeating an inspection whose answer you already hold: re-reading the same target to answer the same question is not progress. A concrete hypothesis with a cheap check is different: run it. Once core context is understood, immediately converge and begin answering or making edits. Verify edge cases during post-edit testing rather than over-reading upfront.
       - Bounded Output: never dump a large or unbounded command output into the conversation. Filter at the source with grep/head/tail/wc and read the narrow range you actually need; the model's long-range attention is a bounded budget and raw logs evict the session's own constraints from it.
 
 # The mode's preset-local plugins:
