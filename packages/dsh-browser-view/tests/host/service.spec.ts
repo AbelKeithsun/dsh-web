@@ -243,6 +243,55 @@ describe('panel attach follows, never creates', () => {
   })
 })
 
+describe('agent tab priority', () => {
+  it('operator pins the panel to one page and an agent navigation without a tab id still drives the agent own last page', async () => {
+    // Given an agent session with its own page and a panel pinned to a different page
+    // When the agent navigates without naming a tab
+    // Then only the agent page is navigated, the pinned page keeps its url and the panel keeps its selection
+    const browser = createFakeBrowser()
+    const agentTab = await browser.service.ensureTab('session-agent')
+    const watched = await browser.service.ensureTab('session-watcher')
+    const { sink } = recordingSink()
+    browser.service.attach(sink)
+    await browser.service.handleCommand(sink, { v: 1, kind: 'select-tab', tabId: watched.id })
+
+    const navigated = await browser.service.navigate('session-agent', 'https://agent.test/')
+
+    // Tab creation navigates to about:blank, so the pages that really moved are
+    // the non-blank navigations, reported as their tab's CDP session.
+    const moved = browser.transport.callsOf('Page.navigate')
+      .filter(call => call.params.url !== 'about:blank')
+      .map(call => `${call.sessionId}:${String(call.params.url)}`)
+    expect(moved).toEqual(['session-1:https://agent.test/'])
+    expect(navigated.tab.id).toBe(agentTab.id)
+    expect(watched.id).not.toBe(agentTab.id)
+    expect(browser.service.state().activeTabId).toBe(watched.id)
+  })
+
+  it('operator watches a page one session owns and a second session opens its own tab instead of driving it', async () => {
+    // Given a page owned by one session and watched through the panel
+    // When a different session navigates without naming a tab
+    // Then the watched page is untouched and the newcomer ends up on a tab of its own
+    const browser = createFakeBrowser()
+    const owned = await browser.service.ensureTab('session-owner')
+    const { sink } = recordingSink()
+    browser.service.attach(sink)
+    await browser.service.handleCommand(sink, { v: 1, kind: 'select-tab', tabId: owned.id })
+
+    const navigated = await browser.service.navigate('session-newcomer', 'https://new.test/')
+
+    const tabs = (await browser.service.listTabs()).tabs
+    const moved = browser.transport.callsOf('Page.navigate')
+      .filter(call => call.params.url !== 'about:blank')
+      .map(call => `${call.sessionId}:${String(call.params.url)}`)
+    // The newcomer drives a session of its own: the watched page is never the
+    // tab that received this navigation.
+    expect(moved).toEqual(['session-2:https://new.test/'])
+    expect(navigated.tab.id).not.toBe(owned.id)
+    expect(tabs.map(tab => tab.id)).toEqual([owned.id, navigated.tab.id])
+  })
+})
+
 describe('additional tabs', () => {
   it('operator navigates twice and only the second call asks for a new tab so both pages stay open', async () => {
     // Given a session whose first navigation opened one page in its tab

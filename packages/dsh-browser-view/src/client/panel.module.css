@@ -180,7 +180,9 @@
   outline-offset: -1px;
 }
 
-/* Connection state: the dot carries the phase, the text says it in words. */
+/* Connection state: the primitives StateDot carries the phase, the text says
+   it in words. The dot brings its own component stylesheet, so nothing here
+   paints it. */
 .status {
   flex: 0 0 auto;
   display: inline-flex;
@@ -198,34 +200,6 @@
   text-overflow: ellipsis;
 }
 
-.statusDot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--dsw-alias-label-quaternary);
-}
-
-/* Live is settled; loading pulses so a frozen picture is never mistaken for a
-   still page. */
-.dotConnecting {
-  background: var(--dsw-alias-label-quaternary);
-}
-
-.dotLoading {
-  background: var(--dsw-alias-state-business-primary);
-  animation: browser-view-pulse 1.1s ease-in-out infinite;
-}
-
-.dotLive {
-  background: var(--dsw-alias-state-success-primary);
-}
-
-@keyframes browser-view-pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
 
 /* -- Controlled-browser chips --
 

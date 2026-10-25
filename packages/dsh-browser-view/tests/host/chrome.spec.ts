@@ -16,8 +16,10 @@ import {
   chromeLaunchArgs,
   chromePathCandidates,
   pickFreePort,
+  probeBrowserAlive,
   removeTempProfile,
   resolveChromePath,
+  settleBrowserDispose,
 } from '../../src/core/chrome.ts'
 
 describe('chrome path candidates', () => {
@@ -198,5 +200,102 @@ describe('removeTempProfile', () => {
     await unlink(join(outside, 'marker.txt'))
     await rmdir(outside)
     await removeTempProfile(dir)
+  })
+})
+describe('dispose decides on evidence', () => {
+  it('operator disposes a browser whose launcher exited while DevTools still answers and the profile survives', async () => {
+    // Given a launch whose spawned process is gone but whose browser still answers
+    // When the disposal runs
+    // Then it reports the browser as running and never touches the profile directory
+    const removals: string[] = []
+    const result = await settleBrowserDispose({
+      terminate: async () => undefined,
+      probeAlive: async () => true,
+      removeProfile: async () => { removals.push('profile') },
+    })
+    expect(result).toEqual({ stopped: false, profileRemoved: false })
+    expect(removals).toEqual([])
+  })
+
+  it('operator disposes a browser that is confirmed gone and the profile is removed', async () => {
+    // Given a launch that no longer answers on its port and whose process is gone
+    // When the disposal runs
+    // Then it reports a complete cleanup and the profile directory is removed once
+    const removals: string[] = []
+    const result = await settleBrowserDispose({
+      terminate: async () => undefined,
+      probeAlive: async () => false,
+      removeProfile: async () => { removals.push('profile') },
+    })
+    expect(result).toEqual({ stopped: true, profileRemoved: true })
+    expect(removals).toEqual(['profile'])
+  })
+
+  it('operator probes a browser whose launched pid died while DevTools answers and it counts as running', async () => {
+    // Given a launcher pid that is gone and a DevTools endpoint that still answers
+    // When the liveness probe runs
+    // Then the browser counts as running, because the endpoint is the browser itself
+    const alive = await probeBrowserAlive({ pid: 4242, port: 9222 }, {
+      isAlive: () => false,
+      fetchEndpoint: async () => true,
+    })
+    expect(alive).toBe(true)
+  })
+
+  it('operator probes a browser whose process and port are both gone and it counts as stopped', async () => {
+    // Given a pid that is gone and an endpoint that does not answer
+    // When the liveness probe runs
+    // Then the browser counts as stopped
+    const alive = await probeBrowserAlive({ pid: 4242, port: 9222 }, {
+      isAlive: () => false,
+      fetchEndpoint: async () => false,
+    })
+    expect(alive).toBe(false)
+  })
+
+  it('operator probes a browser whose process still answers and the port is never queried', async () => {
+    // Given a live pid and an endpoint that would say no
+    // When the liveness probe runs
+    // Then the pid alone settles it and no network probe is spent
+    let queried = false
+    const alive = await probeBrowserAlive({ pid: 7, port: 1 }, {
+      isAlive: () => true,
+      fetchEndpoint: async () => {
+        queried = true
+        return false
+      },
+    })
+    expect(alive).toBe(true)
+    expect(queried).toBe(false)
+  })
+
+  it('operator probes a browser whose endpoint query throws and it counts as stopped', async () => {
+    // Given a pid that is gone and an endpoint query that fails outright
+    // When the liveness probe runs
+    // Then the failure is bounded and the browser counts as stopped
+    const alive = await probeBrowserAlive({ pid: 4242, port: 9222 }, {
+      isAlive: () => false,
+      fetchEndpoint: async () => {
+        throw new Error('probe transport failed')
+      },
+    })
+    expect(alive).toBe(false)
+  })
+
+  it('operator disposes a browser whose spawned handle never ran and the profile is still cleaned', async () => {
+    // Given a launch whose process already exited before disposal started
+    // When the disposal runs
+    // Then the terminal step still runs first and the profile is removed
+    const steps: string[] = []
+    const result = await settleBrowserDispose({
+      terminate: async () => { steps.push('terminate') },
+      probeAlive: async () => {
+        steps.push('probe')
+        return false
+      },
+      removeProfile: async () => { steps.push('remove') },
+    })
+    expect(steps).toEqual(['terminate', 'probe', 'remove'])
+    expect(result.profileRemoved).toBe(true)
   })
 })

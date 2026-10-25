@@ -16,11 +16,12 @@
  * navigation, this side only observes it) and no "open in a new window",
  * because the page lives in a Chromium process on the host.
  *
- * The glyphs are drawn here rather than taken from the product icon set: the
- * primitives entry point imports its own stylesheets, and a value import of it
- * cannot be loaded by this package's jsdom tests (their Vite config does not
- * inline @deepseek-ai packages). Drawing at the same 16px grid, stroke weight
- * and currentColor keeps the toolbar visually identical without that coupling.
+ * The refresh control and the state marker are the product's own atoms -
+ * IconRefreshOutlineRegular and StateDot from @deepseek-ai/dsh-client-ui-primitives,
+ * the same two the shipped browser tab's toolbar uses - so the chrome is drawn
+ * from one source rather than redrawn beside it. The package's Vite config
+ * inlines @deepseek-ai packages, which is what lets the jsdom body tests load
+ * that entry point (it imports its own stylesheets).
  *
  * Frame rendering: an <img> fed a base64 JPEG data URL, not a <canvas>. The host
  * already decoded and re-encoded the frame (CDP gives it JPEG base64), so there
@@ -29,6 +30,11 @@
  * element decodes off the main thread and lets CSS own the aspect-ratio fit.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  IconRefreshOutlineRegular,
+  StateDot,
+  type StateDotState,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { BrowserActionTrace, BrowserPanelState } from '../core/protocol.ts'
 import { BROWSER_VIEW_API_VERSION } from '../core/protocol.ts'
@@ -71,25 +77,6 @@ const EMPTY_STATE: BrowserPanelState = { tabs: [], activeTabId: null, running: f
 /** Join truthy class names (CSS Modules maps are typed as plain records). */
 function cx(...names: ReadonlyArray<string | false | null | undefined>): string {
   return names.filter((name): name is string => typeof name === 'string' && name.length > 0).join(' ')
-}
-
-/**
- * Circular-arrow mark for the refresh control; drawn locally on the product's
- * 16px icon grid so it sits beside the shipped icons without an import.
- * @returns the glyph.
- */
-function RefreshGlyph() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
-      <path
-        d="M13 8a5 5 0 1 1-1.6-3.7"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-      />
-      <path d="M13.4 1.9v3.4H10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
 }
 
 /**
@@ -163,7 +150,9 @@ export function BrowserViewPanel({ t, sessionId, liveTitle, socketFactory, locat
   const statusLabel = status !== 'open'
     ? t('panel.status.connecting')
     : loading ? t('panel.status.loading') : t('panel.status.live')
-  const phase = status !== 'open' ? 'connecting' : loading ? 'loading' : 'live'
+  // Three of the product's five dot states, in the order a viewer meets them:
+  // nothing reached yet, a page still loading, a settled live picture.
+  const dotState: StateDotState = status !== 'open' ? 'idle' : loading ? 'ongoing' : 'done'
   const pageTitle = activeTab === null || activeTab.title.length === 0 ? undefined : activeTab.title
   const url = activeTab?.url ?? ''
 
@@ -195,15 +184,7 @@ export function BrowserViewPanel({ t, sessionId, liveTitle, socketFactory, locat
           />
         </div>
         <span className={css.status} data-dsh-part={BROWSER_VIEW_PARTS.status} aria-live="polite">
-          <span
-            className={cx(
-              css.statusDot,
-              phase === 'connecting' && css.dotConnecting,
-              phase === 'loading' && css.dotLoading,
-              phase === 'live' && css.dotLive,
-            )}
-            aria-hidden="true"
-          />
+          <StateDot state={dotState} size={10} />
           <span className={css.statusText}>{statusLabel}</span>
         </span>
         <button
@@ -216,7 +197,7 @@ export function BrowserViewPanel({ t, sessionId, liveTitle, socketFactory, locat
             socketRef.current?.send({ v: BROWSER_VIEW_API_VERSION, kind: 'request-frame' })
           }}
         >
-          <RefreshGlyph />
+          <IconRefreshOutlineRegular />
         </button>
       </div>
       {state.tabs.length > 1 && (

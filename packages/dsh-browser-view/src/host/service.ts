@@ -285,6 +285,20 @@ export class BrowserViewService implements BrowserViewBackend {
 
   /**
    * Resolve the tab a tool call from `sessionId` should act on.
+   *
+   * The order is a safety property, not a preference. An agent that lands on
+   * the tab the panel happens to be showing destroys whatever the user was
+   * looking at, so the watched tab is only ever a last resort:
+   *
+   * 1. the tab the caller named,
+   * 2. the tab this session created or last worked in,
+   * 3. the watched tab, but only while no other session owns it,
+   * 4. otherwise a tab of its own.
+   *
+   * Step 3 exists for the case where the user opened a page nobody is driving
+   * (they navigated or selected it themselves); step 3's ownership guard is
+   * what keeps a bystander session from taking over a page another session
+   * owns — the exact way the watched page used to be lost.
    * @param sessionId - calling agent session, when the host provides one.
    * @param tabId - explicit tab from the tool arguments.
    * @returns the tab view.
@@ -312,13 +326,31 @@ export class BrowserViewService implements BrowserViewBackend {
     const watching = this.displayedOrDefault()
     if (watching !== null) {
       const found = tabs.list().find(tab => tab.id === watching)
-      if (found !== undefined) {
+      // Safety invariant, not a default-value preference: one tool navigation
+      // must never drive the page the user is watching. A page another session
+      // owns is therefore not this session's to drive — falling through to a
+      // tab of its own is what holds that invariant, and this guard is what
+      // makes it a property rather than an accident of ordering.
+      if (found !== undefined && !this.ownedByOtherSession(found.id, sessionId)) {
         if (sessionId !== undefined) this.bindings.set(sessionId, found.id)
         this.focusFollowed(found.id)
         return found
       }
     }
     return await this.ensureTab(sessionId)
+  }
+
+  /**
+   * Whether a tab is bound to some other session.
+   * @param tabId - the tab being considered.
+   * @param sessionId - the asking session, which does not count as other.
+   * @returns true when another session already drives this tab.
+   */
+  private ownedByOtherSession(tabId: string, sessionId: string | undefined): boolean {
+    for (const [owner, bound] of this.bindings) {
+      if (bound === tabId && owner !== sessionId) return true
+    }
+    return false
   }
 
   /**

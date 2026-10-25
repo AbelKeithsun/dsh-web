@@ -244,23 +244,29 @@ describe('browser view tab body', () => {
   it('user reads the connection state of the panel in the toolbar marker', () => {
     // Given a mounted body that has not reached the host yet
     // When the socket reports an open connection and then a loading page
-    // Then the marker names connecting, live and loading in turn from the existing status copy
+    // Then the marker names connecting, live and loading in turn from the existing status copy, and the product state dot follows the same three phases
     const mounted = mountPanel()
     const marker = (): string =>
       mounted.container.querySelector('[data-dsh-part="status"]')?.textContent ?? ''
+    const dot = (): string | null =>
+      mounted.container.querySelector('[data-dsh-part="status"] [data-state]')?.getAttribute('data-state') ?? null
 
     expect(marker()).toContain(zh['panel.status.connecting'])
+    expect(dot()).toBe('idle')
 
     actOn(() => { sockets.latest().pushStatus('open') })
     expect(marker()).toContain(zh['panel.status.live'])
+    expect(dot()).toBe('done')
 
     actOn(() => { sockets.latest().pushState(stateWithTwoTabs) })
     expect(marker()).toContain(zh['panel.status.live'])
+    expect(dot()).toBe('done')
 
     actOn(() => {
       sockets.latest().pushState({ ...stateWithTab, tabs: [{ ...stateWithTab.tabs[0], loading: true }] })
     })
     expect(marker()).toContain(zh['panel.status.loading'])
+    expect(dot()).toBe('ongoing')
   })
 
   it('user switches language and every string of the tab follows', () => {

@@ -133,6 +133,11 @@ export interface LaunchChromeOptions {
   extraArgs?: readonly string[]
   /** Environment and file-probe overrides for discovery. */
   discovery?: ChromeDiscovery
+  /**
+   * Liveness seams used by {@link ChromeProcess.dispose} to decide whether the
+   * browser really stopped before its profile is removed.
+   */
+  probe?: BrowserProbeOptions
 }
 
 /** The command-line switches every launch shares. */
@@ -179,17 +184,133 @@ export interface ChromeHandle {
   pid: number | undefined
 }
 
+/** What one disposal actually achieved. */
+export interface ChromeDisposeResult {
+  /**
+   * Whether the BROWSER is gone. The process this module spawned may be only a
+   * launcher that exits while the real browser keeps running, so a dead child
+   * handle says nothing on its own.
+   */
+  readonly stopped: boolean
+  /** Whether the profile directory was removed. */
+  readonly profileRemoved: boolean
+}
+
+/** The three steps a disposal takes, injected so the decision is testable without a browser. */
+export interface BrowserDisposalHooks {
+  /** Ask the spawned process to exit, escalating; resolves once it had its chance. */
+  terminate(): Promise<void>
+  /** Resolve true while the browser still answers or its process is still alive. */
+  probeAlive(): Promise<boolean>
+  /** Delete the profile directory this launch created. */
+  removeProfile(): Promise<void>
+}
+
+/**
+ * Terminate one browser, then delete its profile only once the browser is
+ * confirmed gone.
+ *
+ * Deleting the profile of a browser that is still running is worse than
+ * leaving the directory behind: the live process loses its storage under it
+ * while the caller reports a clean shutdown, and the leftover browser keeps a
+ * profile path that no longer exists. So the profile is removed on evidence,
+ * never on schedule.
+ * @param hooks - terminate, liveness probe, profile removal.
+ * @returns what the disposal achieved; never throws for a surviving browser.
+ */
+export async function settleBrowserDispose(hooks: BrowserDisposalHooks): Promise<ChromeDisposeResult> {
+  await hooks.terminate()
+  if (await hooks.probeAlive()) {
+    // The browser outlived our request: its profile is live data, so it stays
+    // where the running process put it.
+    return { stopped: false, profileRemoved: false }
+  }
+  await hooks.removeProfile()
+  return { stopped: true, profileRemoved: true }
+}
+
+/** How long one DevTools liveness probe may take. */
+export const CHROME_PROBE_TIMEOUT_MS = 750
+
+/** Injection seams for {@link probeBrowserAlive}. */
+export interface BrowserProbeOptions {
+  /** Process liveness check. @default process.kill(pid, 0) */
+  isAlive?: (pid: number) => boolean
+  /** DevTools endpoint query; true when it answers. @default a bounded fetch */
+  fetchEndpoint?: (port: number, timeoutMs: number) => Promise<boolean>
+  /** Deadline for the endpoint query. @default CHROME_PROBE_TIMEOUT_MS */
+  timeoutMs?: number
+}
+
+/** Default process liveness check: signal 0 tests existence without signalling. */
+function defaultIsProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Default DevTools probe: does /json/version still answer on the pinned port. */
+async function defaultDevToolsProbe(port: number, timeoutMs: number): Promise<boolean> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => { controller.abort() }, timeoutMs)
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      headers: { host: `127.0.0.1:${port}` },
+      signal: controller.signal,
+    })
+    return response.ok
+  } catch {
+    // A refused connection, an abort, or any transport failure all mean the
+    // same thing here: nothing is listening, so nothing is alive.
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Whether the browser behind one handle is still running.
+ *
+ * Two independent facts are checked because either alone lies: the spawned pid
+ * can be a launcher that exited while the browser lives, and the port can be
+ * closed while a process is still shutting down. Alive wins on either.
+ * @param info - port and pid pinned at launch.
+ * @param options - liveness seams, for tests.
+ * @returns true when the browser should be considered alive.
+ */
+export async function probeBrowserAlive(
+  info: Pick<ChromeHandle, 'port' | 'pid'>,
+  options: BrowserProbeOptions = {},
+): Promise<boolean> {
+  const isAlive = options.isAlive ?? defaultIsProcessAlive
+  if (info.pid !== undefined && isAlive(info.pid)) return true
+  const query = options.fetchEndpoint ?? defaultDevToolsProbe
+  try {
+    return await query(info.port, options.timeoutMs ?? CHROME_PROBE_TIMEOUT_MS)
+  } catch {
+    // A probe that fails is a probe that found nothing; reporting "alive" here
+    // would permanently retain a profile nobody is using.
+    return false
+  }
+}
+
 /**
  * One Chrome process together with the temporary profile it owns.
  */
 export class ChromeProcess {
   private readonly child: ChildProcess
   private readonly handle: ChromeHandle
+  private readonly probeOptions: BrowserProbeOptions
   private disposed = false
+  private disposeResult: ChromeDisposeResult | undefined
 
-  private constructor(child: ChildProcess, handle: ChromeHandle) {
+  private constructor(child: ChildProcess, handle: ChromeHandle, probeOptions: BrowserProbeOptions) {
     this.child = child
     this.handle = handle
+    this.probeOptions = probeOptions
   }
 
   /**
@@ -223,7 +344,11 @@ export class ChromeProcess {
       await removeTempProfile(userDataDir)
       throw new Error(`Could not start ${chromePath}: ${error instanceof Error ? error.message : String(error)}`)
     }
-    const process_ = new ChromeProcess(child, { chromePath, port, userDataDir, webSocketDebuggerUrl: '', pid: child.pid })
+    const process_ = new ChromeProcess(
+      child,
+      { chromePath, port, userDataDir, webSocketDebuggerUrl: '', pid: child.pid },
+      options.probe ?? {},
+    )
     try {
       const endpoint = await waitForDevToolsEndpoint({
         port,
@@ -249,15 +374,28 @@ export class ChromeProcess {
   }
 
   /**
-   * Kill the process (escalating once) and delete the profile directory this
-   * launch created.
-   * @returns once the process is gone and the profile cleanup was attempted.
+   * What the disposal achieved, once it ran. A caller that needs to know
+   * whether a browser survived the shutdown reads this instead of assuming.
+   * @returns the recorded outcome, or undefined before {@link dispose}.
    */
-  async dispose(): Promise<void> {
-    if (this.disposed) return
+  get lastDispose(): ChromeDisposeResult | undefined {
+    return this.disposeResult
+  }
+
+  /**
+   * Kill the process (escalating once), then delete the profile directory this
+   * launch created — but only once the browser is confirmed gone.
+   * @returns whether the browser stopped and whether its profile was removed.
+   */
+  async dispose(): Promise<ChromeDisposeResult> {
+    if (this.disposeResult !== undefined) return this.disposeResult
     this.disposed = true
-    await terminate(this.child)
-    await removeTempProfile(this.handle.userDataDir)
+    this.disposeResult = await settleBrowserDispose({
+      terminate: () => terminate(this.child),
+      probeAlive: async () => await probeBrowserAlive(this.handle, this.probeOptions),
+      removeProfile: async () => { await removeTempProfile(this.handle.userDataDir) },
+    })
+    return this.disposeResult
   }
 }
 
