@@ -321,7 +321,15 @@ export function materializePreset(root, variantId, variant) {
     // inside its prose, and rewriting a comment would leave the real surface alone.
     const pattern = /^(\s*)presentation: '[^']*'/m
     if (!pattern.test(text)) throw new Error('benchmark: the preset composition carries no presentation line to vary')
-    const replaced = text.replace(pattern, `$1presentation: '${variant.presentation}'`)
+    let replaced = text.replace(pattern, `$1presentation: '${variant.presentation}'`)
+    // On the 0.2.x cohort the presentation line alone changes nothing: the wire
+    // is which executor plugin is mounted, so the same variant has to move the
+    // executor row's mount state. Anchored on the row so a run cannot quietly
+    // evaluate the wrong arm.
+    const executor = /(- id: tool-executor-ptc\n\s*name: '@deepseek-ai\/dsh-tool-executor-ptc'\n\s*disabled: )(?:true|false)/
+    if (!executor.test(replaced)) throw new Error('benchmark: the preset composition carries no tool-executor-ptc row to vary')
+    const mounted = variant.presentation === 'ptc' ? 'false' : 'true'
+    replaced = replaced.replace(executor, `$1${mounted}`)
     writeFileSync(composition, replaced)
   }
   if (variant.persona === 'candidate') {

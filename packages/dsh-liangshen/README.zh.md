@@ -66,7 +66,7 @@ DeepSeek V4.1 Flash 的后训练直接对齐其原生 DSML 工具调用面，官
 | `instructionSource` | `host` | 工作区指令送达模型的方式。`host`（默认）不追加任何自有段，也不改动宿主的 agent-instructions 注入，工作区指令以宿主自己的 user 角色消息送达：一条持久基线，加上触碰目录后的增量、替换与移除；`system-prompt` 在组装时读取 AGENTS.md 链并追加进系统提示词（harness 自己的注入被丢弃）；`hint` 把首次注入替换为一次性的、非命令式的参考文件提示，后续注入丢弃。 |
 | `instructionMaxBytes` | `65536` | 渲染后的 workspace-instructions 段的字节预算，仅在 `system-prompt` 模式下生效：最宽的文件先被省略，最具体的文件最后被截断。 |
 | `descriptionMaxLength` | `200` | 注入目录中单个工具一行摘要的长度上限，作用于所有未被策展表覆盖的工具；被策展的宿主内置工具直接使用整行手写短描述。完整关键参数语义保持完整。 |
-| `presentation` | `ptc` | 整个会话的 wire 呈现方式。`ptc`（出厂默认）把 wire 收拢为 `run_code`，其余工具经生成的 SDK 调用；`native` 保持组装出的原生清单。`ptc` 需要挂载的 code runtime；没有时插件根本不做声明，会话直接运行原生工具面。已删除的 `both` 取值不被接受：旧 profile 写明它会在注册时被拒绝，请迁移为 `ptc` 或 `native`。 |
+| `presentation` | `ptc` | 整个会话的 wire 呈现方式。`ptc`（出厂默认）把 wire 收拢为 `run_code`，其余工具经生成的 SDK 调用；`native` 保持组装出的原生清单。0.2.x cohort 上 wire 由**组合挂了哪个执行器**决定，因此这个取值决定本预设的 `@deepseek-ai/dsh-tool-executor-ptc` 行是否挂载（`tool-catalog` 行保留该取值，用于目录自身的描述与 0.2.0 之前的 `agent.ctx.tools.presentAs` 路径——当前 SDK 已不再暴露它）。若写着 `ptc` 而请求里没有 `run_code`，插件告警一次并点名该行，不再静默跑原生面。已删除的 `both` 取值不被接受：旧 profile 写明它会在注册时被拒绝，请迁移为 `ptc` 或 `native`。 |
 | `pagedToolPatterns` | `['mcp__*']` | 出厂开启温和分页：命中的 MCP 工具被扣留在 wire 与生成的 SDK 之外，直到模型通过 `tool_activate({ namespace })` 激活其命名空间。被扣留的命名空间在目录中以一行摘要出现。最多同时保持三个已激活的分页命名空间，激活状态从持久事件流重建。 |
 | `maxResidentTokens` | `8000` | 常驻 wire 面的估算 token 上限（按序列化 schema 约四字符一 token），按 V4.1 的 KV 压缩重新校准后仍高于出厂清单，用于发现真实增长而非出厂配置本身。超过时告警一次、列出最重的工具并指向 `pagedToolPatterns`；不会截断工具清单。 |
 | `ptcPresentation` | （已退役） | 旧别名：`true` 映射为 `presentation: 'ptc'`，`false` 映射为 `'native'`，两者都伴随弃用告警。 |
@@ -117,7 +117,7 @@ dsh plugin --profile web remove @linxin666/dsh-liangshen
 | --- | --- | --- |
 | `enabled` | `true` | 总开关：关闭后不声明预设、也不发公告。 |
 | `announceToAgent` | `false` | 按需开启：开启后向 agent 系统提示注入本插件公告。默认关闭，保持系统提示词干净。 |
-| `presentation` | `ptc` | 写入本插件所声明 preset 之 `tool-catalog` 行的 wire 呈现：`ptc`（默认）把 wire 收拢为 `run_code`，其余工具经生成的 SDK 调用；`native` 保持组装出的原生清单。Host 提交改动后立即重新声明 preset，此后新建的会话即采用新值；已开始的会话保持其已声明的组合。已删除的 `both` 取值在注册时被拒绝——旧 profile 请迁移为 `ptc` 或 `native`。 |
+| `presentation` | `ptc` | 本插件所声明 preset 的 wire 呈现。它写两处：取值写进 `tool-catalog`（用于目录描述与旧声明路径），`tool-executor-ptc` 行的挂载状态则由它决定——`ptc` 挂载、`native` 不挂载——因为 0.2.x 的 SDK 是按执行器插件而非运行时调用选择 wire。Host 提交改动后立即重新声明 preset，此后新建的会话即采用新值；已开始的会话保持其已声明的组合。已删除的 `both` 取值在注册时被拒绝——旧 profile 请迁移为 `ptc` 或 `native`。 |
 | `dispatcher` | `true` | 身份开关：开启时（出厂默认）所声明的 preset 在 persona 之后追加调度者规则段——复杂度分诊（L0/L1 直接执行，L2 走完整流程）、拒绝 Agent Teams 的 R0.5 兼容性闸门、L2 任务先澄清访谈再规划、派发子代理并逐层审查与验收，以及落在 `todo_write` 的任务跟踪——其后是本地英文补充：访谈类新增内容，加上让任务看板停在做跟踪的表面、而不是派发路径的那一条，以及让登记的事实保持为锚点、而不是当前状态的那一条。这个块在本仓维护：2026-10-18 从它来源包发布的谱系重新抽取（二十条反模式、R2 的 allowlist 三态、R8 被撤回的空 allowlist 兜底、R6 记录化的重派次数、R7 每轮扫描即将升级或过期的项、R5 的 [Limits] 规则——每个上限都写明它约束什么、单位、上限值、以及是否累计）；更正就地应用，而不是作为一条自相矛盾的第二份副本追加；`DISPATCHER_RULES_PROVENANCE` 逐条记录它们，`node tools/check-dispatcher-rules.mjs` 对已安装的来源包报告漂移。关闭后回到仅含工作纪律的极简 persona。它与 `presentation` 正交：`presentation` 决定工具面，`dispatcher` 决定身份与流程纪律。 |
 
 各字段都可在 Web 设置界面（插件配置）或 profile patch（`dsh plugin` / `cordis.patch.yml`）中编辑。0.1.7 的设置契约下，插件自身的 Config 就是它的设置页：Host 为每个 profile entry 生成一张表单（entry id 为 `liangshen`，聚合安装下为生成的 `web-ui-liangshen` 行），每个字段都声明为 `volatile()`，因此写入被提交进运行中的插件实例，而不是重挂该行。塑造 preset 的 presentation 字段再经声明抵达会话：插件把已提交的取值应用到 `presets/liangshen/agent.cordis.yml` 的对应行并重新声明 preset，因此真正被会话运行的是设置界面的取值，而不是包内文件。组合里没有的行或键绝不会被凭空写入——覆写只会收窄出厂配置。改动对之后新建的会话生效；已开始的会话保持其已声明的组合，因为 registry 拒绝重组已开始的会话。

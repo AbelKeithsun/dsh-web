@@ -666,6 +666,12 @@ export function apply(ctx, config) {
   // Presentation declaration tracking per agent scope (one declaration each)
   const agentDeclared = new WeakSet()
   const agentDeclareFailed = new WeakSet()
+  /**
+   * Scopes whose cohort exposes no `presentAs` at all. The wire check below only
+   * reports for these: a declaration that was attempted and declined already
+   * names its own cause, and a second warning for the same fact is noise.
+   */
+  const legacyOnly = new WeakSet()
   const agentDisposers = new WeakMap()
 
   // Registry-level paging state, one entry per agent scope: the names the live
@@ -793,8 +799,14 @@ export function apply(ctx, config) {
 
     const tools = agent?.ctx?.tools
     if (tools === undefined || typeof tools.presentAs !== 'function') {
+      // The 0.2.x SDK removed `presentAs`: the wire is now chosen by WHICH
+      // executor plugin the preset composition mounts, and this preset mounts
+      // `@deepseek-ai/dsh-tool-executor-ptc` when `presentation` is 'ptc'.
+      // Nothing failed on this cohort, so nothing is reported here — the
+      // assembly's own wire check below speaks when a ptc-configured request
+      // really carries no `run_code`, which is the only case worth a warning.
+      legacyOnly.add(agent)
       agentDeclareFailed.add(agent)
-      warnOnce('runtime', 'no scoped tools view to declare the presentation through — keeping the native tool surface')
       return false
     }
 
@@ -1002,6 +1014,15 @@ export function apply(ctx, config) {
 
     const assembledTools = Array.isArray(assembled?.tools) ? assembled.tools : undefined
     const wireHasRunCode = (assembledTools ?? []).some(t => t?.name === 'run_code')
+
+    // The ptc wire is mounted by the preset composition rather than asserted by
+    // it, so this waterfall is the one place the configuration and the request
+    // can be compared. A ptc-configured request carrying no `run_code` is
+    // running the native surface: name the mismatch once, because otherwise a
+    // preset that lost its executor row looks exactly like one that works.
+    if (presentation === 'ptc' && legacyOnly.has(agent) && assembledTools !== undefined && assembledTools.length > 0 && !wireHasRunCode) {
+      warnOnce('wire', 'presentation is "ptc" but this request carries no run_code: no PTC executor is mounted for this preset. Mount @deepseek-ai/dsh-tool-executor-ptc in the composition — the 0.2.x SDK selects the wire by executor plugin and no longer exposes agent.ctx.tools.presentAs')
+    }
     const wireOnlyRunCode = assembledTools !== undefined && assembledTools.length > 0 && assembledTools.every(t => t?.name === 'run_code')
 
     // The paging restriction was installed OUTSIDE this waterfall (see

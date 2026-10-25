@@ -185,6 +185,28 @@
     pagedToolPatterns: ['mcp__*']
     maxResidentTokens: 8000
 
+# ── the wire ────────────────────────────────────────────────────────────────
+#
+# On the 0.2.x cohort the wire is chosen by WHICH EXECUTOR this composition
+# mounts, not by a runtime call: the host bundle mounts the native executor
+# and leaves the ptc one disabled, and a preset that wants the collapsed wire
+# mounts `@deepseek-ai/dsh-tool-executor-ptc` for its own scope — exactly how
+# the builtin `ptc` preset does it (`web-app/presets/ptc.patch.yml`).
+#
+# So `presentation` on the `tool-catalog` row above decides whether THIS row
+# is mounted: before declaring, the plugin rewrites its `disabled` from that
+# value (ptc -> false, native -> true), which is what keeps the shipped
+# default and the settings switch agreeing. The row ships enabled because the
+# shipped `presentation` is `ptc`.
+#
+# `tool-catalog`'s own `agent.ctx.tools.presentAs` declaration is the
+# pre-0.2.0 path: that method no longer exists in the SDK, so it is a
+# compatibility no-op there, and the catalog warns once if a ptc-configured
+# request turns out to carry no `run_code`.
+- id: tool-executor-ptc
+  name: '@deepseek-ai/dsh-tool-executor-ptc'
+  disabled: false
+
 - id: working-context
   name: ./working-context.mjs
 

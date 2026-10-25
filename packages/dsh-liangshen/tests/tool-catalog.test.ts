@@ -586,13 +586,18 @@ describe('liangshen-tool-catalog', () => {
     expect(catalogText((await preStep(harness, agent)).messages)).toContain('- `web_search(')
   })
 
-  test('warns once when a session has no scoped tools view to declare through', async () => {
+  // The 0.2.x cohort exposes no `presentAs` at all: the wire is chosen by the
+  // executor plugin the preset composition mounts, so a missing declaration API
+  // is not a failure and must not warn. What DOES warrant a warning is the
+  // mismatch it can hide: a ptc-configured request with no run_code on the wire.
+  test('names the executor row once when a ptc-configured wire carries no run_code', async () => {
     const harness = register()
     const agent: any = { session: { snapshotEvents: () => [] } }
     await assemble(harness, agent)
     await assemble(harness, agent)
     expect(harness.warnings).toHaveLength(1)
-    expect(harness.warnings[0]).toContain('keeping the native tool surface')
+    expect(harness.warnings[0]).toContain('dsh-tool-executor-ptc')
+    expect(harness.warnings[0]).toContain('carries no run_code')
   })
 
   test('never announces a transport its own assembly wire does not carry', async () => {
