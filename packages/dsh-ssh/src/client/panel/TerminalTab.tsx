@@ -1,16 +1,24 @@
 /**
  * Terminal tab: an xterm.js PTY view over the host's WebSocket terminal route.
+ *
+ * Multi-tab: the tab list (with each tab's host session id) lives in the panel
+ * controller, so switching tabs, closing the panel or unmounting the page never
+ * loses a shell. The host keeps every PTY session alive (`engine/terminal-
+ * sessions.ts`); this view owns exactly one xterm at a time and reattaches the
+ * focused tab by session id, which replays the host-side scrollback. That keeps
+ * the DOM footprint of N tabs at one terminal instead of N.
+ *
  * A host <select> plus connect/disconnect controls; the terminal container is
  * sized by FitAddon (default 80x24 before first fit). On remote exit the last
  * output stays visible and input is disabled. xterm's stylesheet is injected
  * once per page load (module-level guard).
  */
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Terminal, type IDisposable } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { SshApi, TerminalConnection } from '../api.ts'
 import type { SshHostSummary } from '../../protocol.ts'
-import type { PanelController } from './controller.ts'
+import type { PanelController, TerminalTabState } from './controller.ts'
 import { XTERM_CSS } from './xterm.css.ts'
 import { errorMessage, resolveTerminalFontFamily, tt, type TerminalFontSource } from './helpers.ts'
 import css from './panel.module.css'
@@ -18,14 +26,10 @@ import css from './panel.module.css'
 /** Terminal tab props. */
 export interface TerminalTabProps {
   api: SshApi
-  /** The panel controller that owns the live host session id across mounts. */
+  /** The panel controller that owns the terminal tabs and their session ids. */
   controller: PanelController
-  /** Host session to reattach to on mount (survives a panel switch). */
-  sessionId?: string
-  /** Alias preselected by a "connect" action from the hosts tab. */
+  /** Alias preselected by a hosts-tab "connect" action. */
   presetAlias?: string
-  /** Monotonic id of the connect request (re-applies presetAlias). */
-  requestId?: number
   /**
    * Live terminal-font setting source (issue #577). Absent in tests and
    * legacy mounts: the font then comes from the CSS custom-property chain.
@@ -68,7 +72,7 @@ const NO_FONT_SOURCE: TerminalFontSource = {
 }
 
 /** The xterm terminal view. */
-export function TerminalTab({ api, controller, sessionId, presetAlias, requestId, terminalFont }: TerminalTabProps) {
+export function TerminalTab({ api, controller, presetAlias, terminalFont }: TerminalTabProps) {
   const [hosts, setHosts] = useState<SshHostSummary[]>([])
   const [alias, setAlias] = useState(presetAlias ?? '')
   const [status, setStatus] = useState<TerminalStatus>({ kind: 'idle' })
@@ -79,8 +83,19 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
   const fitRef = useRef<FitAddon | null>(null)
   const connRef = useRef<TerminalConnection | null>(null)
   const dataSubRef = useRef<IDisposable | null>(null)
+  /** The tab key the live connection belongs to (undefined when disconnected). */
+  const connKeyRef = useRef<string | undefined>(undefined)
   const fontSource = terminalFont ?? NO_FONT_SOURCE
   const fontOverride = useSyncExternalStore(fontSource.subscribe, fontSource.get)
+
+  // Tabs and their session ids live in the controller, not in component state:
+  // the layout unmounts this page whenever another panel is selected.
+  const subscribe = useCallback((listener: () => void) => controller.subscribe(listener), [controller])
+  const readSnapshot = useCallback(() => controller.getSnapshot(), [controller])
+  const snapshot = useSyncExternalStore(subscribe, readSnapshot)
+  const tabs = snapshot.terminalTabs
+  const activeKey = snapshot.activeTerminalKey
+  const activeTab = tabs.find(tab => tab.key === activeKey)
 
   useEffect(() => { ensureXtermCss() }, [])
 
@@ -114,16 +129,17 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
   // A hosts-tab connect action preselects its alias here.
   useEffect(() => {
     if (presetAlias !== undefined) setAlias(presetAlias)
-  }, [presetAlias, requestId])
+  }, [presetAlias])
 
   /**
    * Tear the view down.
    * @param leave - `detach` leaves the host session alive for a reattach
-   *   (panel switch, unmount); `close` ends it (the disconnect control).
+   *   (tab switch, panel switch, unmount); `close` ends it (the close control).
    */
   const teardown = (leave: 'detach' | 'close'): void => {
     setAuthPrompt(undefined)
     setAuthInputs([])
+    connKeyRef.current = undefined
     const connection = connRef.current
     connRef.current = null
     if (connection !== null) {
@@ -145,7 +161,8 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
   }
 
   // Unmount cleanup (never touches state on an unmounting component). The
-  // host keeps the shell alive, so returning to this tab reattaches to it.
+  // host keeps every shell alive, so returning to this page reattaches to the
+  // focused tab instead of opening a second session.
   useEffect(() => () => { teardown('detach') }, [])
 
   // Keep the terminal fitted to its container. A window resize is only one
@@ -183,13 +200,13 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
   }, [])
 
   /**
-   * Build the xterm view and bind one connection to it.
+   * Build the xterm view for one tab and bind one connection to it.
+   * @param key - the tab key the connection belongs to.
    * @param open - opens the transport once the terminal has a size.
    */
-  const startSession = (open: (cols: number, rows: number) => TerminalConnection): void => {
+  const startSession = (key: string, open: (cols: number, rows: number) => TerminalConnection): void => {
     const container = containerRef.current
     if (container === null) return
-    if (status.kind === 'connecting' || status.kind === 'connected') return
     teardown('detach')
     setStatus({ kind: 'connecting' })
     const term = new Terminal({
@@ -207,6 +224,7 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
     termRef.current = term
     fitRef.current = fit
     connRef.current = connection
+    connKeyRef.current = key
     let settled = false
     let connectedAlias = ''
     dataSubRef.current = term.onData(data => { connection.send(data) })
@@ -215,10 +233,10 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
       setAuthInputs(prompts.map(() => ''))
     }
     connection.onReady = (id, readyAlias) => {
-      // Remember the host session so a later mount of this tab reattaches to
-      // the same shell instead of opening a second one.
+      // Remember the host session on ITS tab, so a later mount of this page
+      // reattaches to the same shell instead of opening a second one.
       connectedAlias = readyAlias
-      controller.setTerminalSession(id)
+      controller.setTerminalSession(key, id)
       setAuthPrompt(undefined)
       setAuthInputs([])
       setStatus({ kind: 'connected', alias: readyAlias })
@@ -233,34 +251,66 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
       dataSubRef.current = null
       term.options.disableStdin = true
       connRef.current = null
-      // The session is gone: drop the id so the next mount starts fresh.
-      controller.clearTerminalSession()
+      connKeyRef.current = undefined
+      // The session is gone: drop its tab so the next mount starts fresh.
+      controller.closeTerminalTab(key)
       // Keep the last output visible; input is now disabled.
       setStatus({ kind: 'exited', alias: connectedAlias !== '' ? connectedAlias : alias, detail: error })
     }
   }
 
+  // Follow the focused tab: detach the previous shell (it stays alive on the
+  // host) and attach/open the newly focused one.
+  useEffect(() => {
+    if (activeTab === undefined) {
+      if (connRef.current !== null) {
+        teardown('detach')
+        setStatus({ kind: 'idle' })
+      }
+      return
+    }
+    if (connKeyRef.current === activeTab.key) return
+    const key = activeTab.key
+    const sessionId = activeTab.sessionId
+    if (sessionId !== undefined) {
+      startSession(key, (cols, rows) => api.attachTerminal(sessionId, cols, rows))
+    } else {
+      const target = activeTab.alias
+      startSession(key, (cols, rows) => api.openTerminal(target, cols, rows))
+    }
+  }, [activeTab?.key, activeTab?.sessionId, activeTab?.alias])
+
+  /** Open a tab for the selected alias (the Connect control). */
   const connect = (): void => {
-    const target = alias
-    if (target === '') return
-    startSession((cols, rows) => api.openTerminal(target, cols, rows))
+    if (alias === '') return
+    controller.requestConnect(alias)
   }
 
-  // Reattach to a host session that outlived this view (panel switch or a
-  // remount of the page). The host replays its scrollback before ready, so
-  // the terminal comes back with its history instead of a blank screen.
-  const reattachedRef = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    if (sessionId === undefined || connRef.current !== null) return
-    if (reattachedRef.current === sessionId) return
-    reattachedRef.current = sessionId
-    startSession((cols, rows) => api.attachTerminal(sessionId, cols, rows))
-  }, [sessionId])
+  /**
+   * Close one tab. The focused tab's live connection ends the host session
+   * with an explicit close frame; a background tab has no connection, so a
+   * short-lived attach is used to send that frame (the host replays the
+   * scrollback first, then ends the shell) — otherwise the session would only
+   * disappear after the host idle timeout.
+   */
+  const closeTab = (key: string): void => {
+    const tab = tabs.find(candidate => candidate.key === key)
+    if (tab === undefined) return
+    if (connKeyRef.current === key) {
+      teardown('close')
+      setStatus({ kind: 'idle' })
+    } else if (tab.sessionId !== undefined) {
+      const connection = api.attachTerminal(tab.sessionId, 80, 24)
+      connection.onReady = () => { connection.close() }
+      connection.onExit = () => undefined
+    }
+    controller.closeTerminalTab(key)
+  }
 
+  /** Close the focused tab (the Disconnect control). */
   const disconnect = (): void => {
-    teardown('close')
-    controller.clearTerminalSession()
-    setStatus({ kind: 'idle' })
+    if (activeKey === undefined) return
+    closeTab(activeKey)
   }
 
   const submitAuth = (e?: React.FormEvent): void => {
@@ -270,7 +320,9 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
     setAuthPrompt(undefined)
   }
 
-  const active = status.kind === 'connecting' || status.kind === 'connected'
+  const tabLabel = (tab: TerminalTabState): string => tab.sessionId === undefined && tab.key !== activeKey
+    ? tab.alias
+    : tab.alias
 
   return (
     <div className={css.termBody}>
@@ -279,9 +331,46 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
           <option value="">{tt('terminal.selectHost')}</option>
           {hosts.map(host => <option key={host.alias} value={host.alias}>{host.alias} ({host.host})</option>)}
         </select>
-        <button type="button" className={css.primaryButton} disabled={alias === '' || active} onClick={connect}>{tt('terminal.connect')}</button>
-        <button type="button" className={css.ghostButton} disabled={!active} onClick={disconnect}>{tt('terminal.disconnect')}</button>
+        <button type="button" className={css.primaryButton} disabled={alias === ''} onClick={connect}>{tt('terminal.connect')}</button>
+        <button type="button" className={css.ghostButton} disabled={activeKey === undefined} onClick={disconnect}>{tt('terminal.disconnect')}</button>
       </div>
+      {tabs.length > 0 && (
+        <div className={css.termTabs} role="tablist" aria-label={tt('terminal.tabs')}>
+          {tabs.map(tab => (
+            <div key={tab.key} className={css.termTab} data-active={tab.key === activeKey ? '' : undefined}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab.key === activeKey}
+                className={css.termTabLabel}
+                title={tab.alias}
+                onClick={() => { controller.activateTerminalTab(tab.key) }}
+              >
+                {tabLabel(tab)}
+              </button>
+              <button
+                type="button"
+                className={css.termTabClose}
+                aria-label={tt('terminal.closeTab')}
+                title={tt('terminal.closeTab')}
+                onClick={(event) => { event.stopPropagation(); closeTab(tab.key) }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className={css.termTabAdd}
+            aria-label={tt('terminal.newTab')}
+            title={tt('terminal.newTab')}
+            disabled={alias === ''}
+            onClick={connect}
+          >
+            +
+          </button>
+        </div>
+      )}
       {status.kind === 'connecting' && <div className={css.banner} data-kind="info">{tt('terminal.connecting')}</div>}
       {status.kind === 'connected' && <div className={css.banner} data-kind="ok">{tt('terminal.ready', { alias: status.alias })}</div>}
       {status.kind === 'exited' && (
@@ -290,7 +379,7 @@ export function TerminalTab({ api, controller, sessionId, presetAlias, requestId
       {status.kind === 'error' && <div className={css.banner} data-kind="error">{tt('terminal.error', { error: status.detail })}</div>}
       <div className={css.termWrap}>
         <div ref={containerRef} className={css.termContainer} data-dsh-part="terminal" />
-        {status.kind === 'idle' && (
+        {tabs.length === 0 && (
           <div className={css.termPlaceholder}>{hosts.length === 0 ? tt('hosts.empty') : tt('terminal.placeholder')}</div>
         )}
         {authPrompt !== undefined && (

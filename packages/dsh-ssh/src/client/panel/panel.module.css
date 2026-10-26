@@ -652,6 +652,99 @@
   background: #0b0e14;
 }
 
+/* One tab per host PTY session; the terminal body still renders a single
+   xterm, so N tabs cost one terminal instead of N. */
+.termTabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  flex: none;
+  min-height: 28px;
+  padding-bottom: 1px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.termTab {
+  display: inline-flex;
+  align-items: stretch;
+  flex: none;
+  max-width: 220px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.termTab[data-active] {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-bg-base);
+}
+
+.termTabLabel {
+  min-width: 0;
+  max-width: 180px;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.termTab[data-active] .termTabLabel {
+  color: var(--dsw-alias-label-primary);
+}
+
+.termTabLabel:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.termTabClose {
+  flex: none;
+  width: 22px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.termTabClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.termTabAdd {
+  flex: none;
+  width: 28px;
+  padding: 0;
+  border: 1px dashed var(--dsw-alias-border-l1);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.termTabAdd:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.termTabAdd:not(:disabled):hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
 .termContainer {
   position: absolute;
   /* Inset offsets, not padding: FitAddon measures this element's height as

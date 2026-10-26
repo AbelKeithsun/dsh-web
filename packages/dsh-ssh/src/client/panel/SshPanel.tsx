@@ -41,7 +41,7 @@ const TABS: ReadonlyArray<{ id: SshTab; label: () => string }> = [
 
 /** The tabbed SSH panel. */
 export function SshPanel({ controller, api, terminalFont }: SshPanelProps) {
-  const { panelOpen, activeTab, connectRequest, terminalSessionId } = useSyncExternalStore(
+  const { panelOpen, activeTab } = useSyncExternalStore(
     useCallback(listener => controller.subscribe(listener), [controller]),
     useCallback(() => controller.getSnapshot(), [controller]),
   )
@@ -75,9 +75,6 @@ export function SshPanel({ controller, api, terminalFont }: SshPanelProps) {
           <TerminalTab
             api={api}
             controller={controller}
-            presetAlias={connectRequest?.alias}
-            requestId={connectRequest?.nonce}
-            sessionId={terminalSessionId}
             terminalFont={terminalFont}
           />
         )}

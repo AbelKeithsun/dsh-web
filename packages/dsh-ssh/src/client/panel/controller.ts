@@ -5,24 +5,33 @@
  * style) so the sidebar row and the React panel share one tiny subscription
  * surface. The state lives only for the browser session (no persistence).
  *
- * The active tab, the hosts-tab connect request and the live terminal session
- * id live here rather than inside the panel components: the layout mounts a
- * keyed page only while its panel is selected, so component-local state would
- * reset the tab on every panel switch and lose the id a reattach needs.
+ * The active tab, the terminal tab list and each tab's host session id live
+ * here rather than inside the panel components: the layout mounts a keyed page
+ * only while its panel is selected, so component-local state would reset the
+ * tabs on every panel switch and lose the ids a reattach needs.
+ *
+ * Terminal tabs: one record per client-side view. A tab is created before its
+ * host session exists (opening one is asynchronous), so `key` is client-side
+ * and `sessionId` is filled in when the socket reports ready. Closing a tab
+ * removes the record; the caller ends the host session (close frame) when it
+ * still has a live connection for it.
  */
 
 /** The panel's tab identifiers. */
 export type SshTab = 'hosts' | 'terminal' | 'transfer' | 'tunnels' | 'cluster'
 
-/** A "connect" action from the hosts tab, handed to the terminal tab. */
-export interface ConnectRequest {
-  alias: string
-  /** Monotonic id so a repeated connect for the same alias still re-applies. */
-  nonce: number
-}
-
 /** Stable id shared by the sidebar panel row and the main-slot page. */
 export const SSH_PANEL_ID = 'ssh'
+
+/** One terminal tab: a client-side view bound to at most one host PTY session. */
+export interface TerminalTabState {
+  /** Client-side key, stable for the tab's whole lifetime (the view picks it). */
+  key: string
+  /** Host alias the tab was opened for. */
+  alias: string
+  /** Host-side session id, known once the terminal socket reported ready. */
+  sessionId?: string
+}
 
 /** Immutable controller snapshot for UI subscriptions. */
 export interface PanelControllerSnapshot {
@@ -30,10 +39,10 @@ export interface PanelControllerSnapshot {
   panelOpen: boolean
   /** The tab the panel is showing. */
   activeTab: SshTab
-  /** Pending hosts-tab connect request, or null. */
-  connectRequest: ConnectRequest | null
-  /** Host-side terminal session the terminal tab should reattach to, if any. */
-  terminalSessionId: string | undefined
+  /** Terminal tabs in creation order. */
+  terminalTabs: readonly TerminalTabState[]
+  /** The terminal tab the terminal view shows; undefined when there is none. */
+  activeTerminalKey: string | undefined
 }
 
 /**
@@ -53,19 +62,22 @@ export interface PanelControllerDeps {
   panel?: PanelNavigationFace
 }
 
+/** Monotonic key source (one counter per page, like the connect nonce). */
+let nextTerminalTabKey = 1
+
 /** The panel state owner the sidebar row and the view both read. */
 export class PanelController {
   private panelOpen = false
   private activeTab: SshTab = 'hosts'
-  private connectRequest: ConnectRequest | null = null
-  private terminalSessionId: string | undefined
+  private terminalTabs: TerminalTabState[] = []
+  private activeTerminalKey: string | undefined
   private listeners = new Set<() => void>()
   /** Cached so getSnapshot is referentially stable between changes. */
   private snapshot: PanelControllerSnapshot = {
     panelOpen: false,
     activeTab: 'hosts',
-    connectRequest: null,
-    terminalSessionId: undefined,
+    terminalTabs: [],
+    activeTerminalKey: undefined,
   }
 
   constructor(private readonly deps: PanelControllerDeps = {}) {}
@@ -117,40 +129,97 @@ export class PanelController {
     this.commit()
   }
 
-  /** Switch tabs, keeping every other piece of view state. */
+  /** Switch panel tabs, keeping the terminal tabs and their sessions. */
   setActiveTab(tab: SshTab): void {
     if (this.activeTab === tab) return
     this.activeTab = tab
     this.commit()
   }
 
-  /** Hand the terminal tab a host to connect to (hosts-tab "connect" action). */
-  requestConnect(alias: string): void {
-    this.connectRequest = { alias, nonce: Date.now() }
-    this.activeTab = 'terminal'
+  /**
+   * Open a terminal tab for the alias (the hosts-tab "connect" action and the
+   * terminal tab's own Connect button both land here) and make it active.
+   * @param alias - the configured host alias.
+   * @returns the new tab's client-side key.
+   */
+  requestConnect(alias: string): string {
+    if (this.activeTab !== 'terminal') this.activeTab = 'terminal'
+    return this.openTerminalTab(alias)
+  }
+
+  /**
+   * Create a terminal tab for the alias and focus it. The view opens the host
+   * session on the next render; an existing tab for the same alias is left
+   * alone (multi-tab means a second shell on the same host is allowed).
+   * @param alias - the configured host alias.
+   * @returns the new tab's client-side key.
+   */
+  openTerminalTab(alias: string): string {
+    const key = 'terminal-tab-' + String(nextTerminalTabKey)
+    nextTerminalTabKey += 1
+    this.terminalTabs = [...this.terminalTabs, { key, alias }]
+    this.activeTerminalKey = key
+    this.commit()
+    return key
+  }
+
+  /** Focus one terminal tab (no-op for an unknown key). */
+  activateTerminalTab(key: string): void {
+    if (this.activeTerminalKey === key) return
+    if (!this.terminalTabs.some(tab => tab.key === key)) return
+    this.activeTerminalKey = key
     this.commit()
   }
 
-  /** Record the host-side session so a later page mount can reattach. */
-  setTerminalSession(sessionId: string): void {
-    if (this.terminalSessionId === sessionId) return
-    this.terminalSessionId = sessionId
+  /**
+   * Record the host session a tab's socket reported, so a later mount
+   * reattaches to the same shell instead of opening a second one.
+   */
+  setTerminalSession(key: string, sessionId: string): void {
+    const tab = this.terminalTabs.find(candidate => candidate.key === key)
+    if (tab === undefined || tab.sessionId === sessionId) return
+    this.terminalTabs = this.terminalTabs.map(candidate => candidate.key === key ? { ...candidate, sessionId } : candidate)
     this.commit()
   }
 
-  /** Forget the session (it exited, or the user disconnected). */
-  clearTerminalSession(): void {
-    if (this.terminalSessionId === undefined) return
-    this.terminalSessionId = undefined
+  /** Forget one tab's host session (it exited); the tab record itself stays. */
+  clearTerminalSession(key: string): void {
+    const tab = this.terminalTabs.find(candidate => candidate.key === key)
+    if (tab === undefined || tab.sessionId === undefined) return
+    this.terminalTabs = this.terminalTabs.map(candidate => {
+      if (candidate.key !== key) return candidate
+      const { sessionId: _dropped, ...rest } = candidate
+      return rest
+    })
     this.commit()
+  }
+
+  /**
+   * Remove one terminal tab. When it was the focused tab, focus moves to the
+   * tab that took its place (or the one before it), so closing the last tab
+   * leaves no focus behind.
+   * @param key - the tab's client-side key.
+   * @returns the removed tab (the caller ends its host session), or undefined.
+   */
+  closeTerminalTab(key: string): TerminalTabState | undefined {
+    const index = this.terminalTabs.findIndex(candidate => candidate.key === key)
+    if (index < 0) return undefined
+    const removed = this.terminalTabs[index]!
+    this.terminalTabs = this.terminalTabs.filter(candidate => candidate.key !== key)
+    if (this.activeTerminalKey === key) {
+      const fallback = this.terminalTabs[index] ?? this.terminalTabs[index - 1]
+      this.activeTerminalKey = fallback?.key
+    }
+    this.commit()
+    return removed
   }
 
   private commit(): void {
     this.snapshot = {
       panelOpen: this.panelOpen,
       activeTab: this.activeTab,
-      connectRequest: this.connectRequest,
-      terminalSessionId: this.terminalSessionId,
+      terminalTabs: this.terminalTabs,
+      activeTerminalKey: this.activeTerminalKey,
     }
     for (const fn of [...this.listeners]) fn()
   }

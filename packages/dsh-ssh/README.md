@@ -26,13 +26,13 @@ A dedicated remote Linux server operations and cluster management plugin for Dee
 | Persistent connection pool | Reuses a long-lived connection per host (opposite of the ssh-skill daemon), automatically disconnects after 30 minutes idle, auto-reconnects on disconnect (up to 3 times) |
 | Agent forwarding | Opt-in per host through the `forwardAgent` flag (`ssh -A`); the form has an "Enable agent forwarding" checkbox, the host list shows an agent-forwarding badge for enabled hosts, and `ssh_list` reports `forwardAgent` with a forward column in its table. The endpoint is the host's configured agent path, otherwise `SSH_AUTH_SOCK`, otherwise the native OpenSSH named pipe (`\\.\pipe\openssh-ssh-agent`) on Windows; a host with no local endpoint fails with an explicit error instead of connecting without forwarding. A server that refuses the request (`AllowAgentForwarding no`) surfaces its own error and is never downgraded to a silent non-forwarded session. The flag never touches the stored profile when it is off |
 | Command execution | exec with a timeout (default 60s), stdout/stderr separated, output truncation guard (2MB) |
-| Web terminal | xterm.js + WebSocket PTY terminal, auto-sizing, real-time output |
+| Web terminal | xterm.js + WebSocket PTY terminal with multiple tabs (one host-side session per tab; focusing a tab or reopening the panel reattaches by session id and replays the scrollback), auto-sizing, real-time output |
 | File transfer | SFTP upload (browser file picker, NDJSON progress stream), download (progress bar + browser save); remote directory browsing |
 | Port forwarding | Local port-forward tunnel (listens on 127.0.0.1 only) to reach a remote database / intranet service; list / stop supported |
 | Cluster execution | One command run concurrently across many hosts (filter by alias / environment / tag, default concurrency 8) |
 | Agent tools | `ssh_list` / `ssh_exec` / `ssh_upload` / `ssh_download` / `ssh_tunnel` / `ssh_cluster`; GUI and Agent share the same host config |
 
-The panel loads its contents on first open. Closing and reopening it preserves the selected tab, form drafts and terminal session. The tunnel list refreshes every five seconds while its tab, panel and browser page are visible; automatic reads pause when hidden, resume immediately on return, and do not overlap slow reads. Port forwarding itself continues in the Host.
+The panel loads its contents on first open. Closing and reopening it preserves the selected tab, form drafts and every terminal tab: each tab's host-side session survives the view detaching and is reattached by session id (replaying its scrollback) when the panel comes back. The "+" next to the tab strip opens another tab for the selected host (several tabs on one host are allowed), and a tab's "×" sends an explicit close frame to end that session. The tunnel list refreshes every five seconds while its tab, panel and browser page are visible; automatic reads pause when hidden, resume immediately on return, and do not overlap slow reads. Port forwarding itself continues in the Host.
 
 ## Security model
 
@@ -94,6 +94,8 @@ pnpm --filter @linxin666/dsh-ssh build   # tsc types + tsdown dual-half artifact
 - A ProxyCommand is executed through the user's shell, so it inherits the DSH process's `PATH` and environment. On Windows the shell is killed without its process group, so a client it spawned may outlive the transport.
 - The ssh_config import expands `Include` (globs, `~`, several pathnames, relative to the config directory) but not environment variables or `%` tokens, and a multi-pattern `Host a b` line still imports only its first pattern.
 - Resume (broken-transfer continuation) is not implemented yet.
+- Each terminal tab is its own SSH connection and remote PTY session: opening several tabs holds the matching number of connections, and the remote sshd's connection / `MaxStartups` limits still apply; a tab that loses its view is reaped on the Host after the idle window (10 minutes).
+- Switching tabs rebuilds the xterm and replays the session's host-side scrollback (capped at 256 KiB on the Host), so history beyond that cap and the pre-switch local scrolling are not restored.
 - The transfer of Agent tools is a host-machine local path (same semantics as ssh-skill).
 
 ## Telemetry

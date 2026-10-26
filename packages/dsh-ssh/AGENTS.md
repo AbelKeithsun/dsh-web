@@ -46,6 +46,11 @@ dsh Web GUI 的远程 SSH 运维插件：Host 进程内的持久 ssh2 连接池 
   视图卸载只 detach、重新挂载按 id reattach 并回放滚动缓冲；只有显式
   `close` 帧、远端退出后的宽限期到期或空闲回收才结束会话。路由层只做
   loopback 围栏与 socket 接线，会话表随路由注销一并 dispose。
+- **终端是多标签的**：`panel/controller.ts` 持有 `terminalTabs`（客户端 key +
+  alias + Host 会话 id）与 active key；同一时刻视图只挂一个 xterm，切换标签
+  先 detach 旧 socket（Host 会话保留）、再按新标签的 sessionId attach（没有
+  就按 alias 新开）；关闭标签由视图发送 close 帧，后台标签没有活动 socket，
+  用一次短暂的 attach 发出该帧，否则只能等空闲回收。
 - **终端 socket 走外壳公布的 Host**（`src/client/api.ts` 的 `terminalSocketUrl`）：
   应用交付的页面（桌面版 `dsh-app://app/`）不能在自己的 scheme 上升级 socket，
   但外壳已经通过官方钩子 `__DSH_TRANSPORT__.streamBaseUrl` 公布它拥有的 Host
